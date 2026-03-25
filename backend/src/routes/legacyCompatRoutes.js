@@ -50,7 +50,7 @@ function createLegacyCompatRoutes({
         markDeprecated(
           req,
           res,
-          "/api/restaurants/:restaurantId/orders"
+          "/api/v1/restaurants/:restaurantId/orders"
         );
 
         const orders = await orderService.listOrders({
@@ -76,7 +76,7 @@ function createLegacyCompatRoutes({
         markDeprecated(
           req,
           res,
-          "/api/restaurants/:restaurantId/orders/:orderId/confirm"
+          "/api/v1/restaurants/:restaurantId/orders/:orderId/confirm"
         );
 
         const orderId = req.query.orderId || (req.body && req.body.orderId);
@@ -115,7 +115,7 @@ function createLegacyCompatRoutes({
         markDeprecated(
           req,
           res,
-          "/api/restaurants/:restaurantId/orders/:orderId/unavailable-items"
+          "/api/v1/restaurants/:restaurantId/orders/:orderId/unavailable-items"
         );
 
         const orderId = req.body && req.body.orderId;

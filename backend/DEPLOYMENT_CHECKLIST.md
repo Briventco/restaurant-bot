@@ -44,9 +44,9 @@ OUTBOX_WORKER_ENABLED=true npm run worker:outbox
 
 1. `GET /health` returns `200` and `ok=true`.
 2. `GET /status` returns `runtimeMode` and uptime.
-3. `GET /api/restaurants/:restaurantId/whatsapp/session/status` responds for at least one tenant.
-4. `GET /api/restaurants/:restaurantId/menu-items` returns data.
-5. `GET /api/restaurants/:restaurantId/outbox/stats` returns stats object.
+3. `GET /api/v1/restaurants/:restaurantId/whatsapp/session/status` responds for at least one tenant.
+4. `GET /api/v1/restaurants/:restaurantId/menu-items` returns data.
+5. `GET /api/v1/restaurants/:restaurantId/outbox/stats` returns stats object.
 
 ## 5) Smoke path (recommended)
 

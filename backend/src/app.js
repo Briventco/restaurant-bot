@@ -54,6 +54,9 @@ const {
 const { createLegacyCompatRoutes } = require("./routes/legacyCompatRoutes");
 const { createMessageRoutes } = require("./routes/messageRoutes");
 
+const API_VERSION = "v1";
+const API_BASE = `/api/${API_VERSION}`;
+
 function createApp() {
   const app = express();
 
@@ -166,9 +169,20 @@ function createApp() {
     });
   }
 
+  app.get("/", (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: "restaurant-bot-api",
+      version: API_VERSION,
+    });
+  });
+
+  // Versioned health/status (canonical)
+  app.use(API_BASE, createHealthRoutes());
+  // Unversioned aliases for deployment probes and simple uptime checks.
   app.use(createHealthRoutes());
 
-  const restaurantApiBase = "/api/restaurants/:restaurantId";
+  const restaurantApiBase = `${API_BASE}/restaurants/:restaurantId`;
 
   app.use(
     restaurantApiBase,

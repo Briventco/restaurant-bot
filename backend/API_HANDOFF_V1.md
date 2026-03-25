@@ -4,14 +4,25 @@ This document is the frontend integration contract for the backend MVP.
 
 ## Base URL
 
+Versioned API base:
+
+`https://<backend-host>/api/v1`
+
 Tenant base:
 
-`https://<backend-host>/api/restaurants/{restaurantId}`
+`https://<backend-host>/api/v1/restaurants/{restaurantId}`
 
-Health checks:
+Production deployment:
 
-- `GET /health`
-- `GET /status`
+`https://restaurant-bot-l1mh.onrender.com/api/v1`
+
+Public/infra endpoints:
+
+- `GET /`
+- `GET /api/v1/health` (canonical)
+- `GET /api/v1/status` (canonical)
+- `GET /health` (alias of `/api/v1/health`)
+- `GET /status` (alias of `/api/v1/status`)
 
 ## Auth
 
@@ -48,62 +59,62 @@ Error:
 
 ### Restaurant settings
 
-- `GET /restaurant`
-- `PUT /restaurant`
-- `PATCH /restaurant/bot`
+- `GET /api/v1/restaurants/{restaurantId}/restaurant`
+- `PUT /api/v1/restaurants/{restaurantId}/restaurant`
+- `PATCH /api/v1/restaurants/{restaurantId}/restaurant/bot`
 
 ### Menu items
 
-- `GET /menu-items`
-- `POST /menu-items`
-- `PATCH /menu-items/:itemId`
-- `DELETE /menu-items/:itemId`
+- `GET /api/v1/restaurants/{restaurantId}/menu-items`
+- `POST /api/v1/restaurants/{restaurantId}/menu-items`
+- `PATCH /api/v1/restaurants/{restaurantId}/menu-items/{itemId}`
+- `DELETE /api/v1/restaurants/{restaurantId}/menu-items/{itemId}`
 
 ### Orders
 
-- `GET /orders?status=<status>&limit=<n>`
-- `GET /orders/:orderId`
-- `GET /orders/:orderId/messages?limit=<n>`
-- `POST /orders/:orderId/confirm`
-- `POST /orders/:orderId/approve` (alias of confirm)
-- `POST /orders/:orderId/unavailable-items`
-- `POST /orders/:orderId/transition`
-- `POST /orders/:orderId/cancel`
+- `GET /api/v1/restaurants/{restaurantId}/orders?status=<status>&limit=<n>`
+- `GET /api/v1/restaurants/{restaurantId}/orders/{orderId}`
+- `GET /api/v1/restaurants/{restaurantId}/orders/{orderId}/messages?limit=<n>`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/confirm`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/approve` (alias of confirm)
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/unavailable-items`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/transition`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/cancel`
 
 ### Payment review
 
-- `POST /orders/:orderId/payment-receipts`
-- `GET /orders/:orderId/payment-receipts`
-- `POST /orders/:orderId/payment-review/confirm`
-- `POST /orders/:orderId/payment-review/reject`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-receipts`
+- `GET /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-receipts`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-review/confirm`
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-review/reject`
 
 ### Delivery zones
 
-- `GET /delivery-zones`
-- `POST /delivery-zones`
-- `PATCH /delivery-zones/:zoneId`
-- `DELETE /delivery-zones/:zoneId`
+- `GET /api/v1/restaurants/{restaurantId}/delivery-zones`
+- `POST /api/v1/restaurants/{restaurantId}/delivery-zones`
+- `PATCH /api/v1/restaurants/{restaurantId}/delivery-zones/{zoneId}`
+- `DELETE /api/v1/restaurants/{restaurantId}/delivery-zones/{zoneId}`
 
 ### WhatsApp session
 
-- `GET /whatsapp/session/status`
-- `POST /whatsapp/session/start`
-- `POST /whatsapp/session/disconnect`
-- `POST /whatsapp/session/restart`
-- `GET /whatsapp/session/qr`
+- `GET /api/v1/restaurants/{restaurantId}/whatsapp/session/status`
+- `POST /api/v1/restaurants/{restaurantId}/whatsapp/session/start`
+- `POST /api/v1/restaurants/{restaurantId}/whatsapp/session/disconnect`
+- `POST /api/v1/restaurants/{restaurantId}/whatsapp/session/restart`
+- `GET /api/v1/restaurants/{restaurantId}/whatsapp/session/qr`
 
 ### Outbox (ops/admin)
 
-- `GET /outbox/messages?status=<status>&limit=<n>`
-- `GET /outbox/messages/:messageId`
-- `GET /outbox/stats`
-- `POST /outbox/messages/:messageId/retry`
+- `GET /api/v1/restaurants/{restaurantId}/outbox/messages?status=<status>&limit=<n>`
+- `GET /api/v1/restaurants/{restaurantId}/outbox/messages/{messageId}`
+- `GET /api/v1/restaurants/{restaurantId}/outbox/stats`
+- `POST /api/v1/restaurants/{restaurantId}/outbox/messages/{messageId}/retry`
 
 ## Request / response examples
 
 ### 1) Update restaurant settings
 
-`PUT /restaurant`
+`PUT /api/v1/restaurants/{restaurantId}/restaurant`
 
 ```json
 {
@@ -133,7 +144,7 @@ Response:
 
 ### 2) Create menu item
 
-`POST /menu-items`
+`POST /api/v1/restaurants/{restaurantId}/menu-items`
 
 ```json
 {
@@ -158,7 +169,7 @@ Response:
 
 ### 3) Approve (confirm) order
 
-`POST /orders/:orderId/approve`
+`POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/approve`
 
 Response:
 
@@ -175,7 +186,7 @@ Response:
 
 ### 4) Mark unavailable items
 
-`POST /orders/:orderId/unavailable-items`
+`POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/unavailable-items`
 
 ```json
 {
@@ -200,7 +211,7 @@ Response:
 
 ### 5) Cancel order
 
-`POST /orders/:orderId/cancel`
+`POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/cancel`
 
 ```json
 {
@@ -222,7 +233,7 @@ Response:
 
 ### 6) Payment review confirm
 
-`POST /orders/:orderId/payment-review/confirm`
+`POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-review/confirm`
 
 ```json
 {
@@ -250,7 +261,7 @@ Response:
 
 ### 7) Payment review reject
 
-`POST /orders/:orderId/payment-review/reject`
+`POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-review/reject`
 
 ```json
 {
@@ -279,7 +290,7 @@ Response:
 
 ### 8) Delivery zone create
 
-`POST /delivery-zones`
+`POST /api/v1/restaurants/{restaurantId}/delivery-zones`
 
 ```json
 {
@@ -308,7 +319,7 @@ Response:
 
 ### 9) WhatsApp session status
 
-`GET /whatsapp/session/status`
+`GET /api/v1/restaurants/{restaurantId}/whatsapp/session/status`
 
 Response:
 
@@ -324,7 +335,7 @@ Response:
 
 ### 10) Outbox stats
 
-`GET /outbox/stats`
+`GET /api/v1/restaurants/{restaurantId}/outbox/stats`
 
 Response:
 
@@ -346,4 +357,4 @@ Response:
 
 - Use `restaurantId` in path for every tenant-scoped call.
 - Prefer dedicated action endpoints (`approve`, `cancel`, `payment-review/*`) for UI actions.
-- `POST /orders/:orderId/transition` remains available for advanced/manual transitions.
+- `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/transition` remains available for advanced/manual transitions.

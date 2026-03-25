@@ -100,7 +100,7 @@ async function main() {
     process.exit(1);
   }
 
-  const prefix = `/api/restaurants/${encodeURIComponent(restaurantId)}`;
+  const prefix = `/api/v1/restaurants/${encodeURIComponent(restaurantId)}`;
   const runId = `pilot-${Date.now()}`;
 
   function logStep(step, details) {

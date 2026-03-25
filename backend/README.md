@@ -70,7 +70,13 @@ cd backend
 npm run pilot:smoke -- --restaurantId <restaurantId> --apiKey <keyId.secret>
 ```
 
-Health check:
+Health checks:
+```bash
+curl http://localhost:3002/api/v1/health
+curl http://localhost:3002/api/v1/status
+```
+
+Health aliases (same responses):
 ```bash
 curl http://localhost:3002/health
 curl http://localhost:3002/status
@@ -104,50 +110,65 @@ Example scopes:
 - `restaurants.read,restaurants.write`
 
 ## Main API Base
+Versioned API base:
+
+`/api/v1`
+
 Tenant-aware API base:
 
-`/api/restaurants/:restaurantId`
+`/api/v1/restaurants/:restaurantId`
+
+Root route:
+
+- `GET /`
 
 Key endpoints:
-- `GET /orders`
-- `GET /orders/:orderId`
-- `GET /orders/:orderId/messages`
-- `POST /orders/:orderId/confirm`
-- `POST /orders/:orderId/approve`
-- `POST /orders/:orderId/cancel`
-- `POST /orders/:orderId/unavailable-items`
-- `POST /orders/:orderId/transition`
-- `POST /orders/:orderId/payment-receipts`
-- `GET /orders/:orderId/payment-receipts`
-- `POST /orders/:orderId/payment-review/confirm`
-- `POST /orders/:orderId/payment-review/reject`
-- `GET /menu-items`, `POST /menu-items`, `PATCH /menu-items/:itemId`, `DELETE /menu-items/:itemId`
-- `GET /delivery-zones`, `POST /delivery-zones`, `PATCH /delivery-zones/:zoneId`, `DELETE /delivery-zones/:zoneId`
-- `GET /restaurant`, `PUT /restaurant`
-- `PATCH /restaurant/bot`
-- `POST /messages/inbound`
-- `GET /outbox/messages`
-- `GET /outbox/messages/:messageId`
-- `GET /outbox/stats`
-- `POST /outbox/messages/:messageId/retry`
-- `GET /ops/pilot-snapshot`
-- `POST /channels/:channel/session/start`
-- `POST /channels/:channel/session/disconnect`
-- `POST /channels/:channel/session/restart`
-- `GET /channels/:channel/session/status`
-- `GET /channels/:channel/session/qr`
-- `POST /whatsapp/session/start`
-- `POST /whatsapp/session/disconnect`
-- `POST /whatsapp/session/restart`
-- `GET /whatsapp/session/status`
-- `GET /whatsapp/session/qr`
+- `GET /api/v1/restaurants/:restaurantId/orders`
+- `GET /api/v1/restaurants/:restaurantId/orders/:orderId`
+- `GET /api/v1/restaurants/:restaurantId/orders/:orderId/messages`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/confirm`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/approve`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/cancel`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/unavailable-items`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/transition`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/payment-receipts`
+- `GET /api/v1/restaurants/:restaurantId/orders/:orderId/payment-receipts`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/payment-review/confirm`
+- `POST /api/v1/restaurants/:restaurantId/orders/:orderId/payment-review/reject`
+- `GET /api/v1/restaurants/:restaurantId/menu-items`
+- `POST /api/v1/restaurants/:restaurantId/menu-items`
+- `PATCH /api/v1/restaurants/:restaurantId/menu-items/:itemId`
+- `DELETE /api/v1/restaurants/:restaurantId/menu-items/:itemId`
+- `GET /api/v1/restaurants/:restaurantId/delivery-zones`
+- `POST /api/v1/restaurants/:restaurantId/delivery-zones`
+- `PATCH /api/v1/restaurants/:restaurantId/delivery-zones/:zoneId`
+- `DELETE /api/v1/restaurants/:restaurantId/delivery-zones/:zoneId`
+- `GET /api/v1/restaurants/:restaurantId/restaurant`
+- `PUT /api/v1/restaurants/:restaurantId/restaurant`
+- `PATCH /api/v1/restaurants/:restaurantId/restaurant/bot`
+- `POST /api/v1/restaurants/:restaurantId/messages/inbound`
+- `GET /api/v1/restaurants/:restaurantId/outbox/messages`
+- `GET /api/v1/restaurants/:restaurantId/outbox/messages/:messageId`
+- `GET /api/v1/restaurants/:restaurantId/outbox/stats`
+- `POST /api/v1/restaurants/:restaurantId/outbox/messages/:messageId/retry`
+- `GET /api/v1/restaurants/:restaurantId/ops/pilot-snapshot`
+- `POST /api/v1/restaurants/:restaurantId/channels/:channel/session/start`
+- `POST /api/v1/restaurants/:restaurantId/channels/:channel/session/disconnect`
+- `POST /api/v1/restaurants/:restaurantId/channels/:channel/session/restart`
+- `GET /api/v1/restaurants/:restaurantId/channels/:channel/session/status`
+- `GET /api/v1/restaurants/:restaurantId/channels/:channel/session/qr`
+- `POST /api/v1/restaurants/:restaurantId/whatsapp/session/start`
+- `POST /api/v1/restaurants/:restaurantId/whatsapp/session/disconnect`
+- `POST /api/v1/restaurants/:restaurantId/whatsapp/session/restart`
+- `GET /api/v1/restaurants/:restaurantId/whatsapp/session/status`
+- `GET /api/v1/restaurants/:restaurantId/whatsapp/session/qr`
 
-`GET /ops/pilot-snapshot` requires all scopes:
+`GET /api/v1/restaurants/:restaurantId/ops/pilot-snapshot` requires all scopes:
 - `orders.read`
 - `outbox.read`
 - `channels.session.read`
 
-`POST /messages/inbound` is the transport handoff endpoint for `whatsapp-bot/`.
+`POST /api/v1/restaurants/:restaurantId/messages/inbound` is the transport handoff endpoint for `whatsapp-bot/`.
 The bot sends normalized inbound events and backend returns `shouldReply` + `replyText`.
 
 Restaurant-level bot controls live on `restaurants/{restaurantId}.bot`:
