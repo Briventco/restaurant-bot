@@ -177,6 +177,11 @@ function createApp() {
     });
   });
 
+  // Temporary deployment probe route.
+  app.get("/test", (_req, res) => {
+    res.status(200).send("working");
+  });
+
   // Versioned health/status (canonical)
   app.use(API_BASE, createHealthRoutes());
   // Unversioned aliases for deployment probes and simple uptime checks.
