@@ -304,4 +304,6 @@ function createApp() {
 
 module.exports = {
   createApp,
+  API_BASE,
+  API_VERSION,
 };
