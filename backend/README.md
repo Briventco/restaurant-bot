@@ -83,7 +83,13 @@ curl http://localhost:3002/status
 ```
 
 ## API Authentication
-All protected routes require:
+Portal auth (recommended):
+
+```http
+Authorization: Bearer <firebase-id-token>
+```
+
+Legacy/internal auth (still supported):
 
 ```http
 x-api-key: <keyId>.<secret>
@@ -109,6 +115,15 @@ Example scopes:
 - `whatsapp.session.read,whatsapp.session.manage`
 - `restaurants.read,restaurants.write`
 
+Portal auth user profiles are stored at:
+`users/{uid}`
+
+See [AUTH_ARCHITECTURE.md](./AUTH_ARCHITECTURE.md) for role model, permissions, and user profile schema.
+
+Tenant-scoped routes (`/api/v1/restaurants/:restaurantId/*`) support:
+- Bearer token portal auth (preferred)
+- `x-api-key` fallback for legacy/internal clients
+
 ## Main API Base
 Versioned API base:
 
@@ -123,6 +138,14 @@ Root route:
 - `GET /`
 
 Key endpoints:
+- `POST /api/v1/auth/session`
+- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/admin/dashboard`
+- `GET /api/v1/admin/restaurants`
+- `GET /api/v1/admin/restaurants/:restaurantId`
+- `GET /api/v1/admin/sessions`
+- `GET /api/v1/admin/outbox`
 - `GET /api/v1/restaurants/:restaurantId/orders`
 - `GET /api/v1/restaurants/:restaurantId/orders/:orderId`
 - `GET /api/v1/restaurants/:restaurantId/orders/:orderId/messages`
@@ -212,6 +235,7 @@ Behavior:
 ## Firestore Model
 - `restaurants/{restaurantId}`
 - `restaurants/{restaurantId}/apiKeys/{keyId}`
+- `users/{uid}`
 - `restaurants/{restaurantId}/menuItems/{itemId}`
 - `restaurants/{restaurantId}/customers/{customerId}`
 - `restaurants/{restaurantId}/orders/{orderId}`

@@ -3,8 +3,10 @@ const cors = require("cors");
 
 const { env } = require("./config/env");
 const logger = require("./infra/logger");
+const { admin } = require("./infra/firebase");
 
 const restaurantRepo = require("./repositories/restaurantRepo");
+const userRepo = require("./repositories/userRepo");
 const apiKeyRepo = require("./repositories/apiKeyRepo");
 const menuRepo = require("./repositories/menuRepo");
 const deliveryZoneRepo = require("./repositories/deliveryZoneRepo");
@@ -17,6 +19,13 @@ const outboxRepo = require("./repositories/outboxRepo");
 
 const { createRequireApiKey } = require("./middleware/requireApiKey");
 const { createRequireRestaurantAccess } = require("./middleware/requireRestaurantAccess");
+const { createRequireAuth } = require("./middleware/requireAuth");
+const { requireRole } = require("./middleware/requireRole");
+const { requirePermission } = require("./middleware/requirePermission");
+const { requireRestaurantScope } = require("./middleware/requireRestaurantScope");
+const {
+  createRequirePortalOrApiKey,
+} = require("./middleware/requirePortalOrApiKey");
 
 const { createOrderParsingService } = require("./domain/services/orderParsingService");
 const { createMenuService } = require("./domain/services/menuService");
@@ -25,6 +34,7 @@ const { createOrderService } = require("./domain/services/orderService");
 const { createPaymentService } = require("./domain/services/paymentService");
 const { createInboundMessageService } = require("./domain/services/inboundMessageService");
 const { createOutboxService } = require("./domain/services/outboxService");
+const { createAuthService } = require("./auth/authService");
 
 const { ProviderRegistry } = require("./transport/providers/providerRegistry");
 const { createChannelGateway } = require("./transport/providers/channelGateway");
@@ -40,6 +50,8 @@ const {
 } = require("./transport/session/channelSessionService");
 
 const { createHealthRoutes } = require("./routes/healthRoutes");
+const { createAuthRoutes } = require("./routes/authRoutes");
+const { createAdminRoutes } = require("./routes/adminRoutes");
 const { createRestaurantRoutes } = require("./routes/restaurantRoutes");
 const { createMenuRoutes } = require("./routes/menuRoutes");
 const { createDeliveryZoneRoutes } = require("./routes/deliveryZoneRoutes");
@@ -65,6 +77,14 @@ function createApp() {
 
   const requireApiKey = createRequireApiKey({ apiKeyRepo, logger });
   const requireRestaurantAccess = createRequireRestaurantAccess({ restaurantRepo });
+  const authService = createAuthService({ admin, userRepo, logger });
+  const requireAuth = createRequireAuth({ authService, logger });
+  const requireApiKeyOrPortalAuth = createRequirePortalOrApiKey({
+    requireApiKey,
+    requireAuth,
+    requirePermission,
+    requireRestaurantScope,
+  });
 
   const orderParsingService = createOrderParsingService({
     openAIApiKey: env.OPENAI_API_KEY,
@@ -184,6 +204,8 @@ function createApp() {
 
   // Versioned health/status (canonical)
   app.use(API_BASE, createHealthRoutes());
+  app.use(API_BASE, createAuthRoutes({ requireAuth, authService }));
+  app.use(`${API_BASE}/admin`, createAdminRoutes({ requireAuth, requireRole }));
   // Unversioned aliases for deployment probes and simple uptime checks.
   app.use(createHealthRoutes());
 
@@ -192,31 +214,39 @@ function createApp() {
   app.use(
     restaurantApiBase,
     createRestaurantRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       restaurantRepo,
     })
   );
   app.use(
     restaurantApiBase,
-    createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo })
+    createMenuRoutes({
+      requireApiKey: requireApiKeyOrPortalAuth,
+      requireRestaurantAccess,
+      menuRepo,
+    })
   );
   app.use(
     restaurantApiBase,
     createDeliveryZoneRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       deliveryZoneRepo,
     })
   );
   app.use(
     restaurantApiBase,
-    createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderService })
+    createOrderRoutes({
+      requireApiKey: requireApiKeyOrPortalAuth,
+      requireRestaurantAccess,
+      orderService,
+    })
   );
   app.use(
     restaurantApiBase,
     createPaymentRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       paymentService,
     })
@@ -224,7 +254,7 @@ function createApp() {
   app.use(
     restaurantApiBase,
     createOutboxRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       outboxService,
     })
@@ -232,7 +262,7 @@ function createApp() {
   app.use(
     restaurantApiBase,
     createOpsRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       orderService,
       outboxService,
@@ -243,7 +273,7 @@ function createApp() {
   app.use(
     restaurantApiBase,
     createChannelSessionRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       channelSessionService,
     })
@@ -251,7 +281,7 @@ function createApp() {
   app.use(
     restaurantApiBase,
     createWhatsappSessionRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       channelSessionService,
     })
@@ -259,7 +289,7 @@ function createApp() {
   app.use(
     restaurantApiBase,
     createMessageRoutes({
-      requireApiKey,
+      requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       inboundMessageService,
       logger,

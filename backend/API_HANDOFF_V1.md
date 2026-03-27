@@ -26,11 +26,23 @@ Public/infra endpoints:
 
 ## Auth
 
-All tenant routes require:
+Portal user auth (recommended):
+
+```http
+Authorization: Bearer <firebase-id-token>
+```
+
+Legacy/internal fallback (still supported):
 
 ```http
 x-api-key: <keyId>.<secret>
 ```
+
+Auth endpoints:
+
+- `POST /api/v1/auth/session`
+- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/logout`
 
 ## Common response shapes
 
@@ -56,6 +68,20 @@ Error:
 `details` appears only for some validation/transition errors.
 
 ## Endpoint list (V1 scope)
+
+### Portal auth
+
+- `POST /api/v1/auth/session`
+- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/logout`
+
+### Super admin scaffold
+
+- `GET /api/v1/admin/dashboard`
+- `GET /api/v1/admin/restaurants`
+- `GET /api/v1/admin/restaurants/{restaurantId}`
+- `GET /api/v1/admin/sessions`
+- `GET /api/v1/admin/outbox`
 
 ### Restaurant settings
 
@@ -356,5 +382,8 @@ Response:
 ## Notes for frontend
 
 - Use `restaurantId` in path for every tenant-scoped call.
+- For portal requests, send Firebase ID token in `Authorization: Bearer <token>`.
+- Legacy `x-api-key` remains valid for migration and internal integrations.
+- `/api/v1/admin/*` endpoints require `super_admin` role.
 - Prefer dedicated action endpoints (`approve`, `cancel`, `payment-review/*`) for UI actions.
 - `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/transition` remains available for advanced/manual transitions.
