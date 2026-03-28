@@ -1,3 +1,5 @@
+const path = require("node:path");
+
 function toNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -30,6 +32,14 @@ function parseCsv(value) {
     .map((item) => item.trim())
     .filter(Boolean);
 }
+
+const configuredPuppeteerCacheDir = String(
+  process.env.PUPPETEER_CACHE_DIR || ".cache/puppeteer"
+).trim();
+const normalizedPuppeteerCacheDir = path.isAbsolute(configuredPuppeteerCacheDir)
+  ? configuredPuppeteerCacheDir
+  : path.resolve(process.cwd(), configuredPuppeteerCacheDir);
+process.env.PUPPETEER_CACHE_DIR = normalizedPuppeteerCacheDir;
 
 const constants = {
   PORT: toNumber(process.env.PORT, 3001),
@@ -70,6 +80,7 @@ const constants = {
   ),
   PUPPETEER_HEADLESS: toBoolean(process.env.PUPPETEER_HEADLESS, true),
   PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || "",
+  PUPPETEER_CACHE_DIR: normalizedPuppeteerCacheDir,
   PUPPETEER_ARGS: [
     "--no-sandbox",
     "--disable-setuid-sandbox",

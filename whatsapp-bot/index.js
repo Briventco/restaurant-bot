@@ -387,6 +387,7 @@ async function main() {
       puppeteerHeadless: constants.PUPPETEER_HEADLESS,
       puppeteerExecutablePath:
         constants.PUPPETEER_EXECUTABLE_PATH || chromiumDiagnostics.executablePath || "",
+      puppeteerCacheDir: constants.PUPPETEER_CACHE_DIR,
       whatsappAuthDataPath: constants.WHATSAPP_AUTH_DATA_PATH,
       adminKeyConfigured: Boolean(constants.BOT_RUNTIME_ADMIN_KEY),
     })

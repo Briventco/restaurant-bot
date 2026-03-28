@@ -223,6 +223,7 @@ Render service settings:
 Required env guidance:
 - do **not** set `PUPPETEER_SKIP_DOWNLOAD=true`
 - keep `PUPPETEER_HEADLESS=true`
+- set `PUPPETEER_CACHE_DIR=.cache/puppeteer` (app-local cache shared by build and runtime)
 - optionally set `WHATSAPP_AUTH_DATA_PATH` to a mounted persistent disk path for session durability
 
 Startup logs now include:
@@ -255,6 +256,7 @@ Single-mode legacy vars still supported:
 - `BACKEND_API_KEY`
 - `PUPPETEER_HEADLESS` (default `true`)
 - `PUPPETEER_EXECUTABLE_PATH` (optional override)
+- `PUPPETEER_CACHE_DIR` (default `.cache/puppeteer`)
 
 Runtime health endpoints:
 - `GET /`
