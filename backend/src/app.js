@@ -49,7 +49,11 @@ const {
   createChannelSessionService,
 } = require("./transport/session/channelSessionService");
 
-const { createHealthRoutes } = require("./routes/healthRoutes");
+const {
+  createHealthRoutes,
+  buildHealthPayload,
+  buildStatusPayload,
+} = require("./routes/healthRoutes");
 const { createAuthRoutes } = require("./routes/authRoutes");
 const { createAdminRoutes } = require("./routes/adminRoutes");
 const { createRestaurantRoutes } = require("./routes/restaurantRoutes");
@@ -202,7 +206,21 @@ function createApp() {
     res.status(200).send("working");
   });
 
-  // Versioned health/status (canonical)
+  // Health/status are registered as direct routes for deterministic production behavior.
+  app.get(`${API_BASE}/health`, (_req, res) => {
+    res.status(200).json(buildHealthPayload());
+  });
+  app.get(`${API_BASE}/status`, (_req, res) => {
+    res.status(200).json(buildStatusPayload());
+  });
+  app.get("/health", (_req, res) => {
+    res.status(200).json(buildHealthPayload());
+  });
+  app.get("/status", (_req, res) => {
+    res.status(200).json(buildStatusPayload());
+  });
+
+  // Keep router-based health routes mounted as a compatibility fallback.
   app.use(API_BASE, createHealthRoutes());
   app.use(API_BASE, createAuthRoutes({ requireAuth, authService }));
   app.use(`${API_BASE}/admin`, createAdminRoutes({ requireAuth, requireRole }));
