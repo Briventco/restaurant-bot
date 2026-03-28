@@ -39,6 +39,9 @@ function createWhatsappClient({
       clientId,
       dataPath: authDataPath || ".wwebjs_auth",
     }),
+    webVersionCache: {
+      type: "local",
+    },
     puppeteer: launchConfig,
   });
 }

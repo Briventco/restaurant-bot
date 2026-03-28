@@ -136,6 +136,19 @@ function createMultiTenantRuntimeManager({ constants }) {
     return runtime.getQr();
   }
 
+  function getTenantDiagnostics(restaurantId) {
+    const runtime = getTenantRuntimeOrThrow(restaurantId);
+    return runtime.getDiagnostics();
+  }
+
+  function listTenantDiagnostics() {
+    const diagnostics = {};
+    for (const [restaurantId, runtime] of tenantRuntimes.entries()) {
+      diagnostics[restaurantId] = runtime.getDiagnostics();
+    }
+    return diagnostics;
+  }
+
   async function sendOutbound(restaurantId, payload) {
     const runtime = getTenantRuntimeOrThrow(restaurantId);
     return runtime.sendOutbound(payload);
@@ -150,6 +163,8 @@ function createMultiTenantRuntimeManager({ constants }) {
     getRuntimeSummary,
     getTenantStatus,
     getTenantQr,
+    getTenantDiagnostics,
+    listTenantDiagnostics,
     pauseTenant,
     resumeTenant,
     restartTenant,

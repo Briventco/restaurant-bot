@@ -119,9 +119,11 @@ All runtime control routes require header:
 Endpoints:
 - `GET /runtime/v1/tenants`
 - `GET /runtime/v1/tenants/:restaurantId/status`
+- `GET /runtime/v1/tenants/:restaurantId/diagnostics`
 - `GET /runtime/v1/tenants/:restaurantId/qr`
 - `GET /runtime/v1/tenants/:restaurantId/qr?includeImage=true`
 - `GET /runtime/v1/tenants/:restaurantId/qr.png`
+- `GET /runtime/v1/diagnostics/memory`
 - `POST /runtime/v1/tenants/:restaurantId/pause`
 - `POST /runtime/v1/tenants/:restaurantId/resume`
 - `POST /runtime/v1/tenants/:restaurantId/restart`
@@ -225,13 +227,19 @@ Render service settings:
 Required env guidance:
 - do **not** set `PUPPETEER_SKIP_DOWNLOAD=true`
 - keep `PUPPETEER_HEADLESS=true`
+- keep `PUPPETEER_LOW_MEMORY_MODE=true` for constrained instances
 - set `PUPPETEER_CACHE_DIR=.cache/puppeteer` (app-local cache shared by build and runtime)
-- optionally set `WHATSAPP_AUTH_DATA_PATH` to a mounted persistent disk path for session durability
+- set `WHATSAPP_AUTH_DATA_PATH` to a mounted persistent disk path for session durability (required for stable reconnect behavior)
+- recommended `WHATSAPP_AUTH_DATA_PATH=/var/data/.wwebjs_auth`
+- recommended Render instance memory: `>=1GB` for stable Chromium + WhatsApp runtime
+- free/hobby sleep cycles can break always-on session stability; use always-on paid plan for production
 
 Startup logs now include:
 - `CHROMIUM_DIAGNOSTICS = ...`
+- `RUNTIME_ENV_DIAGNOSTICS = ...` (includes cgroup memory limit + auth path persistence checks)
 - `RUNTIME_CONFIG = ...` (includes resolved executable path + auth data path)
 - `RUNTIME_ROUTE_MAP = ...`
+- `Runtime memory snapshot ...`
 
 ## Key Environment
 
@@ -247,6 +255,11 @@ Startup logs now include:
 - `BOT_RUNTIME_OUTBOUND_INFLIGHT_TTL_MS` (default `90000`)
 - `BOT_RUNTIME_OUTBOUND_SENT_TTL_MS` (default `86400000`)
 - `BOT_RUNTIME_OUTBOUND_FAILED_TTL_MS` (default `1800000`)
+- `BOT_RUNTIME_RECONNECT_MAX_ATTEMPTS` (default `20`)
+- `BOT_RUNTIME_MIN_RESTART_GAP_MS` (default `3000`)
+- `BOT_MEMORY_LOG_INTERVAL_MS` (default `30000`, set `0` to disable)
+- `BOT_MEMORY_WARN_RSS_MB` (default `420`)
+- `BOT_MIN_RECOMMENDED_MEMORY_MB` (default `1024`)
 
 Single-mode legacy vars still supported:
 - `BOT_ENABLED`
@@ -257,13 +270,17 @@ Single-mode legacy vars still supported:
 - `BACKEND_API_PREFIX` (default `/api/v1`)
 - `BACKEND_API_KEY`
 - `PUPPETEER_HEADLESS` (default `true`)
+- `PUPPETEER_LOW_MEMORY_MODE` (default `true`)
 - `PUPPETEER_EXECUTABLE_PATH` (optional override)
 - `PUPPETEER_CACHE_DIR` (default `.cache/puppeteer`)
+- `PUPPETEER_EXTRA_ARGS` (comma-separated additional Chrome args)
+- `BOT_PRINT_TERMINAL_QR` (default `false`)
 
 Runtime health endpoints:
 - `GET /`
 - `GET /health`
 - `GET /status`
+- `GET /runtime/v1/diagnostics/memory` (admin-key protected)
 
 ## Shard Deployment Guidance (5 / 10 / 20)
 

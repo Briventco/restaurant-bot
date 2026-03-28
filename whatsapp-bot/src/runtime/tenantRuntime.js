@@ -1,4 +1,6 @@
 const qrcode = require("qrcode-terminal");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { createLogger } = require("../utils/logger");
 const { createWhatsappClient } = require("../client/createWhatsappClient");
@@ -10,6 +12,7 @@ const { createInMemoryIdempotencyStore } = require("../utils/inMemoryIdempotency
 const { createChatQueue } = require("../utils/chatQueue");
 const { createBackendInboundService } = require("../services/backendInboundService");
 const { createInboundPipeline } = require("../handlers/createInboundPipeline");
+const { getProcessMemorySnapshot } = require("../utils/memory");
 
 function createRetryableError(code, message, retryable = true) {
   const error = new Error(message);
@@ -20,6 +23,14 @@ function createRetryableError(code, message, retryable = true) {
 
 function nowMs() {
   return Date.now();
+}
+
+function toSafeMessage(value, maxLength = 500) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.slice(0, maxLength);
 }
 
 function computeBackoffMs(attempt, reconnectConfig) {
@@ -55,19 +66,40 @@ function createTenantRuntime({
     lastQrAt: 0,
     qrAvailable: false,
     qr: null,
+    qrGenerationCount: 0,
+    qrRegenerationCount: 0,
     inboundQueueSize: 0,
     outboundQueueSize: 0,
+    browserLaunchCount: 0,
+    browserLaunchFailureCount: 0,
+    browserLaunchInFlight: false,
+    lastBrowserLaunchAt: 0,
+    lastBrowserLaunchError: "",
+    disconnectCount: 0,
+    reconnectScheduleCount: 0,
+    reconnectLastDelayMs: 0,
+    reconnectLastReason: "",
+    authStorageLastCheckedAt: 0,
+    authStorageWritable: false,
+    authSessionExists: false,
+    authSessionFileCount: 0,
   };
 
   let paused = false;
   let stopped = false;
   let starting = false;
   let client = null;
+  let shuttingDownClient = false;
   let heartbeatTimer = null;
   let reconnectTimer = null;
   let outboundQueue = Promise.resolve();
   let outboundQueuePending = 0;
   let outboundInFlight = 0;
+
+  const authDataPath = path.isAbsolute(constants.WHATSAPP_AUTH_DATA_PATH)
+    ? constants.WHATSAPP_AUTH_DATA_PATH
+    : path.resolve(process.cwd(), constants.WHATSAPP_AUTH_DATA_PATH || ".wwebjs_auth");
+  const authSessionPath = path.join(authDataPath, `session-${tenantConfig.whatsappClientId}`);
 
   const dedupeStore = createInMemoryDedupeStore({
     ttlMs: constants.INBOUND_DEDUPE_TTL_MS,
@@ -106,6 +138,36 @@ function createTenantRuntime({
     logger,
   });
 
+  function inspectAuthStorage() {
+    const checkedAt = nowMs();
+    let writable = false;
+    let sessionExists = false;
+    let fileCount = 0;
+
+    try {
+      fs.mkdirSync(authDataPath, { recursive: true });
+      fs.accessSync(authDataPath, fs.constants.W_OK);
+      writable = true;
+    } catch (_error) {
+      writable = false;
+    }
+
+    try {
+      sessionExists = fs.existsSync(authSessionPath);
+      if (sessionExists) {
+        fileCount = fs.readdirSync(authSessionPath).length;
+      }
+    } catch (_error) {
+      sessionExists = false;
+      fileCount = 0;
+    }
+
+    state.authStorageLastCheckedAt = checkedAt;
+    state.authStorageWritable = writable;
+    state.authSessionExists = sessionExists;
+    state.authSessionFileCount = fileCount;
+  }
+
   function updateHeartbeat() {
     state.lastHeartbeat = nowMs();
     state.inboundQueueSize = chatQueue.size();
@@ -126,6 +188,8 @@ function createTenantRuntime({
         pausedReason: state.pausedReason || "",
         lastDisconnectReason: state.lastDisconnectReason || "",
         reconnectAttemptCount: state.reconnectAttemptCount,
+        reconnectScheduled: Boolean(reconnectTimer),
+        memory: getProcessMemorySnapshot(),
       });
     }
   }
@@ -133,30 +197,50 @@ function createTenantRuntime({
   function setError(error) {
     state.lastErrorAt = nowMs();
     state.lastErrorCode = String((error && error.code) || "");
-    state.lastErrorMessage = String(
+    state.lastErrorMessage = toSafeMessage(
       (error && error.message) || "tenant_runtime_error"
     );
+    state.lastBrowserLaunchError = state.lastErrorMessage;
     if (error) {
       logger.error("Tenant runtime error", {
         restaurantId: tenantConfig.restaurantId,
         status: state.status,
         code: error.code || "",
-        message: error.message || String(error),
+        message: toSafeMessage(error.message || String(error), 800),
+        memory: getProcessMemorySnapshot(),
       });
     }
   }
 
   function setQr(qr) {
+    const qrValue = String(qr || "").trim();
+    if (!qrValue) {
+      return {
+        changed: false,
+        duplicate: false,
+      };
+    }
+
     const generatedAt = nowMs();
     const expiresAt = generatedAt + Math.max(30000, Number(constants.BOT_RUNTIME_QR_TTL_MS || 120000));
+    const duplicate = Boolean(state.qr && state.qr.value === qrValue);
     state.qr = {
-      value: qr,
+      value: qrValue,
       generatedAt,
       expiresAt,
     };
+    state.qrGenerationCount += 1;
+    if (duplicate) {
+      state.qrRegenerationCount += 1;
+    }
     state.qrAvailable = true;
     state.lastQrAt = generatedAt;
     state.lastHeartbeat = generatedAt;
+    inspectAuthStorage();
+    return {
+      changed: !duplicate,
+      duplicate,
+    };
   }
 
   function clearQr() {
@@ -193,10 +277,20 @@ function createTenantRuntime({
       return;
     }
 
-    clearReconnectTimer();
+    if (reconnectTimer) {
+      logger.warn("Reconnect already scheduled; skipping duplicate schedule", {
+        restaurantId: tenantConfig.restaurantId,
+        reconnectAttemptCount: state.reconnectAttemptCount,
+        pendingReason: state.reconnectLastReason || "",
+        incomingReason: String(reason || ""),
+      });
+      return;
+    }
 
     state.reconnectAttemptCount += 1;
-    const maxAttempts = Number(tenantConfig.reconnect.maxAttemptsBeforePause || 20);
+    const tenantMaxAttempts = Number(tenantConfig.reconnect.maxAttemptsBeforePause || 20);
+    const globalCap = Number(constants.BOT_RUNTIME_RECONNECT_MAX_ATTEMPTS || tenantMaxAttempts);
+    const maxAttempts = Math.max(1, Math.min(tenantMaxAttempts, globalCap));
     if (state.reconnectAttemptCount > maxAttempts) {
       paused = true;
       state.pausedReason = "reconnect_attempts_exhausted";
@@ -209,13 +303,21 @@ function createTenantRuntime({
       return;
     }
 
-    const delayMs = computeBackoffMs(state.reconnectAttemptCount, tenantConfig.reconnect);
+    const delayMs = Math.max(
+      computeBackoffMs(state.reconnectAttemptCount, tenantConfig.reconnect),
+      Math.max(1000, Number(constants.BOT_RUNTIME_MIN_RESTART_GAP_MS || 3000))
+    );
+    state.reconnectScheduleCount += 1;
+    state.reconnectLastDelayMs = delayMs;
+    state.reconnectLastReason = String(reason || "");
     setStatus("reconnecting");
     logger.warn("Tenant reconnect scheduled", {
       restaurantId: tenantConfig.restaurantId,
       reconnectAttemptCount: state.reconnectAttemptCount,
+      maxAttempts,
       delayMs,
       reason,
+      memory: getProcessMemorySnapshot(),
     });
 
     reconnectTimer = setTimeout(() => {
@@ -270,61 +372,100 @@ function createTenantRuntime({
 
   function bindClientEvents(localClient) {
     localClient.on("qr", (qr) => {
-      if (!tenantConfig.enabled || paused) {
+      if (!tenantConfig.enabled || paused || stopped || shuttingDownClient) {
         return;
       }
-      setQr(qr);
+      const qrUpdate = setQr(qr);
       setStatus("qr_required");
-      logger.info("Tenant QR generated", {
-        restaurantId: tenantConfig.restaurantId,
-      });
-      qrcode.generate(qr, { small: true });
+      const shouldLogDuplicate =
+        !qrUpdate.changed && state.qrRegenerationCount % 5 === 0;
+      if (qrUpdate.changed || shouldLogDuplicate) {
+        logger.info(
+          qrUpdate.changed
+            ? "Tenant QR generated"
+            : "Tenant QR regenerated (duplicate payload)",
+          {
+            restaurantId: tenantConfig.restaurantId,
+            qrGenerationCount: state.qrGenerationCount,
+            qrRegenerationCount: state.qrRegenerationCount,
+            memory: getProcessMemorySnapshot(),
+          }
+        );
+      }
+      if (constants.BOT_PRINT_TERMINAL_QR && qrUpdate.changed) {
+        qrcode.generate(qr, { small: true });
+      }
     });
 
     localClient.on("authenticated", () => {
-      if (!tenantConfig.enabled || paused) {
+      if (!tenantConfig.enabled || paused || stopped || shuttingDownClient) {
         return;
       }
       clearQr();
+      inspectAuthStorage();
       setStatus("authenticating");
       logger.info("Tenant authenticated", {
         restaurantId: tenantConfig.restaurantId,
+        authSessionExists: state.authSessionExists,
+        authSessionFileCount: state.authSessionFileCount,
       });
     });
 
     localClient.on("ready", () => {
-      if (!tenantConfig.enabled || paused) {
+      if (!tenantConfig.enabled || paused || stopped || shuttingDownClient) {
         return;
       }
       clearQr();
+      inspectAuthStorage();
       state.lastConnectedAt = nowMs();
       state.reconnectAttemptCount = 0;
       state.lastDisconnectReason = "";
       state.lastErrorAt = 0;
       state.lastErrorCode = "";
       state.lastErrorMessage = "";
+      state.browserLaunchInFlight = false;
+      state.lastBrowserLaunchError = "";
       setStatus("connected");
       logger.info("Tenant WhatsApp client ready", {
         restaurantId: tenantConfig.restaurantId,
+        authSessionExists: state.authSessionExists,
+        authSessionFileCount: state.authSessionFileCount,
+        memory: getProcessMemorySnapshot(),
       });
     });
 
     localClient.on("disconnected", (reason) => {
+      if (shuttingDownClient || stopped || paused) {
+        return;
+      }
+      state.disconnectCount += 1;
       state.lastDisconnectReason = String(reason || "unknown_disconnect");
       clearQr();
       setStatus("disconnected");
       logger.warn("Tenant WhatsApp client disconnected", {
         restaurantId: tenantConfig.restaurantId,
         reason: state.lastDisconnectReason,
+        disconnectCount: state.disconnectCount,
+        memory: getProcessMemorySnapshot(),
       });
-      scheduleReconnect(state.lastDisconnectReason);
+      void destroyClient("event_disconnected", { suppressError: true })
+        .finally(() => {
+          scheduleReconnect(state.lastDisconnectReason);
+        });
     });
 
     localClient.on("auth_failure", (message) => {
+      if (shuttingDownClient || stopped || paused) {
+        return;
+      }
+      state.disconnectCount += 1;
       state.lastDisconnectReason = String(message || "auth_failure");
       setError(createRetryableError("AUTH_FAILURE", state.lastDisconnectReason, true));
       setStatus("error");
-      scheduleReconnect("auth_failure");
+      void destroyClient("event_auth_failure", { suppressError: true })
+        .finally(() => {
+          scheduleReconnect("auth_failure");
+        });
     });
 
     localClient.on("message", async (rawMessage) => {
@@ -345,13 +486,15 @@ function createTenantRuntime({
       return client;
     }
 
+    inspectAuthStorage();
+
     client = createWhatsappClient({
       clientId: tenantConfig.whatsappClientId,
       protocolTimeoutMs: constants.PUPPETEER_PROTOCOL_TIMEOUT_MS,
       puppeteerArgs: constants.PUPPETEER_ARGS,
       puppeteerHeadless: constants.PUPPETEER_HEADLESS,
       puppeteerExecutablePath: constants.PUPPETEER_EXECUTABLE_PATH,
-      authDataPath: constants.WHATSAPP_AUTH_DATA_PATH,
+      authDataPath,
       logger,
     });
 
@@ -375,12 +518,36 @@ function createTenantRuntime({
       return;
     }
 
+    if (
+      client &&
+      ["connected", "authenticating", "qr_required", "starting"].includes(
+        String(state.status || "")
+      )
+    ) {
+      logger.info("Tenant start skipped because client is already active", {
+        restaurantId: tenantConfig.restaurantId,
+        status: state.status,
+        reason,
+      });
+      return;
+    }
+
     starting = true;
     clearReconnectTimer();
     setStatus("starting");
+    inspectAuthStorage();
+    state.browserLaunchCount += 1;
+    state.browserLaunchInFlight = true;
+    state.lastBrowserLaunchAt = nowMs();
     logger.info("Tenant runtime starting", {
       restaurantId: tenantConfig.restaurantId,
       reason,
+      browserLaunchCount: state.browserLaunchCount,
+      authDataPath,
+      authSessionPath,
+      authStorageWritable: state.authStorageWritable,
+      authSessionExists: state.authSessionExists,
+      memory: getProcessMemorySnapshot(),
     });
 
     try {
@@ -394,25 +561,43 @@ function createTenantRuntime({
         restaurantId: tenantConfig.restaurantId,
       });
     } catch (error) {
+      state.browserLaunchFailureCount += 1;
+      state.lastBrowserLaunchError = toSafeMessage(error && error.message ? error.message : "");
+      await destroyClient("start_failed", { suppressError: true });
       setError(error);
       setStatus("error");
       scheduleReconnect("start_failed");
     } finally {
+      state.browserLaunchInFlight = false;
       starting = false;
     }
   }
 
-  async function destroyClient() {
+  async function destroyClient(reason = "manual_destroy", options = {}) {
+    const suppressError = Boolean(options.suppressError);
     if (!client) {
       return;
     }
 
+    if (shuttingDownClient) {
+      return;
+    }
+
+    const localClient = client;
+    client = null;
+    shuttingDownClient = true;
     try {
-      await client.destroy();
+      await localClient.destroy();
+      logger.info("Tenant client destroyed", {
+        restaurantId: tenantConfig.restaurantId,
+        reason,
+      });
     } catch (error) {
-      setError(error);
+      if (!suppressError) {
+        setError(error);
+      }
     } finally {
-      client = null;
+      shuttingDownClient = false;
     }
   }
 
@@ -420,7 +605,7 @@ function createTenantRuntime({
     paused = true;
     state.pausedReason = String(reason || "manual_pause");
     clearReconnectTimer();
-    await destroyClient();
+    await destroyClient("pause");
     clearQr();
     setStatus("paused");
     logger.warn("Tenant paused", {
@@ -453,7 +638,7 @@ function createTenantRuntime({
     paused = false;
     state.pausedReason = "";
     clearReconnectTimer();
-    await destroyClient();
+    await destroyClient("restart");
     clearQr();
     await start(reason);
   }
@@ -465,7 +650,7 @@ function createTenantRuntime({
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
-    await destroyClient();
+    await destroyClient("stop");
     clearQr();
     setStatus("disconnected");
     logger.info("Tenant runtime stopped", {
@@ -668,6 +853,7 @@ function createTenantRuntime({
     })();
 
     updateHeartbeat();
+    inspectAuthStorage();
 
     return {
       restaurantId: tenantConfig.restaurantId,
@@ -690,8 +876,26 @@ function createTenantRuntime({
       needsAttention: ATTENTION_STATUSES.has(status),
       statusDetail,
       reconnectScheduled: Boolean(reconnectTimer),
+      reconnectLastDelayMs: state.reconnectLastDelayMs,
+      reconnectLastReason: state.reconnectLastReason,
       clientReady: status === "connected",
       whatsappClientId: tenantConfig.whatsappClientId,
+      qrGenerationCount: state.qrGenerationCount,
+      qrRegenerationCount: state.qrRegenerationCount,
+      browserLaunchCount: state.browserLaunchCount,
+      browserLaunchFailureCount: state.browserLaunchFailureCount,
+      browserLaunchInFlight: state.browserLaunchInFlight,
+      lastBrowserLaunchAt: state.lastBrowserLaunchAt,
+      lastBrowserLaunchError: state.lastBrowserLaunchError,
+      disconnectCount: state.disconnectCount,
+      reconnectScheduleCount: state.reconnectScheduleCount,
+      authDataPath,
+      authSessionPath,
+      authStorageWritable: state.authStorageWritable,
+      authSessionExists: state.authSessionExists,
+      authSessionFileCount: state.authSessionFileCount,
+      authStorageLastCheckedAt: state.authStorageLastCheckedAt,
+      processMemory: getProcessMemorySnapshot(),
     };
   }
 
@@ -710,6 +914,22 @@ function createTenantRuntime({
   }
 
   initializeHeartbeat();
+  inspectAuthStorage();
+
+  function getDiagnostics() {
+    return {
+      status: getStatusSnapshot(),
+      stores: {
+        inboundDedupeSize: dedupeStore.size(),
+        outboundReplyDedupeSize: replyDedupeStore.size(),
+        outboundIdempotencySize: outboundIdempotencyStore.size(),
+      },
+      queues: {
+        inboundQueueSize: chatQueue.size(),
+        outboundQueueSize: outboundQueuePending + outboundInFlight,
+      },
+    };
+  }
 
   return {
     tenantConfig,
@@ -721,6 +941,7 @@ function createTenantRuntime({
     sendOutbound,
     getStatusSnapshot,
     getQr,
+    getDiagnostics,
   };
 }
 

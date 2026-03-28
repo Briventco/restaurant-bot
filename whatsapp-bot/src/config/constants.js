@@ -33,6 +33,17 @@ function parseCsv(value) {
     .filter(Boolean);
 }
 
+function uniqueList(values = []) {
+  const deduped = new Set();
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (normalized) {
+      deduped.add(normalized);
+    }
+  }
+  return Array.from(deduped);
+}
+
 const configuredPuppeteerCacheDir = String(
   process.env.PUPPETEER_CACHE_DIR || ".cache/puppeteer"
 ).trim();
@@ -40,6 +51,40 @@ const normalizedPuppeteerCacheDir = path.isAbsolute(configuredPuppeteerCacheDir)
   ? configuredPuppeteerCacheDir
   : path.resolve(process.cwd(), configuredPuppeteerCacheDir);
 process.env.PUPPETEER_CACHE_DIR = normalizedPuppeteerCacheDir;
+
+const configuredAuthDataPath = String(
+  process.env.WHATSAPP_AUTH_DATA_PATH || ".wwebjs_auth"
+).trim();
+const normalizedAuthDataPath = path.isAbsolute(configuredAuthDataPath)
+  ? configuredAuthDataPath
+  : path.resolve(process.cwd(), configuredAuthDataPath);
+process.env.WHATSAPP_AUTH_DATA_PATH = normalizedAuthDataPath;
+
+const puppeteerLowMemoryMode = toBoolean(process.env.PUPPETEER_LOW_MEMORY_MODE, true);
+const puppeteerExtraArgs = parseCsv(process.env.PUPPETEER_EXTRA_ARGS);
+const puppeteerBaseArgs = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+];
+const puppeteerLowMemoryArgs = [
+  "--disable-extensions",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-background-networking",
+  "--disable-background-timer-throttling",
+  "--disable-renderer-backgrounding",
+  "--disable-sync",
+  "--metrics-recording-only",
+  "--mute-audio",
+  "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter",
+];
+const puppeteerArgs = uniqueList([
+  ...puppeteerBaseArgs,
+  ...(puppeteerLowMemoryMode ? puppeteerLowMemoryArgs : []),
+  ...puppeteerExtraArgs,
+]);
 
 const constants = {
   PORT: toNumber(process.env.PORT, 3001),
@@ -66,8 +111,28 @@ const constants = {
     process.env.BOT_RUNTIME_OUTBOUND_FAILED_TTL_MS,
     30 * 60 * 1000
   ),
+  BOT_RUNTIME_RECONNECT_MAX_ATTEMPTS: toNumber(
+    process.env.BOT_RUNTIME_RECONNECT_MAX_ATTEMPTS,
+    20
+  ),
+  BOT_RUNTIME_MIN_RESTART_GAP_MS: toNumber(
+    process.env.BOT_RUNTIME_MIN_RESTART_GAP_MS,
+    3000
+  ),
+  BOT_MEMORY_LOG_INTERVAL_MS: toNumber(
+    process.env.BOT_MEMORY_LOG_INTERVAL_MS,
+    30000
+  ),
+  BOT_MEMORY_WARN_RSS_MB: toNumber(
+    process.env.BOT_MEMORY_WARN_RSS_MB,
+    420
+  ),
+  BOT_MIN_RECOMMENDED_MEMORY_MB: toNumber(
+    process.env.BOT_MIN_RECOMMENDED_MEMORY_MB,
+    1024
+  ),
   WHATSAPP_CLIENT_ID: process.env.WHATSAPP_CLIENT_ID || "restaurant-bot",
-  WHATSAPP_AUTH_DATA_PATH: process.env.WHATSAPP_AUTH_DATA_PATH || ".wwebjs_auth",
+  WHATSAPP_AUTH_DATA_PATH: normalizedAuthDataPath,
   BOT_ENABLED: toBoolean(process.env.BOT_ENABLED, true),
   BOT_RESTAURANT_ID: process.env.BOT_RESTAURANT_ID || "",
   BACKEND_API_BASE_URL: process.env.BACKEND_API_BASE_URL || "http://localhost:3002",
@@ -81,12 +146,10 @@ const constants = {
   PUPPETEER_HEADLESS: toBoolean(process.env.PUPPETEER_HEADLESS, true),
   PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || "",
   PUPPETEER_CACHE_DIR: normalizedPuppeteerCacheDir,
-  PUPPETEER_ARGS: [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-  ],
+  PUPPETEER_LOW_MEMORY_MODE: puppeteerLowMemoryMode,
+  PUPPETEER_EXTRA_ARGS: puppeteerExtraArgs,
+  PUPPETEER_ARGS: puppeteerArgs,
+  BOT_PRINT_TERMINAL_QR: toBoolean(process.env.BOT_PRINT_TERMINAL_QR, false),
   SEND_DELAY_MS: toNumber(process.env.SEND_DELAY_MS, 250),
   SEND_RETRY_ATTEMPTS: toNumber(process.env.SEND_RETRY_ATTEMPTS, 1),
   SEND_RETRY_BACKOFF_MS: toNumber(process.env.SEND_RETRY_BACKOFF_MS, 800),

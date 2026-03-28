@@ -7,6 +7,8 @@ const { constants } = require("./src/config/constants");
 const { createLogger } = require("./src/utils/logger");
 const { createMultiTenantRuntimeManager } = require("./src/runtime/multiTenantRuntimeManager");
 const { collectChromiumDiagnostics } = require("./src/client/chromiumDiagnostics");
+const { getProcessMemorySnapshot } = require("./src/utils/memory");
+const { collectRuntimeEnvironmentDiagnostics } = require("./src/utils/runtimeEnvironment");
 const {
   toBoolean,
   buildQrPngBuffer,
@@ -76,7 +78,7 @@ function createRuntimeAuthMiddleware() {
   };
 }
 
-function buildHealthPayload(summary, readiness) {
+function buildHealthPayload(summary, readiness, environment = {}) {
   return {
     ok: readiness.ready,
     service: "whatsapp-bot",
@@ -86,8 +88,32 @@ function buildHealthPayload(summary, readiness) {
     runtimeReady: readiness.ready,
     reason: readiness.reason,
     counts: summary.counts,
+    memory: getProcessMemorySnapshot(),
+    environment,
     timestamp: new Date().toISOString(),
   };
+}
+
+function logProcessMemorySnapshot(summary, reason) {
+  const memory = getProcessMemorySnapshot();
+  logger.info("Runtime memory snapshot", {
+    reason,
+    memory,
+    runtimeMode: constants.BOT_RUNTIME_MODE,
+    shardId: summary.shardId,
+    tenantCount: summary.counts.total,
+    connectedCount: Number((summary.counts.byStatus || {}).connected || 0),
+  });
+
+  if (memory.rssMb >= Number(constants.BOT_MEMORY_WARN_RSS_MB || 420)) {
+    logger.warn("Runtime memory is near/exceeding warning threshold", {
+      reason,
+      rssMb: memory.rssMb,
+      warnThresholdMb: Number(constants.BOT_MEMORY_WARN_RSS_MB || 420),
+      tenantCount: summary.counts.total,
+      byStatus: summary.counts.byStatus || {},
+    });
+  }
 }
 
 function probeRoute(app, path, timeoutMs = 3000) {
@@ -192,8 +218,42 @@ async function main() {
   const chromiumDiagnostics = collectChromiumDiagnostics(
     constants.PUPPETEER_EXECUTABLE_PATH
   );
+  const environmentDiagnostics = collectRuntimeEnvironmentDiagnostics({
+    authDataPath: constants.WHATSAPP_AUTH_DATA_PATH,
+  });
 
   console.log("CHROMIUM_DIAGNOSTICS =", JSON.stringify(chromiumDiagnostics));
+  console.log("RUNTIME_ENV_DIAGNOSTICS =", JSON.stringify(environmentDiagnostics));
+
+  if (!environmentDiagnostics.authDataPathWritable) {
+    logger.error("WhatsApp auth data path is not writable", {
+      authDataPath: environmentDiagnostics.authDataPath,
+    });
+    throw new Error("WHATSAPP_AUTH_DATA_PATH is not writable.");
+  }
+
+  if (!environmentDiagnostics.authDataPathLikelyPersistent) {
+    logger.warn("WhatsApp auth data path may be ephemeral", {
+      authDataPath: environmentDiagnostics.authDataPath,
+      recommendation:
+        "Mount Render persistent disk and point WHATSAPP_AUTH_DATA_PATH to /var/data/<path>",
+    });
+  }
+
+  if (
+    constants.BOT_ENABLED &&
+    Number(summaryBeforeStart.counts.enabled || 0) > 0 &&
+    environmentDiagnostics.memoryLimitDetected &&
+    Number(environmentDiagnostics.memoryLimitMb || 0) > 0 &&
+    Number(environmentDiagnostics.memoryLimitMb || 0) <
+      Number(constants.BOT_MIN_RECOMMENDED_MEMORY_MB || 1024)
+  ) {
+    logger.warn("Runtime memory limit is below recommended threshold", {
+      memoryLimitMb: environmentDiagnostics.memoryLimitMb,
+      recommendedMinMemoryMb: constants.BOT_MIN_RECOMMENDED_MEMORY_MB,
+      likelyImpact: "chromium_startup_or_auth_instability",
+    });
+  }
 
   if (
     constants.BOT_ENABLED &&
@@ -211,6 +271,24 @@ async function main() {
   }
 
   await runtimeManager.startEnabledTenants();
+  const startupSummary = runtimeManager.getRuntimeSummary();
+  logProcessMemorySnapshot(startupSummary, "post_tenant_start");
+
+  let memoryLogTimer = null;
+  const memoryLogIntervalMs = Math.max(
+    0,
+    Number(constants.BOT_MEMORY_LOG_INTERVAL_MS || 0)
+  );
+  if (memoryLogIntervalMs > 0) {
+    memoryLogTimer = setInterval(() => {
+      const summary = runtimeManager.getRuntimeSummary();
+      logProcessMemorySnapshot(summary, "interval");
+    }, memoryLogIntervalMs);
+
+    if (typeof memoryLogTimer.unref === "function") {
+      memoryLogTimer.unref();
+    }
+  }
 
   app.get("/", (_req, res) => {
     const summary = runtimeManager.getRuntimeSummary();
@@ -231,14 +309,14 @@ async function main() {
     const summary = runtimeManager.getRuntimeSummary();
     const readiness = buildRuntimeReadyState(summary);
 
-    res.status(200).json(buildHealthPayload(summary, readiness));
+    res.status(200).json(buildHealthPayload(summary, readiness, environmentDiagnostics));
   });
 
   app.get("/status", (_req, res) => {
     const summary = runtimeManager.getRuntimeSummary();
     const readiness = buildRuntimeReadyState(summary);
 
-    res.status(200).json(buildHealthPayload(summary, readiness));
+    res.status(200).json(buildHealthPayload(summary, readiness, environmentDiagnostics));
   });
 
   app.get("/runtime/v1/tenants", requireRuntimeKey, (_req, res) => {
@@ -258,6 +336,40 @@ async function main() {
         code: error.code || "",
       });
     }
+  });
+
+  app.get(
+    "/runtime/v1/tenants/:restaurantId/diagnostics",
+    requireRuntimeKey,
+    (req, res) => {
+      try {
+        const diagnostics = runtimeManager.getTenantDiagnostics(req.params.restaurantId);
+        res.status(200).json({ diagnostics });
+      } catch (error) {
+        const statusCode = error.retryable === false ? 404 : 500;
+        res.status(statusCode).json({
+          error: error.message,
+          code: error.code || "",
+        });
+      }
+    }
+  );
+
+  app.get("/runtime/v1/diagnostics/memory", requireRuntimeKey, (_req, res) => {
+    const summary = runtimeManager.getRuntimeSummary();
+    const diagnostics = runtimeManager.listTenantDiagnostics();
+    res.status(200).json({
+      runtimeInstanceId: runtimeManager.runtimeInstanceId,
+      memory: getProcessMemorySnapshot(),
+      summary: {
+        mode: summary.mode,
+        shardId: summary.shardId,
+        counts: summary.counts,
+      },
+      environment: environmentDiagnostics,
+      tenants: diagnostics,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   app.get("/runtime/v1/tenants/:restaurantId/qr", requireRuntimeKey, async (req, res) => {
@@ -426,15 +538,20 @@ async function main() {
       backendApiBaseUrl: constants.BACKEND_API_BASE_URL,
       backendApiPrefix: constants.BACKEND_API_PREFIX,
       puppeteerHeadless: constants.PUPPETEER_HEADLESS,
+      puppeteerLowMemoryMode: constants.PUPPETEER_LOW_MEMORY_MODE,
       puppeteerExecutablePath:
         constants.PUPPETEER_EXECUTABLE_PATH || chromiumDiagnostics.executablePath || "",
       puppeteerCacheDir: constants.PUPPETEER_CACHE_DIR,
       whatsappAuthDataPath: constants.WHATSAPP_AUTH_DATA_PATH,
+      printTerminalQr: constants.BOT_PRINT_TERMINAL_QR,
+      memoryLogIntervalMs: constants.BOT_MEMORY_LOG_INTERVAL_MS,
+      memoryWarnRssMb: constants.BOT_MEMORY_WARN_RSS_MB,
+      minRecommendedMemoryMb: constants.BOT_MIN_RECOMMENDED_MEMORY_MB,
       adminKeyConfigured: Boolean(constants.BOT_RUNTIME_ADMIN_KEY),
     })
   );
   console.log(
-    "RUNTIME_ROUTE_MAP = /, /health, /status, /runtime/v1/tenants/*, /runtime/v1/tenants/:restaurantId/qr.png"
+    "RUNTIME_ROUTE_MAP = /, /health, /status, /runtime/v1/tenants/*, /runtime/v1/tenants/:restaurantId/diagnostics, /runtime/v1/diagnostics/memory, /runtime/v1/tenants/:restaurantId/qr.png"
   );
 
   await logStartupRouteDiagnostics(app).catch((error) => {
@@ -459,6 +576,10 @@ async function main() {
 
   async function gracefulShutdown(signal) {
     logger.warn("Shutdown signal received", { signal });
+    if (memoryLogTimer) {
+      clearInterval(memoryLogTimer);
+      memoryLogTimer = null;
+    }
     server.close();
     await runtimeManager.shutdown();
     process.exit(0);
