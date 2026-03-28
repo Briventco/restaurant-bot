@@ -124,7 +124,7 @@ function createChannelGateway({ providerRegistry, sessionRepo, logger }) {
     return adapter.startSession({ restaurantId });
   }
 
-  function getEphemeralQr({ channel, restaurantId }) {
+  function getEphemeralQr({ channel, restaurantId, includeImage }) {
     const normalizedChannel = getChannel(channel);
     const adapter = getAdapter(normalizedChannel);
 
@@ -132,7 +132,10 @@ function createChannelGateway({ providerRegistry, sessionRepo, logger }) {
       return null;
     }
 
-    return adapter.getEphemeralQr({ restaurantId });
+    return adapter.getEphemeralQr({
+      restaurantId,
+      includeImage: Boolean(includeImage),
+    });
   }
 
   return {

@@ -15,14 +15,39 @@ function toSafeTimeout(value, fallback) {
   return Math.max(1000, Math.min(60000, parsed));
 }
 
+function normalizeRuntimeBaseUrl(input) {
+  const raw = String(input || "").trim().replace(/\/+$/, "");
+  if (!raw) {
+    return raw;
+  }
+
+  if (raw.endsWith("/api/v1")) {
+    return raw.slice(0, -"/api/v1".length);
+  }
+
+  if (raw.endsWith("/runtime/v1")) {
+    return raw.slice(0, -"/runtime/v1".length);
+  }
+
+  return raw;
+}
+
 function createWhatsappRuntimeHttpAdapter({
   runtimeBaseUrl,
   runtimeApiKey,
   logger,
   requestTimeoutMs = 15000,
 }) {
-  const baseUrl = String(runtimeBaseUrl || "").replace(/\/+$/, "");
+  const configuredBaseUrl = String(runtimeBaseUrl || "").trim();
+  const baseUrl = normalizeRuntimeBaseUrl(configuredBaseUrl);
   const timeoutMs = toSafeTimeout(requestTimeoutMs, 15000);
+
+  if (configuredBaseUrl && configuredBaseUrl !== baseUrl) {
+    logger.warn("Normalized external runtime base URL", {
+      configuredBaseUrl,
+      normalizedBaseUrl: baseUrl,
+    });
+  }
 
   function ensureConfigured() {
     if (!baseUrl) {
@@ -69,8 +94,9 @@ function createWhatsappRuntimeHttpAdapter({
           payload = JSON.parse(raw);
         } catch (_parseError) {
           payload = {
-            message: "Runtime returned a non-JSON response",
-            raw,
+            message: `Runtime returned a non-JSON response (status=${response.status})`,
+            rawSnippet: raw.slice(0, 200),
+            runtimeUrl: url,
           };
         }
       }
@@ -256,10 +282,11 @@ function createWhatsappRuntimeHttpAdapter({
     };
   }
 
-  async function getEphemeralQr({ restaurantId }) {
+  async function getEphemeralQr({ restaurantId, includeImage = false }) {
     try {
+      const query = includeImage ? "?includeImage=true" : "";
       const payload = await runtimeRequest(
-        `/runtime/v1/tenants/${encodeURIComponent(restaurantId)}/qr`,
+        `/runtime/v1/tenants/${encodeURIComponent(restaurantId)}/qr${query}`,
         {
           method: "GET",
         }

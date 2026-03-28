@@ -185,6 +185,7 @@ Key endpoints:
 - `POST /api/v1/restaurants/:restaurantId/whatsapp/session/restart`
 - `GET /api/v1/restaurants/:restaurantId/whatsapp/session/status`
 - `GET /api/v1/restaurants/:restaurantId/whatsapp/session/qr`
+- `GET /api/v1/restaurants/:restaurantId/whatsapp/session/qr?includeImage=true`
 
 `GET /api/v1/restaurants/:restaurantId/ops/pilot-snapshot` requires all scopes:
 - `orders.read`

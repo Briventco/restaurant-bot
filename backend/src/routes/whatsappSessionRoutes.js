@@ -1,5 +1,12 @@
 const { Router } = require("express");
 
+function toBoolean(value) {
+  if (value === undefined || value === null || value === "") {
+    return false;
+  }
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
 function createWhatsappSessionRoutes({
   requireApiKey,
   requireRestaurantAccess,
@@ -94,9 +101,11 @@ function createWhatsappSessionRoutes({
     requireRestaurantAccess,
     async (req, res, next) => {
       try {
+        const includeImage = toBoolean(req.query.includeImage);
         const qr = await channelSessionService.getQr({
           channel,
           restaurantId: req.restaurantId,
+          includeImage,
         });
 
         if (!qr) {

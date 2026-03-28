@@ -128,6 +128,7 @@ Error:
 - `POST /api/v1/restaurants/{restaurantId}/whatsapp/session/disconnect`
 - `POST /api/v1/restaurants/{restaurantId}/whatsapp/session/restart`
 - `GET /api/v1/restaurants/{restaurantId}/whatsapp/session/qr`
+- `GET /api/v1/restaurants/{restaurantId}/whatsapp/session/qr?includeImage=true`
 
 ### Outbox (ops/admin)
 
@@ -358,6 +359,27 @@ Response:
   }
 }
 ```
+
+### 9b) WhatsApp session QR
+
+`GET /api/v1/restaurants/{restaurantId}/whatsapp/session/qr?includeImage=true`
+
+Response (shape varies by runtime/provider):
+
+```json
+{
+  "qr": {
+    "qr": "2@abc...raw_qr_text_or_base64...",
+    "generatedAtMs": 1743200000000,
+    "expiresAtMs": 1743200120000,
+    "imageDataUrl": "data:image/png;base64,iVBORw0KGgo..."
+  }
+}
+```
+
+Frontend handling rule:
+- prefer `qr.imageDataUrl` when present
+- otherwise render `qr.qr` as a QR image client-side (raw text fallback)
 
 ### 10) Outbox stats
 

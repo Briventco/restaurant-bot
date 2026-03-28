@@ -19,10 +19,11 @@ function createChannelSessionService({ channelGateway }) {
     });
   }
 
-  async function getQr({ channel, restaurantId }) {
+  async function getQr({ channel, restaurantId, includeImage = false }) {
     return channelGateway.getEphemeralQr({
       channel: normalizeChannel(channel),
       restaurantId,
+      includeImage,
     });
   }
 
