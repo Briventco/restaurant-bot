@@ -349,6 +349,10 @@ function createTenantRuntime({
       clientId: tenantConfig.whatsappClientId,
       protocolTimeoutMs: constants.PUPPETEER_PROTOCOL_TIMEOUT_MS,
       puppeteerArgs: constants.PUPPETEER_ARGS,
+      puppeteerHeadless: constants.PUPPETEER_HEADLESS,
+      puppeteerExecutablePath: constants.PUPPETEER_EXECUTABLE_PATH,
+      authDataPath: constants.WHATSAPP_AUTH_DATA_PATH,
+      logger,
     });
 
     bindClientEvents(client);
@@ -381,7 +385,14 @@ function createTenantRuntime({
 
     try {
       const localClient = await ensureClient();
+      logger.info("Launching tenant browser", {
+        restaurantId: tenantConfig.restaurantId,
+        whatsappClientId: tenantConfig.whatsappClientId,
+      });
       await localClient.initialize();
+      logger.info("Tenant client initialize invoked", {
+        restaurantId: tenantConfig.restaurantId,
+      });
     } catch (error) {
       setError(error);
       setStatus("error");

@@ -205,6 +205,31 @@ npm install
 npm start
 ```
 
+## Render Deployment (Chromium)
+
+Render-safe setup for `whatsapp-web.js`:
+- this runtime uses `puppeteer` (not only `puppeteer-core`)
+- `postinstall` runs `node scripts/installChromium.js`
+- installer executes `npx puppeteer browsers install chrome`
+- runtime resolves executable path from:
+  1) `PUPPETEER_EXECUTABLE_PATH` or `CHROME_BIN`
+  2) Puppeteer-managed bundled Chromium path
+
+Render service settings:
+- Root Directory: `whatsapp-bot`
+- Build Command: `npm install`
+- Start Command: `npm run start`
+
+Required env guidance:
+- do **not** set `PUPPETEER_SKIP_DOWNLOAD=true`
+- keep `PUPPETEER_HEADLESS=true`
+- optionally set `WHATSAPP_AUTH_DATA_PATH` to a mounted persistent disk path for session durability
+
+Startup logs now include:
+- `CHROMIUM_DIAGNOSTICS = ...`
+- `RUNTIME_CONFIG = ...` (includes resolved executable path + auth data path)
+- `RUNTIME_ROUTE_MAP = ...`
+
 ## Key Environment
 
 - `PORT` (default `3001`)
@@ -224,9 +249,12 @@ Single-mode legacy vars still supported:
 - `BOT_ENABLED`
 - `BOT_RESTAURANT_ID`
 - `WHATSAPP_CLIENT_ID`
+- `WHATSAPP_AUTH_DATA_PATH` (default `.wwebjs_auth`)
 - `BACKEND_API_BASE_URL`
 - `BACKEND_API_PREFIX` (default `/api/v1`)
 - `BACKEND_API_KEY`
+- `PUPPETEER_HEADLESS` (default `true`)
+- `PUPPETEER_EXECUTABLE_PATH` (optional override)
 
 Runtime health endpoints:
 - `GET /`

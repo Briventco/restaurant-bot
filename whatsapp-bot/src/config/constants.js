@@ -57,6 +57,7 @@ const constants = {
     30 * 60 * 1000
   ),
   WHATSAPP_CLIENT_ID: process.env.WHATSAPP_CLIENT_ID || "restaurant-bot",
+  WHATSAPP_AUTH_DATA_PATH: process.env.WHATSAPP_AUTH_DATA_PATH || ".wwebjs_auth",
   BOT_ENABLED: toBoolean(process.env.BOT_ENABLED, true),
   BOT_RESTAURANT_ID: process.env.BOT_RESTAURANT_ID || "",
   BACKEND_API_BASE_URL: process.env.BACKEND_API_BASE_URL || "http://localhost:3002",
@@ -67,10 +68,13 @@ const constants = {
     process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS,
     180000
   ),
+  PUPPETEER_HEADLESS: toBoolean(process.env.PUPPETEER_HEADLESS, true),
+  PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || "",
   PUPPETEER_ARGS: [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
+    "--disable-gpu",
   ],
   SEND_DELAY_MS: toNumber(process.env.SEND_DELAY_MS, 250),
   SEND_RETRY_ATTEMPTS: toNumber(process.env.SEND_RETRY_ATTEMPTS, 1),

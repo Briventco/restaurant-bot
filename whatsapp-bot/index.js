@@ -6,6 +6,7 @@ const cors = require("cors");
 const { constants } = require("./src/config/constants");
 const { createLogger } = require("./src/utils/logger");
 const { createMultiTenantRuntimeManager } = require("./src/runtime/multiTenantRuntimeManager");
+const { collectChromiumDiagnostics } = require("./src/client/chromiumDiagnostics");
 
 const logger = createLogger("whatsapp-bot");
 const runtimeManager = createMultiTenantRuntimeManager({ constants });
@@ -182,6 +183,27 @@ async function main() {
   app.use(express.json({ limit: "1mb" }));
 
   const requireRuntimeKey = createRuntimeAuthMiddleware();
+  const summaryBeforeStart = runtimeManager.getRuntimeSummary();
+  const chromiumDiagnostics = collectChromiumDiagnostics(
+    constants.PUPPETEER_EXECUTABLE_PATH
+  );
+
+  console.log("CHROMIUM_DIAGNOSTICS =", JSON.stringify(chromiumDiagnostics));
+
+  if (
+    constants.BOT_ENABLED &&
+    Number(summaryBeforeStart.counts.enabled || 0) > 0 &&
+    !chromiumDiagnostics.ok
+  ) {
+    logger.error("Chromium executable is not available for Puppeteer", {
+      ...chromiumDiagnostics,
+      hint:
+        "Ensure build runs `npm install` (postinstall installs chrome) and do not set PUPPETEER_SKIP_DOWNLOAD=true.",
+    });
+    throw new Error(
+      "Chromium is not available. Runtime cannot start enabled tenants."
+    );
+  }
 
   await runtimeManager.startEnabledTenants();
 
@@ -362,6 +384,10 @@ async function main() {
       maxTenantsPerProcess: constants.BOT_MAX_TENANTS_PER_PROCESS,
       backendApiBaseUrl: constants.BACKEND_API_BASE_URL,
       backendApiPrefix: constants.BACKEND_API_PREFIX,
+      puppeteerHeadless: constants.PUPPETEER_HEADLESS,
+      puppeteerExecutablePath:
+        constants.PUPPETEER_EXECUTABLE_PATH || chromiumDiagnostics.executablePath || "",
+      whatsappAuthDataPath: constants.WHATSAPP_AUTH_DATA_PATH,
       adminKeyConfigured: Boolean(constants.BOT_RUNTIME_ADMIN_KEY),
     })
   );
