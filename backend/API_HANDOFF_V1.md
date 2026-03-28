@@ -14,7 +14,7 @@ Tenant base:
 
 Production deployment:
 
-`https://restaurant-bot-l1mh.onrender.com/api/v1`
+`https://restaurant-bot-11mh.onrender.com/api/v1`
 
 Public/infra endpoints:
 
