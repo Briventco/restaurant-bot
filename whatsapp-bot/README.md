@@ -120,6 +120,8 @@ Endpoints:
 - `GET /runtime/v1/tenants`
 - `GET /runtime/v1/tenants/:restaurantId/status`
 - `GET /runtime/v1/tenants/:restaurantId/qr`
+- `GET /runtime/v1/tenants/:restaurantId/qr?includeImage=true`
+- `GET /runtime/v1/tenants/:restaurantId/qr.png`
 - `POST /runtime/v1/tenants/:restaurantId/pause`
 - `POST /runtime/v1/tenants/:restaurantId/resume`
 - `POST /runtime/v1/tenants/:restaurantId/restart`

@@ -7,6 +7,11 @@ const { constants } = require("./src/config/constants");
 const { createLogger } = require("./src/utils/logger");
 const { createMultiTenantRuntimeManager } = require("./src/runtime/multiTenantRuntimeManager");
 const { collectChromiumDiagnostics } = require("./src/client/chromiumDiagnostics");
+const {
+  toBoolean,
+  buildQrPngBuffer,
+  buildQrImageDataUrl,
+} = require("./src/utils/qrImage");
 
 const logger = createLogger("whatsapp-bot");
 const runtimeManager = createMultiTenantRuntimeManager({ constants });
@@ -255,19 +260,55 @@ async function main() {
     }
   });
 
-  app.get("/runtime/v1/tenants/:restaurantId/qr", requireRuntimeKey, (req, res) => {
+  app.get("/runtime/v1/tenants/:restaurantId/qr", requireRuntimeKey, async (req, res) => {
     try {
       const qr = runtimeManager.getTenantQr(req.params.restaurantId);
       if (!qr) {
         res.status(404).json({ error: "No active QR for tenant" });
         return;
       }
+
+      if (toBoolean(req.query.includeImage)) {
+        const image = await buildQrImageDataUrl(qr.qr);
+        res.status(200).json({
+          qr: {
+            ...qr,
+            imageDataUrl: image.dataUrl,
+            imageSource: image.source,
+          },
+        });
+        return;
+      }
+
       res.status(200).json({ qr });
     } catch (error) {
       const statusCode = error.retryable === false ? 404 : 500;
       res.status(statusCode).json({
         error: error.message,
         code: error.code || "",
+      });
+    }
+  });
+
+  app.get("/runtime/v1/tenants/:restaurantId/qr.png", requireRuntimeKey, async (req, res) => {
+    try {
+      const qr = runtimeManager.getTenantQr(req.params.restaurantId);
+      if (!qr) {
+        res.status(404).json({ error: "No active QR for tenant" });
+        return;
+      }
+
+      const image = await buildQrPngBuffer(qr.qr);
+      const restaurantId = String(req.params.restaurantId || "tenant").trim() || "tenant";
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Disposition", `inline; filename=\"${restaurantId}-qr.png\"`);
+      res.status(200).send(image.buffer);
+    } catch (error) {
+      const statusCode = error.retryable === false ? 404 : 500;
+      res.status(statusCode).json({
+        error: error.message || "Failed to render QR image",
+        code: error.code || "QR_IMAGE_RENDER_FAILED",
       });
     }
   });
@@ -392,7 +433,9 @@ async function main() {
       adminKeyConfigured: Boolean(constants.BOT_RUNTIME_ADMIN_KEY),
     })
   );
-  console.log("RUNTIME_ROUTE_MAP = /, /health, /status, /runtime/v1/tenants/*");
+  console.log(
+    "RUNTIME_ROUTE_MAP = /, /health, /status, /runtime/v1/tenants/*, /runtime/v1/tenants/:restaurantId/qr.png"
+  );
 
   await logStartupRouteDiagnostics(app).catch((error) => {
     logger.error("Runtime route diagnostics failed", {
