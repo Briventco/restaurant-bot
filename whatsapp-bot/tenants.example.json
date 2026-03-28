@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "shardId": "wa-shard-1",
+  "maxTenantsPerProcess": 5,
+  "tenants": [
+    {
+      "restaurantId": "rest_demo_1",
+      "enabled": true,
+      "disabledReason": "",
+      "whatsappClientId": "wa_rest_demo_1",
+      "backendApiBaseUrl": "http://localhost:3002",
+      "backendApiKey": "rest_demo_1.bot_runtime",
+      "allowAllChats": false,
+      "allowedChatIds": [],
+      "allowedPhonePrefixes": ["234"],
+      "ignoreGroupChats": true,
+      "reconnect": {
+        "baseDelayMs": 5000,
+        "maxDelayMs": 120000,
+        "maxAttemptsBeforePause": 20
+      }
+    }
+  ]
+}
