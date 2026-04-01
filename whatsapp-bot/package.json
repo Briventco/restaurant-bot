@@ -7,7 +7,7 @@
     "postinstall": "node scripts/installChromium.js",
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "echo \"No tests yet\""
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

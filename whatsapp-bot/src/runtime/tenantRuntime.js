@@ -13,6 +13,7 @@ const { createChatQueue } = require("../utils/chatQueue");
 const { createBackendInboundService } = require("../services/backendInboundService");
 const { createInboundPipeline } = require("../handlers/createInboundPipeline");
 const { getProcessMemorySnapshot } = require("../utils/memory");
+const { requiresManualReauthentication } = require("./sessionFailurePolicy");
 
 function createRetryableError(code, message, retryable = true) {
   const error = new Error(message);
@@ -272,6 +273,23 @@ function createTenantRuntime({
     reconnectTimer = null;
   }
 
+  function pauseForReauthentication(reason, source = "runtime_reauth_required") {
+    paused = true;
+    clearReconnectTimer();
+    clearQr();
+    state.pausedReason = "reauthentication_required";
+    state.lastDisconnectReason = String(reason || source || "reauthentication_required");
+    setStatus("paused");
+    logger.warn("Tenant paused pending re-authentication", {
+      restaurantId: tenantConfig.restaurantId,
+      source,
+      reason: state.lastDisconnectReason,
+      authSessionExists: state.authSessionExists,
+      authSessionFileCount: state.authSessionFileCount,
+      memory: getProcessMemorySnapshot(),
+    });
+  }
+
   function scheduleReconnect(reason) {
     if (paused || stopped || !tenantConfig.enabled) {
       return;
@@ -448,6 +466,13 @@ function createTenantRuntime({
         disconnectCount: state.disconnectCount,
         memory: getProcessMemorySnapshot(),
       });
+      if (requiresManualReauthentication(state.lastDisconnectReason)) {
+        void destroyClient("event_disconnected_terminal", { suppressError: true })
+          .finally(() => {
+            pauseForReauthentication(state.lastDisconnectReason, "disconnected");
+          });
+        return;
+      }
       void destroyClient("event_disconnected", { suppressError: true })
         .finally(() => {
           scheduleReconnect(state.lastDisconnectReason);
@@ -460,11 +485,10 @@ function createTenantRuntime({
       }
       state.disconnectCount += 1;
       state.lastDisconnectReason = String(message || "auth_failure");
-      setError(createRetryableError("AUTH_FAILURE", state.lastDisconnectReason, true));
-      setStatus("error");
+      setError(createRetryableError("AUTH_FAILURE", state.lastDisconnectReason, false));
       void destroyClient("event_auth_failure", { suppressError: true })
         .finally(() => {
-          scheduleReconnect("auth_failure");
+          pauseForReauthentication(state.lastDisconnectReason, "auth_failure");
         });
     });
 
