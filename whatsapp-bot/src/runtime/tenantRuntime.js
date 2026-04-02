@@ -14,6 +14,8 @@ const { createBackendInboundService } = require("../services/backendInboundServi
 const { createInboundPipeline } = require("../handlers/createInboundPipeline");
 const { getProcessMemorySnapshot } = require("../utils/memory");
 const { requiresManualReauthentication } = require("./sessionFailurePolicy");
+const { isAuthenticatingTimedOut } = require("./authWatchdogPolicy");
+const { classifyLaunchFailure } = require("./launchFailurePolicy");
 
 function createRetryableError(code, message, retryable = true) {
   const error = new Error(message);
@@ -80,6 +82,7 @@ function createTenantRuntime({
     reconnectScheduleCount: 0,
     reconnectLastDelayMs: 0,
     reconnectLastReason: "",
+    lastAuthenticatedAt: 0,
     authStorageLastCheckedAt: 0,
     authStorageWritable: false,
     authSessionExists: false,
@@ -421,6 +424,7 @@ function createTenantRuntime({
       }
       clearQr();
       inspectAuthStorage();
+      state.lastAuthenticatedAt = nowMs();
       setStatus("authenticating");
       logger.info("Tenant authenticated", {
         restaurantId: tenantConfig.restaurantId,
@@ -436,6 +440,7 @@ function createTenantRuntime({
       clearQr();
       inspectAuthStorage();
       state.lastConnectedAt = nowMs();
+      state.lastAuthenticatedAt = 0;
       state.reconnectAttemptCount = 0;
       state.lastDisconnectReason = "";
       state.lastErrorAt = 0;
@@ -457,6 +462,7 @@ function createTenantRuntime({
         return;
       }
       state.disconnectCount += 1;
+      state.lastAuthenticatedAt = 0;
       state.lastDisconnectReason = String(reason || "unknown_disconnect");
       clearQr();
       setStatus("disconnected");
@@ -484,6 +490,7 @@ function createTenantRuntime({
         return;
       }
       state.disconnectCount += 1;
+      state.lastAuthenticatedAt = 0;
       state.lastDisconnectReason = String(message || "auth_failure");
       setError(createRetryableError("AUTH_FAILURE", state.lastDisconnectReason, false));
       void destroyClient("event_auth_failure", { suppressError: true })
@@ -585,12 +592,22 @@ function createTenantRuntime({
         restaurantId: tenantConfig.restaurantId,
       });
     } catch (error) {
+      const launchFailure = classifyLaunchFailure(error);
       state.browserLaunchFailureCount += 1;
       state.lastBrowserLaunchError = toSafeMessage(error && error.message ? error.message : "");
+      if (error && !error.code) {
+        error.code = launchFailure.code;
+      }
       await destroyClient("start_failed", { suppressError: true });
       setError(error);
       setStatus("error");
-      scheduleReconnect("start_failed");
+      logger.warn(launchFailure.logMessage, {
+        restaurantId: tenantConfig.restaurantId,
+        code: launchFailure.code,
+        message: toSafeMessage(error && error.message ? error.message : "", 800),
+        authSessionPath,
+      });
+      scheduleReconnect(launchFailure.reconnectReason);
     } finally {
       state.browserLaunchInFlight = false;
       starting = false;
@@ -610,6 +627,7 @@ function createTenantRuntime({
     const localClient = client;
     client = null;
     shuttingDownClient = true;
+    state.lastAuthenticatedAt = 0;
     try {
       await localClient.destroy();
       logger.info("Tenant client destroyed", {
@@ -934,6 +952,36 @@ function createTenantRuntime({
 
     heartbeatTimer = setInterval(() => {
       updateHeartbeat();
+      if (
+        !starting &&
+        !paused &&
+        !stopped &&
+        !shuttingDownClient &&
+        isAuthenticatingTimedOut({
+          status: state.status,
+          authenticatedAt: state.lastAuthenticatedAt,
+          timeoutMs: constants.BOT_RUNTIME_AUTHENTICATING_TIMEOUT_MS,
+        })
+      ) {
+        const timeoutMs = Number(constants.BOT_RUNTIME_AUTHENTICATING_TIMEOUT_MS || 90000);
+        state.lastAuthenticatedAt = 0;
+        const timeoutError = createRetryableError(
+          "AUTHENTICATING_TIMEOUT",
+          `Tenant stayed in authenticating beyond ${timeoutMs}ms`,
+          true
+        );
+        setError(timeoutError);
+        setStatus("error");
+        logger.warn("Tenant authentication timed out; forcing reconnect", {
+          restaurantId: tenantConfig.restaurantId,
+          timeoutMs,
+          memory: getProcessMemorySnapshot(),
+        });
+        void destroyClient("authenticating_timeout", { suppressError: true })
+          .finally(() => {
+            scheduleReconnect("authenticating_timeout");
+          });
+      }
     }, Math.max(5000, Number(constants.BOT_RUNTIME_HEARTBEAT_MS || 15000)));
   }
 

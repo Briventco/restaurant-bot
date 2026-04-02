@@ -65,13 +65,18 @@ node_modules/
 
 # dotenv environment variables file
 .env
+backend/.env
+whatsapp-bot/.env
 
 # local service account credentials
 serviceAccountKey.json
+backend/serviceAccountKey.json
 
 # whatsapp-web.js local auth/session caches
 .wwebjs_auth/
 .wwebjs_cache/
+whatsapp-bot/.wwebjs_auth/
+whatsapp-bot/.wwebjs_cache/
 
 # dataconnect generated files
 .dataconnect
