@@ -16,6 +16,7 @@ const paymentReceiptRepo = require("./repositories/paymentReceiptRepo");
 const providerSessionRepo = require("./repositories/providerSessionRepo");
 const inboundEventRepo = require("./repositories/inboundEventRepo");
 const outboxRepo = require("./repositories/outboxRepo");
+const conversationSessionRepo = require("./repositories/conversationSessionRepo");
 
 const { createRequireApiKey } = require("./middleware/requireApiKey");
 const { createRequireRestaurantAccess } = require("./middleware/requireRestaurantAccess");
@@ -194,6 +195,8 @@ function createApp() {
     customerService,
     orderService,
     channelGateway,
+    conversationSessionRepo,
+    restaurantRepo,
     logger,
     menuCooldownMs: env.INBOUND_MENU_COOLDOWN_SECONDS * 1000,
   });

@@ -13,6 +13,9 @@ const {
   buildUnavailableItemsMessage,
   buildAwaitingCustomerUpdatePrompt,
   buildAwaitingCustomerEditPrompt,
+  buildOrderSummaryLineItems,
+  buildOrderRejectedMessage,
+  buildOrderReadyMessage,
 } = require("../templates/messages");
 
 function calculateTotal(items) {
@@ -279,6 +282,72 @@ function createOrderService({
     return order;
   }
 
+  async function createGuidedOrder({
+    restaurantId,
+    customer,
+    channel,
+    channelCustomerId,
+    customerPhone,
+    providerMessageId,
+    menuItem,
+    quantity,
+    fulfillmentType,
+    deliveryAddress,
+  }) {
+    const safeQuantity = toSafeQuantity(quantity);
+    const matched = [
+      {
+        menuItemId: menuItem.id,
+        name: menuItem.name,
+        price: Number(menuItem.price) || 0,
+        quantity: safeQuantity,
+        subtotal: (Number(menuItem.price) || 0) * safeQuantity,
+      },
+    ];
+    const total = calculateTotal(matched);
+    const rawMessage =
+      fulfillmentType === "delivery" && deliveryAddress
+        ? `${safeQuantity} ${menuItem.name} delivery ${deliveryAddress}`
+        : `${safeQuantity} ${menuItem.name} ${fulfillmentType || "pickup"}`;
+
+    const order = await orderRepo.createOrder(restaurantId, {
+      restaurantId,
+      customerId: customer.id,
+      channel,
+      channelCustomerId,
+      customerPhone,
+      source: channel,
+      rawMessage,
+      latestProviderMessageId: providerMessageId || "",
+      matched,
+      unavailable: [],
+      unavailableItems: [],
+      issueType: "",
+      staffNote: "",
+      total,
+      status: ORDER_STATUSES.PENDING_CONFIRMATION,
+      paymentMethod: "manual_bank_transfer",
+      paymentState: "not_started",
+      fulfillmentType: fulfillmentType || "pickup",
+      deliveryAddress: deliveryAddress || "",
+      summaryText: buildOrderSummaryLineItems(matched),
+    });
+
+    await orderRepo.addStatusHistory(restaurantId, order.id, {
+      fromStatus: null,
+      toStatus: ORDER_STATUSES.PENDING_CONFIRMATION,
+      actorType: "system",
+      actorId: "guided_whatsapp_flow",
+      reason: "guided_order_created",
+      metadata: {
+        providerMessageId: providerMessageId || "",
+        fulfillmentType: fulfillmentType || "pickup",
+      },
+    });
+
+    return order;
+  }
+
   async function handleAwaitingCustomerUpdate({
     restaurantId,
     activeOrder,
@@ -537,6 +606,96 @@ function createOrderService({
     return updatedOrder;
   }
 
+  async function rejectOrder({ restaurantId, orderId, actor, note = "" }) {
+    const updatedOrder = await transitionOrderStatus({
+      restaurantId,
+      orderId,
+      toStatus: ORDER_STATUSES.CANCELLED,
+      actor,
+      reason: "order_rejected",
+      metadata: {
+        note: String(note || "").trim(),
+      },
+    });
+
+    await sendMessageToOrderCustomer(
+      updatedOrder,
+      buildOrderRejectedMessage(String(note || "").trim()),
+      {
+        type: "order_rejected",
+        sourceAction: "rejectOrder",
+        sourceRef: orderId,
+        note: String(note || "").trim(),
+      }
+    );
+
+    return updatedOrder;
+  }
+
+  async function markOrderReady({ restaurantId, orderId, actor }) {
+    const order = await getOrderOrThrow(restaurantId, orderId);
+    const fulfillmentType = String(order.fulfillmentType || "pickup").trim().toLowerCase();
+
+    if (
+      order.status !== ORDER_STATUSES.CONFIRMED &&
+      order.status !== ORDER_STATUSES.PREPARING &&
+      order.status !== ORDER_STATUSES.RIDER_DISPATCHED
+    ) {
+      throw createHttpError(
+        400,
+        `Order cannot be marked ready from status ${order.status}`
+      );
+    }
+
+    let updatedOrder = order;
+
+    if (fulfillmentType === "delivery") {
+      if (order.status === ORDER_STATUSES.CONFIRMED) {
+        updatedOrder = await transitionOrderStatus({
+          restaurantId,
+          orderId,
+          toStatus: ORDER_STATUSES.PREPARING,
+          actor,
+          reason: "kitchen_ready_transition_prepairing",
+        });
+      }
+
+      if (updatedOrder.status === ORDER_STATUSES.PREPARING) {
+        updatedOrder = await transitionOrderStatus({
+          restaurantId,
+          orderId,
+          toStatus: ORDER_STATUSES.RIDER_DISPATCHED,
+          actor,
+          reason: "order_ready_for_dispatch",
+        });
+      }
+    } else if (order.status === ORDER_STATUSES.CONFIRMED) {
+      updatedOrder = await transitionOrderStatus({
+        restaurantId,
+        orderId,
+        toStatus: ORDER_STATUSES.PREPARING,
+        actor,
+        reason: "order_ready_for_pickup",
+        metadata: {
+          readyForPickup: true,
+        },
+      });
+    }
+
+    await sendMessageToOrderCustomer(
+      updatedOrder,
+      buildOrderReadyMessage({ fulfillmentType }),
+      {
+        type: "order_ready",
+        sourceAction: "markOrderReady",
+        sourceRef: orderId,
+        fulfillmentType,
+      }
+    );
+
+    return updatedOrder;
+  }
+
   return {
     calculateTotal,
     matchMenuItems,
@@ -545,12 +704,15 @@ function createOrderService({
     listOrderMessages,
     getOrderOrThrow,
     createNewOrderFromInbound,
+    createGuidedOrder,
     findActiveOrderByCustomer,
     handleAwaitingCustomerUpdate,
     handleAwaitingCustomerEdit,
     transitionOrderStatus,
     markItemsUnavailable,
     confirmOrder,
+    rejectOrder,
+    markOrderReady,
     sendMessageToOrderCustomer,
     logInboundMessage,
   };

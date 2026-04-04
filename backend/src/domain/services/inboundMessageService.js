@@ -5,7 +5,20 @@ const {
   buildInvalidOrderMessage,
   buildOrderReceivedMessage,
   buildNoPendingCancelMessage,
+  buildSelectedItemPrompt,
+  buildDeliveryOrPickupPrompt,
+  buildAddressPrompt,
+  buildGuidedConfirmPrompt,
+  buildGuidedOrderConfirmedMessage,
 } = require("../templates/messages");
+
+const FLOW_STATES = {
+  AWAITING_ITEM: "awaiting_item",
+  AWAITING_QUANTITY: "awaiting_quantity",
+  AWAITING_FULFILLMENT_TYPE: "awaiting_fulfillment_type",
+  AWAITING_ADDRESS: "awaiting_address",
+  AWAITING_CONFIRMATION: "awaiting_confirmation",
+};
 
 function buildProviderMessageId(normalized) {
   if (normalized.providerMessageId) {
@@ -27,12 +40,23 @@ function normalizeInboundInput(channel, input = {}) {
   };
 }
 
+function toPositiveInteger(value) {
+  const parsed = Number(String(value || "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return Math.max(1, Math.round(parsed));
+}
+
 function createInboundMessageService({
   inboundEventRepo,
   menuService,
   customerService,
   orderService,
   channelGateway,
+  conversationSessionRepo,
+  restaurantRepo,
   logger,
   menuCooldownMs,
 }) {
@@ -57,6 +81,375 @@ function createInboundMessageService({
 
     menuCooldownByChat.set(key, now + effectiveMenuCooldownMs);
     return false;
+  }
+
+  async function sendText(sendMessage, to, text) {
+    if (!sendMessage) {
+      return;
+    }
+
+    await sendMessage({
+      to,
+      text,
+    });
+  }
+
+  async function beginGuidedOrderingFlow({
+    restaurantId,
+    normalized,
+    restaurant,
+    menuItems,
+    sendMessage,
+  }) {
+    const replyText = buildMenuWelcome(menuItems, restaurant && restaurant.name);
+
+    await conversationSessionRepo.upsertSession(
+      restaurantId,
+      normalized.channel,
+      normalized.channelCustomerId,
+      {
+        state: FLOW_STATES.AWAITING_ITEM,
+        restaurantName: String((restaurant && restaurant.name) || "").trim(),
+      }
+    );
+
+    await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+    return {
+      handled: true,
+      shouldReply: true,
+      type: "guided_menu",
+      replyText,
+    };
+  }
+
+  function resolveMenuSelection(menuItems, incomingMessage) {
+    const availableItems = (menuItems || []).filter((item) => item.available);
+    const trimmed = String(incomingMessage || "").trim();
+    const asNumber = Number(trimmed);
+
+    if (Number.isFinite(asNumber) && asNumber >= 1 && asNumber <= availableItems.length) {
+      return availableItems[Math.round(asNumber) - 1] || null;
+    }
+
+    const lowered = normalizeText(trimmed);
+    return (
+      availableItems.find((item) => normalizeText(item.name) === lowered) ||
+      availableItems.find((item) => normalizeText(item.name).includes(lowered)) ||
+      null
+    );
+  }
+
+  async function handleGuidedSession({
+    restaurantId,
+    normalized,
+    session,
+    customer,
+    providerMessageId,
+    sendMessage,
+  }) {
+    const lower = normalizeText(normalized.text);
+    const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+
+    if (!menuItems.length) {
+      const replyText = "Menu is currently unavailable. Please try again later.";
+      await conversationSessionRepo.clearSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId
+      );
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_menu_unavailable",
+        replyText,
+      };
+    }
+
+    if (session.state === FLOW_STATES.AWAITING_ITEM) {
+      const selectedItem = resolveMenuSelection(menuItems, normalized.text);
+      if (!selectedItem) {
+        const replyText = buildMenuWelcome(
+          menuItems,
+          String(session.restaurantName || "").trim()
+        );
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_invalid_item",
+          replyText,
+        };
+      }
+
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          state: FLOW_STATES.AWAITING_QUANTITY,
+          itemId: selectedItem.id,
+          itemName: selectedItem.name,
+          itemPrice: Number(selectedItem.price) || 0,
+        }
+      );
+
+      const replyText = buildSelectedItemPrompt(selectedItem);
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_quantity_prompt",
+        replyText,
+      };
+    }
+
+    if (session.state === FLOW_STATES.AWAITING_QUANTITY) {
+      const quantity = toPositiveInteger(normalized.text);
+      if (!quantity) {
+        const replyText = "Please reply with a valid quantity, for example: 2";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_invalid_quantity",
+          replyText,
+        };
+      }
+
+      const total = Number(session.itemPrice || 0) * quantity;
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          state: FLOW_STATES.AWAITING_FULFILLMENT_TYPE,
+          quantity,
+          total,
+        }
+      );
+
+      const replyText = buildDeliveryOrPickupPrompt({
+        itemName: session.itemName,
+        quantity,
+        total,
+      });
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_fulfillment_prompt",
+        replyText,
+      };
+    }
+
+    if (session.state === FLOW_STATES.AWAITING_FULFILLMENT_TYPE) {
+      let fulfillmentType = "";
+
+      if (lower === "d" || lower === "delivery") {
+        fulfillmentType = "delivery";
+      } else if (lower === "p" || lower === "pickup") {
+        fulfillmentType = "pickup";
+      }
+
+      if (!fulfillmentType) {
+        const replyText = "Reply D for delivery or P for pickup.";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_invalid_fulfillment",
+          replyText,
+        };
+      }
+
+      if (fulfillmentType === "delivery") {
+        await conversationSessionRepo.upsertSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId,
+          {
+            state: FLOW_STATES.AWAITING_ADDRESS,
+            fulfillmentType,
+          }
+        );
+
+        const replyText = buildAddressPrompt();
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_address_prompt",
+          replyText,
+        };
+      }
+
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          state: FLOW_STATES.AWAITING_CONFIRMATION,
+          fulfillmentType,
+          deliveryAddress: "",
+        }
+      );
+
+      const replyText = buildGuidedConfirmPrompt({
+        itemName: session.itemName,
+        quantity: Number(session.quantity || 0),
+        total: Number(session.total || 0),
+        fulfillmentType,
+        address: "",
+      });
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_confirmation_prompt",
+        replyText,
+      };
+    }
+
+    if (session.state === FLOW_STATES.AWAITING_ADDRESS) {
+      const address = String(normalized.text || "").trim();
+      if (!address) {
+        const replyText = buildAddressPrompt();
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_invalid_address",
+          replyText,
+        };
+      }
+
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          state: FLOW_STATES.AWAITING_CONFIRMATION,
+          fulfillmentType: "delivery",
+          deliveryAddress: address,
+        }
+      );
+
+      const replyText = buildGuidedConfirmPrompt({
+        itemName: session.itemName,
+        quantity: Number(session.quantity || 0),
+        total: Number(session.total || 0),
+        fulfillmentType: "delivery",
+        address,
+      });
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_confirmation_prompt",
+        replyText,
+      };
+    }
+
+    if (session.state === FLOW_STATES.AWAITING_CONFIRMATION) {
+      if (lower === "no" || lower === "n") {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const replyText = "Order cancelled. Send HI to start again.";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_cancelled",
+          replyText,
+        };
+      }
+
+      if (lower !== "yes" && lower !== "y") {
+        const replyText = "Please reply YES to confirm or NO to cancel.";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_invalid_confirmation",
+          replyText,
+        };
+      }
+
+      const menuItem =
+        menuItems.find((item) => String(item.id) === String(session.itemId || "")) || null;
+      if (!menuItem || !menuItem.available) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const replyText = "That item is no longer available. Send HI to start again.";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_item_no_longer_available",
+          replyText,
+        };
+      }
+
+      const order = await orderService.createGuidedOrder({
+        restaurantId,
+        customer,
+        channel: normalized.channel,
+        channelCustomerId: normalized.channelCustomerId,
+        customerPhone: normalized.customerPhone,
+        providerMessageId,
+        menuItem,
+        quantity: Number(session.quantity || 0),
+        fulfillmentType: String(session.fulfillmentType || "pickup"),
+        deliveryAddress: String(session.deliveryAddress || "").trim(),
+      });
+
+      await orderService.logInboundMessage(order, normalized.text, {
+        providerMessageId,
+      });
+
+      await conversationSessionRepo.clearSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId
+      );
+
+      const replyText = buildGuidedOrderConfirmedMessage();
+      await orderService.sendMessageToOrderCustomer(order, replyText, {
+        type: "guided_order_confirmed",
+        sourceAction: "guidedOrderConfirmed",
+        sourceRef: order.id,
+        providerMessageId,
+      });
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_order_created",
+        orderId: order.id,
+        replyText,
+      };
+    }
+
+    await conversationSessionRepo.clearSession(
+      restaurantId,
+      normalized.channel,
+      normalized.channelCustomerId
+    );
+
+    return null;
   }
 
   async function processInbound({ restaurantId, normalized, sendMessage }) {
@@ -116,7 +509,28 @@ function createInboundMessageService({
       };
     }
 
-    if (lower === "hi" || lower === "hello" || lower === "menu") {
+    const existingSession = await conversationSessionRepo.getSession(
+      restaurantId,
+      normalized.channel,
+      normalized.channelCustomerId
+    );
+
+    if (existingSession) {
+      const guidedResult = await handleGuidedSession({
+        restaurantId,
+        normalized,
+        session: existingSession,
+        customer,
+        providerMessageId,
+        sendMessage,
+      });
+
+      if (guidedResult) {
+        return guidedResult;
+      }
+    }
+
+    if (lower === "hi" || lower === "hello" || lower === "menu" || lower === "start") {
       if (
         shouldThrottleMenuReply({
           restaurantId,
@@ -130,22 +544,18 @@ function createInboundMessageService({
         };
       }
 
-      const menuItems = await menuService.listAvailableMenuItems(restaurantId);
-      const replyText = buildMenuWelcome(menuItems);
+      const [menuItems, restaurant] = await Promise.all([
+        menuService.listAvailableMenuItems(restaurantId),
+        restaurantRepo.getRestaurantById(restaurantId),
+      ]);
 
-      if (sendMessage) {
-        await sendMessage({
-          to: normalized.channelCustomerId,
-          text: replyText,
-        });
-      }
-
-      return {
-        handled: true,
-        shouldReply: true,
-        type: "menu",
-        replyText,
-      };
+      return beginGuidedOrderingFlow({
+        restaurantId,
+        normalized,
+        restaurant,
+        menuItems,
+        sendMessage,
+      });
     }
 
     if (activeOrder && activeOrder.status === ORDER_STATUSES.AWAITING_CUSTOMER_UPDATE) {
@@ -204,12 +614,7 @@ function createInboundMessageService({
 
     if (lower === "cancel") {
       const replyText = buildNoPendingCancelMessage();
-      if (sendMessage) {
-        await sendMessage({
-          to: normalized.channelCustomerId,
-          text: replyText,
-        });
-      }
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
 
       return {
         handled: true,
@@ -246,12 +651,7 @@ function createInboundMessageService({
       const menuItems = await menuService.listAvailableMenuItems(restaurantId);
       const replyText = buildInvalidOrderMessage(menuItems);
 
-      if (sendMessage) {
-        await sendMessage({
-          to: normalized.channelCustomerId,
-          text: replyText,
-        });
-      }
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
 
       return {
         handled: true,

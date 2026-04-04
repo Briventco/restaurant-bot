@@ -46,6 +46,32 @@ function createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderServic
   );
 
   router.post(
+    "/orders/:orderId/accept",
+    requireApiKey(["orders.write"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const order = await orderService.confirmOrder({
+          restaurantId: req.restaurantId,
+          orderId: req.params.orderId,
+          actor: {
+            type: "staff",
+            id: req.auth.keyId,
+          },
+        });
+
+        res.status(200).json({
+          success: true,
+          message: "Order accepted and customer notified",
+          order,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
     "/orders/:orderId/confirm",
     requireApiKey(["orders.write"]),
     requireRestaurantAccess,
@@ -110,6 +136,62 @@ function createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderServic
         });
 
         res.status(200).json(result);
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/orders/:orderId/reject",
+    requireApiKey(["orders.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      note: { required: false, type: "string" },
+    }),
+    async (req, res, next) => {
+      try {
+        const order = await orderService.rejectOrder({
+          restaurantId: req.restaurantId,
+          orderId: req.params.orderId,
+          actor: {
+            type: "staff",
+            id: req.auth.keyId,
+          },
+          note: req.body.note || "",
+        });
+
+        res.status(200).json({
+          success: true,
+          message: "Order rejected and customer notified",
+          order,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/orders/:orderId/ready",
+    requireApiKey(["orders.write"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const order = await orderService.markOrderReady({
+          restaurantId: req.restaurantId,
+          orderId: req.params.orderId,
+          actor: {
+            type: "staff",
+            id: req.auth.keyId,
+          },
+        });
+
+        res.status(200).json({
+          success: true,
+          message: "Order marked ready and customer notified",
+          order,
+        });
       } catch (error) {
         next(error);
       }
