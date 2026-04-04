@@ -2,6 +2,9 @@ const { Router } = require("express");
 const { env } = require("../config/env");
 
 function resolveRuntimeMode() {
+  if (String(env.WHATSAPP_PROVIDER || "").trim().toLowerCase() === "meta") {
+    return "meta";
+  }
   if (env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME) {
     return "internal";
   }

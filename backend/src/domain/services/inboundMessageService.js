@@ -308,13 +308,13 @@ function createInboundMessageService({
     });
   }
 
-  async function handleInboundNormalized({ restaurantId, message }) {
+  async function handleInboundNormalized({ restaurantId, message, sendMessage = null }) {
     const normalized = normalizeInboundInput(message.channel, message);
 
     return processInbound({
       restaurantId,
       normalized,
-      sendMessage: null,
+      sendMessage,
     });
   }
 

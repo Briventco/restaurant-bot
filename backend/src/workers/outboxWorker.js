@@ -8,6 +8,7 @@ const { createOutboxService } = require("../domain/services/outboxService");
 const { ProviderRegistry } = require("../transport/providers/providerRegistry");
 const { createChannelGateway } = require("../transport/providers/channelGateway");
 const { createWhatsappAdapter } = require("../channels/whatsapp-web/whatsappAdapter");
+const { createWhatsappMetaAdapter } = require("../channels/whatsapp-meta/whatsappMetaAdapter");
 const {
   createWhatsappRuntimeHttpAdapter,
 } = require("../channels/whatsapp-runtime-http/whatsappRuntimeHttpAdapter");
@@ -27,12 +28,22 @@ function buildWorkerId() {
 
 function createChannelGatewayForWorker() {
   const providerRegistry = new ProviderRegistry();
+  const whatsappProvider = String(env.WHATSAPP_PROVIDER || "runtime-http").trim().toLowerCase();
   const internalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME;
   const externalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME;
 
   let whatsappAdapter;
 
-  if (internalWhatsappRuntimeEnabled) {
+  if (whatsappProvider === "meta") {
+    whatsappAdapter = createWhatsappMetaAdapter({
+      accessToken: env.META_ACCESS_TOKEN,
+      phoneNumberId: env.META_PHONE_NUMBER_ID,
+      wabaId: env.META_WABA_ID,
+      apiVersion: env.META_API_VERSION,
+      logger,
+      channel: "whatsapp-web",
+    });
+  } else if (internalWhatsappRuntimeEnabled) {
     whatsappAdapter = createWhatsappAdapter({
       sessionRepo: providerSessionRepo,
       logger,

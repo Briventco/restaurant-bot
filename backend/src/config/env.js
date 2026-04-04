@@ -27,6 +27,7 @@ function toBoolean(value, fallback) {
 const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: toNumber(process.env.PORT, 3002),
+  WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || "runtime-http",
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
   BACKEND_DEFAULT_RESTAURANT_ID:
     process.env.BACKEND_DEFAULT_RESTAURANT_ID || "",
@@ -52,6 +53,18 @@ const env = {
     process.env.WHATSAPP_RUNTIME_REQUEST_TIMEOUT_MS,
     15000
   ),
+  META_WEBHOOK_ENABLED: toBoolean(
+    process.env.META_WEBHOOK_ENABLED,
+    false
+  ),
+  META_API_VERSION: process.env.META_API_VERSION || "v22.0",
+  META_ACCESS_TOKEN: process.env.META_ACCESS_TOKEN || "",
+  META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || "",
+  META_WABA_ID: process.env.META_WABA_ID || "",
+  META_WEBHOOK_PATH: process.env.META_WEBHOOK_PATH || "/webhooks/meta/whatsapp",
+  META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN || "",
+  META_WEBHOOK_DEFAULT_RESTAURANT_ID:
+    process.env.META_WEBHOOK_DEFAULT_RESTAURANT_ID || "",
   OUTBOX_INLINE_SEND_ENABLED: toBoolean(
     process.env.OUTBOX_INLINE_SEND_ENABLED,
     true

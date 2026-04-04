@@ -39,6 +39,7 @@ const { createAuthService } = require("./auth/authService");
 const { ProviderRegistry } = require("./transport/providers/providerRegistry");
 const { createChannelGateway } = require("./transport/providers/channelGateway");
 const { createWhatsappAdapter } = require("./channels/whatsapp-web/whatsappAdapter");
+const { createWhatsappMetaAdapter } = require("./channels/whatsapp-meta/whatsappMetaAdapter");
 const {
   createWhatsappRuntimeHttpAdapter,
 } = require("./channels/whatsapp-runtime-http/whatsappRuntimeHttpAdapter");
@@ -69,6 +70,7 @@ const {
 } = require("./routes/whatsappSessionRoutes");
 const { createLegacyCompatRoutes } = require("./routes/legacyCompatRoutes");
 const { createMessageRoutes } = require("./routes/messageRoutes");
+const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
 
 const API_VERSION = "v1";
 const API_BASE = `/api/${API_VERSION}`;
@@ -96,11 +98,27 @@ function createApp() {
   });
 
   const providerRegistry = new ProviderRegistry();
+  const whatsappProvider = String(env.WHATSAPP_PROVIDER || "runtime-http").trim().toLowerCase();
   const internalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME;
   const externalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME;
   let whatsappAdapter;
 
-  if (internalWhatsappRuntimeEnabled) {
+  if (whatsappProvider === "meta") {
+    whatsappAdapter = createWhatsappMetaAdapter({
+      accessToken: env.META_ACCESS_TOKEN,
+      phoneNumberId: env.META_PHONE_NUMBER_ID,
+      wabaId: env.META_WABA_ID,
+      apiVersion: env.META_API_VERSION,
+      logger,
+      channel: "whatsapp-web",
+    });
+
+    logger.info("Backend WhatsApp provider is Meta Cloud API", {
+      mode: "meta_cloud_api",
+      phoneNumberId: env.META_PHONE_NUMBER_ID,
+      wabaId: env.META_WABA_ID,
+    });
+  } else if (internalWhatsappRuntimeEnabled) {
     whatsappAdapter = createWhatsappAdapter({
       sessionRepo: providerSessionRepo,
       logger,
@@ -226,6 +244,15 @@ function createApp() {
   app.use(`${API_BASE}/admin`, createAdminRoutes({ requireAuth, requireRole }));
   // Unversioned aliases for deployment probes and simple uptime checks.
   app.use(createHealthRoutes());
+  app.use(
+    createMetaWebhookRoutes({
+      env,
+      logger,
+      restaurantRepo,
+      inboundMessageService,
+      channelGateway,
+    })
+  );
 
   const restaurantApiBase = `${API_BASE}/restaurants/:restaurantId`;
 
