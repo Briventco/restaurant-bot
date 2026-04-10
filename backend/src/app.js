@@ -92,8 +92,25 @@ const API_BASE = `/api/${API_VERSION}`;
 
 function createApp() {
   const app = express();
+  const allowedOrigins = new Set(
+    Array.isArray(env.CORS_ALLOWED_ORIGINS) ? env.CORS_ALLOWED_ORIGINS : []
+  );
+  const corsOptions = {
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.size === 0 || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
 
-  app.use(cors());
+      callback(new Error(`Origin ${origin} is not allowed by CORS`));
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+    credentials: true,
+  };
+
+  app.use(cors(corsOptions));
+  app.options(/.*/, cors(corsOptions));
   app.use(express.json({ limit: "1mb" }));
 
   const requireApiKey = createRequireApiKey({ apiKeyRepo, logger });

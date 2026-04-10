@@ -24,6 +24,17 @@ function toBoolean(value, fallback) {
   return fallback;
 }
 
+function toStringArray(value, fallback = []) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: toNumber(process.env.PORT, 3002),
@@ -135,6 +146,10 @@ const env = {
     process.env.RESTAURANT_ACTIVATION_MONITOR_INTERVAL_MS,
     15000
   ),
+  CORS_ALLOWED_ORIGINS: toStringArray(process.env.CORS_ALLOWED_ORIGINS, [
+    "http://localhost:5173",
+    "http://localhost:4173",
+  ]),
 };
 
 module.exports = {
