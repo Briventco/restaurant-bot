@@ -202,6 +202,17 @@ function createOrderService({
     return orderRepo.listOrders(restaurantId, { status, limit });
   }
 
+  async function listCurrentOrders({ restaurantId, limit }) {
+    const requestedLimit = Number(limit) > 0 ? Number(limit) : 50;
+    const recentOrders = await orderRepo.listOrders(restaurantId, {
+      limit: Math.max(requestedLimit, 100),
+    });
+
+    return recentOrders
+      .filter((order) => ACTIVE_ORDER_STATUSES.includes(String(order.status || "")))
+      .slice(0, requestedLimit);
+  }
+
   async function getOrder({ restaurantId, orderId }) {
     return getOrderOrThrow(restaurantId, orderId);
   }
@@ -282,6 +293,12 @@ function createOrderService({
     return order;
   }
 
+  async function resolveRequestedItems({ restaurantId, messageText }) {
+    const menuItems = await menuRepo.listMenuItems(restaurantId);
+    const parsedItems = await orderParsingService.parseOrder(messageText, menuItems);
+    return matchMenuItems(parsedItems, menuItems);
+  }
+
   async function createGuidedOrder({
     restaurantId,
     customer,
@@ -346,6 +363,117 @@ function createOrderService({
     });
 
     return order;
+  }
+
+  async function createGuidedOrderFromItems({
+    restaurantId,
+    customer,
+    channel,
+    channelCustomerId,
+    customerPhone,
+    providerMessageId,
+    matched,
+    fulfillmentType,
+    deliveryAddress,
+    rawMessage = "",
+  }) {
+    const safeMatched = Array.isArray(matched) ? matched.filter(Boolean) : [];
+    if (!safeMatched.length) {
+      throw createHttpError(400, "At least one matched item is required");
+    }
+
+    const total = calculateTotal(safeMatched);
+
+    const order = await orderRepo.createOrder(restaurantId, {
+      restaurantId,
+      customerId: customer.id,
+      channel,
+      channelCustomerId,
+      customerPhone,
+      source: channel,
+      rawMessage:
+        String(rawMessage || "").trim() ||
+        safeMatched
+          .map((item) => `${item.quantity} ${item.name}`)
+          .join(" and "),
+      latestProviderMessageId: providerMessageId || "",
+      matched: safeMatched,
+      unavailable: [],
+      unavailableItems: [],
+      issueType: "",
+      staffNote: "",
+      total,
+      status: ORDER_STATUSES.PENDING_CONFIRMATION,
+      paymentMethod: "manual_bank_transfer",
+      paymentState: "not_started",
+      fulfillmentType: fulfillmentType || "pickup",
+      deliveryAddress: deliveryAddress || "",
+      summaryText: buildOrderSummaryLineItems(safeMatched),
+    });
+
+    await orderRepo.addStatusHistory(restaurantId, order.id, {
+      fromStatus: null,
+      toStatus: ORDER_STATUSES.PENDING_CONFIRMATION,
+      actorType: "system",
+      actorId: "guided_whatsapp_flow",
+      reason: "guided_multi_item_order_created",
+      metadata: {
+        providerMessageId: providerMessageId || "",
+        fulfillmentType: fulfillmentType || "pickup",
+        itemCount: safeMatched.length,
+      },
+    });
+
+    return order;
+  }
+
+  async function updatePendingOrderFromCustomer({
+    restaurantId,
+    orderId,
+    matched,
+    fulfillmentType,
+    deliveryAddress,
+    rawMessage,
+    providerMessageId,
+    actor,
+    reason = "customer_updated_pending_order",
+  }) {
+    const order = await getOrderOrThrow(restaurantId, orderId);
+    const safeMatched = Array.isArray(matched) ? matched.filter(Boolean) : order.matched || [];
+    if (!safeMatched.length) {
+      throw createHttpError(400, "At least one matched item is required");
+    }
+
+    const patch = {
+      matched: safeMatched,
+      total: calculateTotal(safeMatched),
+      summaryText: buildOrderSummaryLineItems(safeMatched),
+      rawMessage: String(rawMessage || order.rawMessage || "").trim(),
+      latestProviderMessageId: String(providerMessageId || order.latestProviderMessageId || "").trim(),
+    };
+
+    if (fulfillmentType) {
+      patch.fulfillmentType = fulfillmentType;
+      patch.deliveryAddress = fulfillmentType === "delivery" ? String(deliveryAddress || "").trim() : "";
+    } else if (deliveryAddress !== undefined) {
+      patch.deliveryAddress = String(deliveryAddress || "").trim();
+    }
+
+    const updatedOrder = await orderRepo.updateOrder(restaurantId, orderId, patch);
+
+    await orderRepo.addStatusHistory(restaurantId, orderId, {
+      fromStatus: order.status,
+      toStatus: updatedOrder.status,
+      actorType: (actor && actor.type) || "customer",
+      actorId: (actor && actor.id) || order.channelCustomerId,
+      reason,
+      metadata: {
+        fulfillmentType: patch.fulfillmentType || updatedOrder.fulfillmentType || "",
+        itemCount: safeMatched.length,
+      },
+    });
+
+    return updatedOrder;
   }
 
   async function handleAwaitingCustomerUpdate({
@@ -696,15 +824,95 @@ function createOrderService({
     return updatedOrder;
   }
 
+  async function cancelCurrentOrdersForCustomer({
+    restaurantId,
+    channelCustomerId,
+    channel = "",
+    actor,
+    reason = "test_cleanup_cancel_active_orders",
+  }) {
+    const normalizedCustomerId = String(channelCustomerId || "").trim();
+    const normalizedChannel = String(channel || "").trim();
+
+    if (!normalizedCustomerId) {
+      throw createHttpError(400, "channelCustomerId is required");
+    }
+
+    const activeOrders = await listCurrentOrders({
+      restaurantId,
+      limit: 200,
+    });
+
+    const matchingOrders = activeOrders.filter((order) => {
+      const sameCustomer =
+        String(order.channelCustomerId || "").trim() === normalizedCustomerId;
+      const sameChannel = normalizedChannel
+        ? String(order.channel || "").trim() === normalizedChannel
+        : true;
+
+      return sameCustomer && sameChannel;
+    });
+
+    const cancelled = [];
+    const skipped = [];
+
+    for (const order of matchingOrders) {
+      const decision = canTransition({
+        fromStatus: order.status,
+        toStatus: ORDER_STATUSES.CANCELLED,
+        restaurantConfig: null,
+      });
+
+      if (!decision.allowed) {
+        skipped.push({
+          id: order.id,
+          status: order.status,
+          reason: decision.reason,
+        });
+        continue;
+      }
+
+      const updatedOrder = await transitionOrderStatus({
+        restaurantId,
+        orderId: order.id,
+        toStatus: ORDER_STATUSES.CANCELLED,
+        actor,
+        reason,
+        metadata: {
+          cleanup: true,
+        },
+      });
+
+      cancelled.push({
+        id: updatedOrder.id,
+        status: updatedOrder.status,
+      });
+    }
+
+    return {
+      channelCustomerId: normalizedCustomerId,
+      channel: normalizedChannel,
+      matchedCount: matchingOrders.length,
+      cancelledCount: cancelled.length,
+      skippedCount: skipped.length,
+      cancelled,
+      skipped,
+    };
+  }
+
   return {
     calculateTotal,
     matchMenuItems,
     listOrders,
+    listCurrentOrders,
     getOrder,
     listOrderMessages,
     getOrderOrThrow,
     createNewOrderFromInbound,
+    resolveRequestedItems,
     createGuidedOrder,
+    createGuidedOrderFromItems,
+    updatePendingOrderFromCustomer,
     findActiveOrderByCustomer,
     handleAwaitingCustomerUpdate,
     handleAwaitingCustomerEdit,
@@ -713,6 +921,7 @@ function createOrderService({
     confirmOrder,
     rejectOrder,
     markOrderReady,
+    cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,
     logInboundMessage,
   };

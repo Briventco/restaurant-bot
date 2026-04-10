@@ -23,6 +23,26 @@ function buildMenuWelcome(menuItems, restaurantName = "") {
   )}\n\nReply with the number or item name.`;
 }
 
+function buildGreetingMessage(restaurantName = "") {
+  const safeRestaurantName = String(restaurantName || "").trim();
+  if (safeRestaurantName) {
+    return `Hi, welcome to ${safeRestaurantName}.\n\nYou can ask for the menu, ask what we have in stock, or start an order whenever you're ready.`;
+  }
+
+  return "Hi. You can ask for the menu, ask what we have in stock, or start an order whenever you're ready.";
+}
+
+function buildStockAvailabilityMessage(menuItems) {
+  const availableItems = (menuItems || []).filter((item) => item.available);
+  if (!availableItems.length) {
+    return "We do not have any available items in stock right now.";
+  }
+
+  return `Currently available items:\n${buildGuidedMenuList(
+    availableItems
+  )}\n\nIf you want to order, reply with the item name or ask me to show the menu.`;
+}
+
 function buildInvalidOrderMessage(menuItems) {
   return `I couldn't detect a valid order.\n\nHere is our menu:\n${formatMenu(menuItems)}`;
 }
@@ -31,6 +51,14 @@ function buildOrderSummaryLineItems(matched) {
   return (matched || [])
     .map((item) => `${item.quantity} x ${item.name} = N${item.subtotal}`)
     .join("\n");
+}
+
+function buildCartSummaryText({ matched, itemName, quantity, total }) {
+  if (Array.isArray(matched) && matched.length) {
+    return buildOrderSummaryLineItems(matched);
+  }
+
+  return `${quantity} x ${itemName} = N${total}`;
 }
 
 function buildOrderReceivedMessage({ matched, total, unavailable }) {
@@ -92,21 +120,43 @@ function buildNoPendingCancelMessage() {
   return "You do not have a pending order update to cancel.";
 }
 
-function buildSelectedItemPrompt(item) {
-  return `You selected ${item.name} - N${item.price}\n\nHow many portions?`;
+function buildSelectedItemPrompt(item, options = {}) {
+  const prefix = String(options.prefix || "").trim();
+  const base = `You selected ${item.name} - N${item.price}`;
+  return prefix ? `${prefix}\n\n${base}\n\nHow many portions?` : `${base}\n\nHow many portions?`;
 }
 
-function buildDeliveryOrPickupPrompt({ itemName, quantity, total }) {
-  return `Order Summary:\n${quantity} x ${itemName} = N${total}\n\nDelivery or Pickup?\nReply D or P`;
+function buildDeliveryOrPickupPrompt({ matched, itemName, quantity, total, prefix = "" }) {
+  const body = `Order Summary:\n${buildCartSummaryText({
+    matched,
+    itemName,
+    quantity,
+    total,
+  })}\n\nDelivery or Pickup?\nReply D or P`;
+
+  return prefix ? `${String(prefix).trim()}\n\n${body}` : body;
 }
 
 function buildAddressPrompt() {
   return "Please send your delivery address.";
 }
 
-function buildGuidedConfirmPrompt({ itemName, quantity, total, fulfillmentType, address }) {
-  let text = "Confirm order?\n\n";
-  text += `${quantity} x ${itemName} = N${total}`;
+function buildGuidedConfirmPrompt({
+  matched,
+  itemName,
+  quantity,
+  total,
+  fulfillmentType,
+  address,
+  prefix = "",
+}) {
+  let text = prefix ? `${String(prefix).trim()}\n\nConfirm order?\n\n` : "Confirm order?\n\n";
+  text += buildCartSummaryText({
+    matched,
+    itemName,
+    quantity,
+    total,
+  });
   text += `\n${fulfillmentType === "delivery" ? "Delivery" : "Pickup"}`;
 
   if (fulfillmentType === "delivery" && address) {
@@ -121,11 +171,17 @@ function buildGuidedOrderConfirmedMessage() {
   return "Order confirmed! We will notify you when it is accepted.";
 }
 
+function buildActiveOrderExistsMessage(order) {
+  const status = String((order && order.status) || "pending").replace(/_/g, " ");
+  return `You already have an active order in progress.\n\nCurrent status: ${status}.\nReply CANCEL if you want to cancel it first, or wait for the restaurant to update you.`;
+}
+
 function buildOrderRejectedMessage(note = "") {
-  let text = "Your order could not be accepted.";
+  let text = "Sorry, we couldn't accept your order.";
   if (note) {
     text += `\n\nReason: ${note}`;
   }
+  text += "\n\nYou can place a new order anytime.";
   return text;
 }
 
@@ -140,6 +196,8 @@ function buildOrderReadyMessage({ fulfillmentType }) {
 module.exports = {
   formatMenu,
   buildGuidedMenuList,
+  buildGreetingMessage,
+  buildStockAvailabilityMessage,
   buildMenuWelcome,
   buildInvalidOrderMessage,
   buildOrderSummaryLineItems,
@@ -155,6 +213,7 @@ module.exports = {
   buildAddressPrompt,
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
+  buildActiveOrderExistsMessage,
   buildOrderRejectedMessage,
   buildOrderReadyMessage,
 };

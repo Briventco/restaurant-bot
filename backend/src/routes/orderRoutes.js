@@ -14,9 +14,35 @@ function createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderServic
     requireRestaurantAccess,
     async (req, res, next) => {
       try {
-        const orders = await orderService.listOrders({
+        const activeOnly =
+          String(req.query.active || "").trim().toLowerCase() === "true";
+
+        const orders = activeOnly
+          ? await orderService.listCurrentOrders({
+              restaurantId: req.restaurantId,
+              limit: req.query.limit || 50,
+            })
+          : await orderService.listOrders({
+              restaurantId: req.restaurantId,
+              status: req.query.status || "",
+              limit: req.query.limit || 50,
+            });
+
+        res.status(200).json({ orders });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
+    "/orders/current",
+    requireApiKey(["orders.read"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const orders = await orderService.listCurrentOrders({
           restaurantId: req.restaurantId,
-          status: req.query.status || "",
           limit: req.query.limit || 50,
         });
 
@@ -39,6 +65,39 @@ function createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderServic
         });
 
         res.status(200).json({ order });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/orders/cancel-current",
+    requireApiKey(["orders.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      channelCustomerId: { required: true, type: "string", minLength: 1 },
+      channel: { required: false, type: "string" },
+      reason: { required: false, type: "string" },
+    }),
+    async (req, res, next) => {
+      try {
+        const result = await orderService.cancelCurrentOrdersForCustomer({
+          restaurantId: req.restaurantId,
+          channelCustomerId: req.body.channelCustomerId,
+          channel: req.body.channel || "",
+          actor: {
+            type: "staff",
+            id: req.auth.keyId,
+          },
+          reason: req.body.reason || "staff_cancelled_current_customer_orders",
+        });
+
+        res.status(200).json({
+          success: true,
+          message: "Active customer orders processed",
+          result,
+        });
       } catch (error) {
         next(error);
       }

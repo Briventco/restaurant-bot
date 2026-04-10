@@ -1,7 +1,12 @@
 const { Router } = require("express");
 const { validateBody } = require("../middleware/validateBody");
 
-function createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo }) {
+function createMenuRoutes({
+  requireApiKey,
+  requireRestaurantAccess,
+  menuRepo,
+  restaurantHealthService,
+}) {
   const router = Router({ mergeParams: true });
 
   router.get(
@@ -24,6 +29,7 @@ function createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo }) 
     requireRestaurantAccess,
     validateBody({
       name: { type: "string", required: true, minLength: 1 },
+      category: { type: "string", required: false },
       price: {
         required: true,
         custom: (value) =>
@@ -35,9 +41,17 @@ function createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo }) 
       try {
         const item = await menuRepo.createMenuItem(req.restaurantId, {
           name: req.body.name.trim(),
+          category:
+            typeof req.body.category === "string" ? req.body.category.trim() : "",
           price: req.body.price,
           available: req.body.available !== false,
         });
+        if (restaurantHealthService) {
+          await restaurantHealthService.evaluateAndPersistRestaurantHealth({
+            restaurantId: req.restaurantId,
+            source: "menu_created",
+          });
+        }
 
         res.status(201).json({ item });
       } catch (error) {
@@ -56,6 +70,9 @@ function createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo }) 
         if (typeof req.body.name === "string") {
           patch.name = req.body.name.trim();
         }
+        if (typeof req.body.category === "string") {
+          patch.category = req.body.category.trim();
+        }
         if (typeof req.body.price === "number") {
           patch.price = req.body.price;
         }
@@ -73,6 +90,12 @@ function createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo }) 
           res.status(404).json({ error: "Menu item not found" });
           return;
         }
+        if (restaurantHealthService) {
+          await restaurantHealthService.evaluateAndPersistRestaurantHealth({
+            restaurantId: req.restaurantId,
+            source: "menu_updated",
+          });
+        }
 
         res.status(200).json({ item: updated });
       } catch (error) {
@@ -88,6 +111,12 @@ function createMenuRoutes({ requireApiKey, requireRestaurantAccess, menuRepo }) 
     async (req, res, next) => {
       try {
         await menuRepo.deleteMenuItem(req.restaurantId, req.params.itemId);
+        if (restaurantHealthService) {
+          await restaurantHealthService.evaluateAndPersistRestaurantHealth({
+            restaurantId: req.restaurantId,
+            source: "menu_deleted",
+          });
+        }
         res.status(204).send();
       } catch (error) {
         next(error);

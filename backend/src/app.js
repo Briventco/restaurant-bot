@@ -15,6 +15,9 @@ const orderRepo = require("./repositories/orderRepo");
 const paymentReceiptRepo = require("./repositories/paymentReceiptRepo");
 const providerSessionRepo = require("./repositories/providerSessionRepo");
 const inboundEventRepo = require("./repositories/inboundEventRepo");
+const routingAuditRepo = require("./repositories/routingAuditRepo");
+const restaurantHealthRepo = require("./repositories/restaurantHealthRepo");
+const activationJobRepo = require("./repositories/activationJobRepo");
 const outboxRepo = require("./repositories/outboxRepo");
 const conversationSessionRepo = require("./repositories/conversationSessionRepo");
 
@@ -35,6 +38,16 @@ const { createOrderService } = require("./domain/services/orderService");
 const { createPaymentService } = require("./domain/services/paymentService");
 const { createInboundMessageService } = require("./domain/services/inboundMessageService");
 const { createOutboxService } = require("./domain/services/outboxService");
+const { createLlmService } = require("./domain/services/llmService");
+const {
+  createRestaurantHealthService,
+} = require("./domain/services/restaurantHealthService");
+const {
+  createRestaurantActivationService,
+} = require("./domain/services/restaurantActivationService");
+const {
+  createHealthAlertService,
+} = require("./domain/services/healthAlertService");
 const { createAuthService } = require("./auth/authService");
 
 const { ProviderRegistry } = require("./transport/providers/providerRegistry");
@@ -60,6 +73,7 @@ const { createAuthRoutes } = require("./routes/authRoutes");
 const { createAdminRoutes } = require("./routes/adminRoutes");
 const { createRestaurantRoutes } = require("./routes/restaurantRoutes");
 const { createMenuRoutes } = require("./routes/menuRoutes");
+const { createSettingsRoutes } = require("./routes/settingsRoutes");
 const { createDeliveryZoneRoutes } = require("./routes/deliveryZoneRoutes");
 const { createOrderRoutes } = require("./routes/orderRoutes");
 const { createPaymentRoutes } = require("./routes/paymentRoutes");
@@ -94,7 +108,21 @@ function createApp() {
   });
 
   const orderParsingService = createOrderParsingService({
+    llmProvider: env.LLM_PROVIDER,
     openAIApiKey: env.OPENAI_API_KEY,
+    openAIModel: env.OPENAI_MODEL,
+    geminiApiKey: env.GEMINI_API_KEY,
+    geminiModel: env.GEMINI_MODEL,
+    requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
+    logger,
+  });
+  const llmService = createLlmService({
+    llmProvider: env.LLM_PROVIDER,
+    openAIApiKey: env.OPENAI_API_KEY,
+    openAIModel: env.OPENAI_MODEL,
+    geminiApiKey: env.GEMINI_API_KEY,
+    geminiModel: env.GEMINI_MODEL,
+    requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
     logger,
   });
 
@@ -104,6 +132,69 @@ function createApp() {
   const externalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME;
   let whatsappAdapter;
 
+  async function resolveRestaurantMetaConfig({ restaurantId }) {
+    const safeRestaurantId = String(restaurantId || "").trim();
+    const restaurant = safeRestaurantId
+      ? await restaurantRepo.getRestaurantById(safeRestaurantId)
+      : null;
+    const whatsapp =
+      restaurant && restaurant.whatsapp && typeof restaurant.whatsapp === "object"
+        ? restaurant.whatsapp
+        : {};
+
+    const defaultRestaurantId = String(
+      env.META_WEBHOOK_DEFAULT_RESTAURANT_ID || env.BACKEND_DEFAULT_RESTAURANT_ID || ""
+    ).trim();
+    const isDefaultMetaRestaurant =
+      Boolean(env.META_ACCESS_TOKEN && env.META_PHONE_NUMBER_ID) &&
+      Boolean(defaultRestaurantId) &&
+      safeRestaurantId === defaultRestaurantId;
+
+    const explicitProvider = String(whatsapp.provider || "").trim().toLowerCase();
+    const explicitPhoneNumberId = String(whatsapp.phoneNumberId || "").trim();
+    const explicitWabaId = String(whatsapp.wabaId || "").trim();
+    const explicitPhone = String(whatsapp.phone || "").trim();
+    const explicitlyConfigured =
+      whatsapp.configured === true ||
+      Boolean(explicitProvider) ||
+      Boolean(explicitPhoneNumberId);
+
+    if (explicitlyConfigured) {
+      return {
+        configured: true,
+        provider: explicitProvider || "meta-whatsapp-cloud-api",
+        accessToken: env.META_ACCESS_TOKEN,
+        phoneNumberId: explicitPhoneNumberId,
+        wabaId: explicitWabaId,
+        phone: explicitPhone,
+        setupMessage: "",
+      };
+    }
+
+    if (isDefaultMetaRestaurant) {
+      return {
+        configured: true,
+        provider: "meta-whatsapp-cloud-api",
+        accessToken: env.META_ACCESS_TOKEN,
+        phoneNumberId: env.META_PHONE_NUMBER_ID,
+        wabaId: env.META_WABA_ID,
+        phone: explicitPhone,
+        setupMessage:
+          "This restaurant is currently using the default shared Meta test line configured on the backend.",
+      };
+    }
+
+    return {
+      configured: false,
+      provider: "",
+      accessToken: "",
+      phoneNumberId: "",
+      wabaId: "",
+      phone: "",
+      setupMessage: "No WhatsApp line has been assigned to this restaurant yet.",
+    };
+  }
+
   if (whatsappProvider === "meta") {
     whatsappAdapter = createWhatsappMetaAdapter({
       accessToken: env.META_ACCESS_TOKEN,
@@ -112,6 +203,7 @@ function createApp() {
       apiVersion: env.META_API_VERSION,
       logger,
       channel: "whatsapp-web",
+      resolveConfigForRestaurant: resolveRestaurantMetaConfig,
     });
 
     logger.info("Backend WhatsApp provider is Meta Cloud API", {
@@ -197,8 +289,33 @@ function createApp() {
     channelGateway,
     conversationSessionRepo,
     restaurantRepo,
+    llmService,
     logger,
     menuCooldownMs: env.INBOUND_MENU_COOLDOWN_SECONDS * 1000,
+  });
+  const healthAlertService = createHealthAlertService({
+    env,
+    logger,
+  });
+  const restaurantHealthService = createRestaurantHealthService({
+    restaurantRepo,
+    userRepo,
+    menuRepo,
+    providerSessionRepo,
+    restaurantHealthRepo,
+    healthAlertService,
+    env,
+    logger,
+  });
+  const restaurantActivationService = createRestaurantActivationService({
+    restaurantRepo,
+    userRepo,
+    menuRepo,
+    providerSessionRepo,
+    activationJobRepo,
+    restaurantHealthService,
+    env,
+    logger,
   });
 
   if (internalWhatsappRuntimeEnabled) {
@@ -244,7 +361,28 @@ function createApp() {
   // Keep router-based health routes mounted as a compatibility fallback.
   app.use(API_BASE, createHealthRoutes());
   app.use(API_BASE, createAuthRoutes({ requireAuth, authService }));
-  app.use(`${API_BASE}/admin`, createAdminRoutes({ requireAuth, requireRole }));
+  app.use(
+    `${API_BASE}/admin`,
+    createAdminRoutes({
+      requireAuth,
+      requireRole,
+      admin,
+      restaurantRepo,
+      userRepo,
+      menuRepo,
+      orderRepo,
+      deliveryZoneRepo,
+      providerSessionRepo,
+      routingAuditRepo,
+      restaurantHealthRepo,
+      activationJobRepo,
+      outboxService,
+      channelSessionService,
+      restaurantHealthService,
+      restaurantActivationService,
+      env,
+    })
+  );
   // Unversioned aliases for deployment probes and simple uptime checks.
   app.use(createHealthRoutes());
   app.use(
@@ -252,6 +390,7 @@ function createApp() {
       env,
       logger,
       restaurantRepo,
+      routingAuditRepo,
       inboundMessageService,
       channelGateway,
     })
@@ -265,6 +404,9 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       restaurantRepo,
+      providerSessionRepo,
+      restaurantHealthService,
+      env,
     })
   );
   app.use(
@@ -273,6 +415,16 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       menuRepo,
+      restaurantHealthService,
+    })
+  );
+  app.use(
+    restaurantApiBase,
+    createSettingsRoutes({
+      requireApiKey: requireApiKeyOrPortalAuth,
+      requireRestaurantAccess,
+      restaurantRepo,
+      restaurantHealthService,
     })
   );
   app.use(
@@ -376,6 +528,9 @@ function createApp() {
       ...(error.details ? { details: error.details } : {}),
     });
   });
+
+  app.locals.restaurantHealthService = restaurantHealthService;
+  app.locals.restaurantActivationService = restaurantActivationService;
 
   return app;
 }

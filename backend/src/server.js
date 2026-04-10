@@ -2,10 +2,8 @@ const { createApp, API_BASE } = require("./app");
 const { env } = require("./config/env");
 const { runStartupChecks } = require("./config/startupChecks");
 const logger = require("./infra/logger");
-
 function probeRoute(app, path, timeoutMs = 4000) {
   const { EventEmitter } = require("events");
-
   return new Promise((resolve) => {
     const req = new EventEmitter();
     req.method = "GET";
@@ -15,12 +13,12 @@ function probeRoute(app, path, timeoutMs = 4000) {
     req.socket = {};
     req.get = (name) => req.headers[String(name).toLowerCase()];
 
+    
     const res = new EventEmitter();
     res.statusCode = 200;
     res.headers = {};
     let body = "";
     let finished = false;
-
     const done = (result) => {
       if (finished) {
         return;
@@ -97,6 +95,26 @@ async function logStartupRouteDiagnostics(app) {
 
 runStartupChecks({ env, logger });
 const app = createApp();
+if (
+  env.RESTAURANT_HEALTH_MONITOR_ENABLED &&
+  app.locals &&
+  app.locals.restaurantHealthService &&
+  typeof app.locals.restaurantHealthService.startBackgroundMonitor === "function"
+) {
+  app.locals.restaurantHealthService.startBackgroundMonitor({
+    intervalMs: env.RESTAURANT_HEALTH_MONITOR_INTERVAL_MS,
+  });
+}
+if (
+  env.RESTAURANT_ACTIVATION_MONITOR_ENABLED &&
+  app.locals &&
+  app.locals.restaurantActivationService &&
+  typeof app.locals.restaurantActivationService.startBackgroundMonitor === "function"
+) {
+  app.locals.restaurantActivationService.startBackgroundMonitor({
+    intervalMs: env.RESTAURANT_ACTIVATION_MONITOR_INTERVAL_MS,
+  });
+}
 
 console.log("BOOTING RESTAURANT BACKEND APP");
 console.log("API_BASE =", API_BASE);

@@ -20,11 +20,15 @@ function createWhatsappMetaAdapter({
   channel = "whatsapp-web",
   apiVersion = "v22.0",
   requestTimeoutMs = 15000,
+  resolveConfigForRestaurant,
 }) {
   const baseUrl = normalizeBaseUrl(apiVersion);
 
-  function ensureConfigured() {
-    if (!accessToken) {
+  function ensureConfigured(config = {}) {
+    const effectiveAccessToken = config.accessToken || accessToken;
+    const effectivePhoneNumberId = config.phoneNumberId || phoneNumberId;
+
+    if (!effectiveAccessToken) {
       throw createMetaHttpError(
         "META_NOT_CONFIGURED",
         "META_ACCESS_TOKEN is required for Meta WhatsApp provider",
@@ -33,7 +37,7 @@ function createWhatsappMetaAdapter({
       );
     }
 
-    if (!phoneNumberId) {
+    if (!effectivePhoneNumberId) {
       throw createMetaHttpError(
         "META_NOT_CONFIGURED",
         "META_PHONE_NUMBER_ID is required for Meta WhatsApp provider",
@@ -43,8 +47,33 @@ function createWhatsappMetaAdapter({
     }
   }
 
-  async function metaRequest(path, body) {
-    ensureConfigured();
+  async function resolveRestaurantConfig(restaurantId) {
+    if (typeof resolveConfigForRestaurant !== "function") {
+      return {
+        configured: true,
+        provider: "meta-whatsapp-cloud-api",
+        accessToken,
+        phoneNumberId,
+        wabaId,
+        setupMessage: "",
+      };
+    }
+
+    const resolved = await resolveConfigForRestaurant({ restaurantId });
+    return resolved || {
+      configured: false,
+      provider: "",
+      accessToken: "",
+      phoneNumberId: "",
+      wabaId: "",
+      setupMessage: "No WhatsApp line has been assigned to this restaurant yet.",
+    };
+  }
+
+  async function metaRequest(path, body, config = {}) {
+    ensureConfigured(config);
+
+    const effectiveAccessToken = config.accessToken || accessToken;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -53,7 +82,7 @@ function createWhatsappMetaAdapter({
       const response = await fetch(`${baseUrl}${path}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${effectiveAccessToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body || {}),
@@ -108,6 +137,17 @@ function createWhatsappMetaAdapter({
   }
 
   async function sendMessage({ restaurantId, to, text }) {
+    const config = await resolveRestaurantConfig(restaurantId);
+    if (!config.configured || config.provider !== "meta-whatsapp-cloud-api") {
+      throw createMetaHttpError(
+        "META_NOT_CONFIGURED",
+        config.setupMessage ||
+          `Restaurant ${restaurantId} does not have a Meta WhatsApp line configured yet`,
+        false,
+        503
+      );
+    }
+
     const normalizedTo = String(to || "").replace(/[^0-9]/g, "");
     const normalizedText = String(text || "").trim();
 
@@ -118,18 +158,21 @@ function createWhatsappMetaAdapter({
       throw createMetaHttpError("INVALID_TEXT", "Text is required", false, 400);
     }
 
-    const payload = await metaRequest(`/${phoneNumberId}/messages`, {
+    const effectivePhoneNumberId = config.phoneNumberId || phoneNumberId;
+
+    const payload = await metaRequest(`/${effectivePhoneNumberId}/messages`, {
       messaging_product: "whatsapp",
       to: normalizedTo,
       type: "text",
       text: {
         body: normalizedText,
       },
-    });
+    }, config);
 
     logger.info("Meta outbound send accepted", {
       restaurantId,
       to: normalizedTo,
+      phoneNumberId: effectivePhoneNumberId,
       messageId:
         payload &&
         Array.isArray(payload.messages) &&
@@ -153,6 +196,24 @@ function createWhatsappMetaAdapter({
   }
 
   async function getSessionStatus({ restaurantId }) {
+    const config = await resolveRestaurantConfig(restaurantId);
+    if (!config.configured || config.provider !== "meta-whatsapp-cloud-api") {
+      return {
+        restaurantId,
+        channel,
+        status: "not_configured",
+        runtimeOwner: "meta-whatsapp-cloud-api",
+        qrAvailable: false,
+        qrGeneratedAt: null,
+        qrExpiresAt: null,
+        phoneNumberId: "",
+        wabaId: "",
+        configured: false,
+        setupMessage:
+          config.setupMessage || "No Meta WhatsApp line has been configured for this restaurant yet.",
+      };
+    }
+
     return {
       restaurantId,
       channel,
@@ -161,8 +222,11 @@ function createWhatsappMetaAdapter({
       qrAvailable: false,
       qrGeneratedAt: null,
       qrExpiresAt: null,
-      phoneNumberId,
-      wabaId,
+      phone: config.phone || "",
+      phoneNumberId: config.phoneNumberId || phoneNumberId,
+      wabaId: config.wabaId || wabaId,
+      configured: true,
+      setupMessage: config.setupMessage || "",
     };
   }
 

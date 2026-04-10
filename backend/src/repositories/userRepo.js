@@ -40,7 +40,17 @@ async function upsertUser(uid, data) {
   return serializeDoc(latest);
 }
 
+async function listUsersByRestaurantId(restaurantId) {
+  const snapshot = await db
+    .collection("users")
+    .where("restaurantId", "==", restaurantId)
+    .get();
+
+  return snapshot.docs.map((doc) => serializeDoc(doc));
+}
+
 module.exports = {
   getUserByUid,
   upsertUser,
+  listUsersByRestaurantId,
 };

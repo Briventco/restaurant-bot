@@ -29,6 +29,25 @@ async function listOrders(restaurantId, options = {}) {
   return snapshot.docs.map((doc) => serializeDoc(doc));
 }
 
+async function listOrdersByStatuses(restaurantId, statuses, options = {}) {
+  const safeStatuses = Array.isArray(statuses)
+    ? statuses.map((status) => String(status || "").trim()).filter(Boolean)
+    : [];
+
+  if (!safeStatuses.length) {
+    return [];
+  }
+
+  const limit = Number(options.limit) > 0 ? Number(options.limit) : 50;
+  const snapshot = await ordersCollection(restaurantId)
+    .where("status", "in", safeStatuses.slice(0, 10))
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+
+  return snapshot.docs.map((doc) => serializeDoc(doc));
+}
+
 async function getOrderById(restaurantId, orderId) {
   const snapshot = await orderRef(restaurantId, orderId).get();
   if (!snapshot.exists) {
@@ -172,6 +191,7 @@ async function listOrderMessages(restaurantId, orderId, options = {}) {
 
 module.exports = {
   listOrders,
+  listOrdersByStatuses,
   getOrderById,
   createOrder,
   updateOrder,
