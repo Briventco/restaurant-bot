@@ -185,6 +185,15 @@ function buildOrderRejectedMessage(note = "") {
   return text;
 }
 
+function buildOrderCancelledMessage(note = "") {
+  let text = "Your order has been cancelled by the restaurant.";
+  if (note) {
+    text += `\n\nReason: ${note}`;
+  }
+  text += "\n\nYou can place a new order anytime.";
+  return text;
+}
+
 function buildOrderReadyMessage({ fulfillmentType }) {
   if (String(fulfillmentType || "").trim().toLowerCase() === "delivery") {
     return "Your order is ready and will be dispatched shortly.";
@@ -215,5 +224,6 @@ module.exports = {
   buildGuidedOrderConfirmedMessage,
   buildActiveOrderExistsMessage,
   buildOrderRejectedMessage,
+  buildOrderCancelledMessage,
   buildOrderReadyMessage,
 };

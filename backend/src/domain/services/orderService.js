@@ -15,6 +15,7 @@ const {
   buildAwaitingCustomerEditPrompt,
   buildOrderSummaryLineItems,
   buildOrderRejectedMessage,
+  buildOrderCancelledMessage,
   buildOrderReadyMessage,
 } = require("../templates/messages");
 
@@ -760,6 +761,33 @@ function createOrderService({
     return updatedOrder;
   }
 
+  async function cancelOrder({ restaurantId, orderId, actor, note = "" }) {
+    const trimmedNote = String(note || "").trim();
+    const updatedOrder = await transitionOrderStatus({
+      restaurantId,
+      orderId,
+      toStatus: ORDER_STATUSES.CANCELLED,
+      actor,
+      reason: "staff_cancelled_order",
+      metadata: {
+        note: trimmedNote,
+      },
+    });
+
+    await sendMessageToOrderCustomer(
+      updatedOrder,
+      buildOrderCancelledMessage(trimmedNote),
+      {
+        type: "order_cancelled",
+        sourceAction: "cancelOrder",
+        sourceRef: orderId,
+        note: trimmedNote,
+      }
+    );
+
+    return updatedOrder;
+  }
+
   async function markOrderReady({ restaurantId, orderId, actor }) {
     const order = await getOrderOrThrow(restaurantId, orderId);
     const fulfillmentType = String(order.fulfillmentType || "pickup").trim().toLowerCase();
@@ -920,6 +948,7 @@ function createOrderService({
     markItemsUnavailable,
     confirmOrder,
     rejectOrder,
+    cancelOrder,
     markOrderReady,
     cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,

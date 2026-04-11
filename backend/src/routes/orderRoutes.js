@@ -350,20 +350,19 @@ function createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderServic
     }),
     async (req, res, next) => {
       try {
-        const order = await orderService.transitionOrderStatus({
+        const order = await orderService.cancelOrder({
           restaurantId: req.restaurantId,
           orderId: req.params.orderId,
-          toStatus: ORDER_STATUSES.CANCELLED,
           actor: {
             type: "staff",
             id: req.auth.keyId,
           },
-          reason: req.body.reason || "staff_cancelled_order",
-          metadata: req.body.metadata || {},
+          note: req.body.reason || "",
         });
 
         res.status(200).json({
           success: true,
+          message: "Order cancelled and customer notified",
           order,
         });
       } catch (error) {
