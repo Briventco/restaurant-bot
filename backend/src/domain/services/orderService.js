@@ -75,6 +75,7 @@ function buildTimestampPatchForStatus(toStatus) {
   const statusFields = {
     [ORDER_STATUSES.CONFIRMED]: "confirmedAt",
     [ORDER_STATUSES.PREPARING]: "preparingAt",
+    [ORDER_STATUSES.READY_FOR_PICKUP]: "readyForPickupAt",
     [ORDER_STATUSES.RIDER_DISPATCHED]: "riderDispatchedAt",
     [ORDER_STATUSES.DELIVERED]: "deliveredAt",
     [ORDER_STATUSES.CANCELLED]: "cancelledAt",
@@ -885,20 +886,23 @@ function createOrderService({
         });
       }
 
-      if (updatedOrder.status === ORDER_STATUSES.PREPARING) {
-        updatedOrder = await transitionOrderStatus({
-          restaurantId,
-          orderId,
+    if (updatedOrder.status === ORDER_STATUSES.PREPARING) {
+      updatedOrder = await transitionOrderStatus({
+        restaurantId,
+        orderId,
           toStatus: ORDER_STATUSES.RIDER_DISPATCHED,
           actor,
           reason: "order_ready_for_dispatch",
         });
       }
-    } else if (order.status === ORDER_STATUSES.CONFIRMED) {
+    } else if (
+      order.status === ORDER_STATUSES.CONFIRMED ||
+      order.status === ORDER_STATUSES.PREPARING
+    ) {
       updatedOrder = await transitionOrderStatus({
         restaurantId,
         orderId,
-        toStatus: ORDER_STATUSES.PREPARING,
+        toStatus: ORDER_STATUSES.READY_FOR_PICKUP,
         actor,
         reason: "order_ready_for_pickup",
         metadata: {

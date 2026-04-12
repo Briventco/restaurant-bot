@@ -7,6 +7,7 @@ const ORDER_STATUSES = {
   PAYMENT_REVIEW: "payment_review",
   CONFIRMED: "confirmed",
   PREPARING: "preparing",
+  READY_FOR_PICKUP: "ready_for_pickup",
   RIDER_DISPATCHED: "rider_dispatched",
   DELIVERED: "delivered",
   CANCELLED: "cancelled",

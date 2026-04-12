@@ -219,7 +219,7 @@ function buildOrderReadyMessage({ fulfillmentType }) {
     return "Your order is ready and will be dispatched shortly.";
   }
 
-  return "Your order is ready for pickup.";
+  return "Your order is ready for pickup. You can place another order anytime.";
 }
 
 function buildPaymentConfirmedMessage() {
