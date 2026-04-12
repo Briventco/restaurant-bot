@@ -46,8 +46,10 @@ function getAllowedTransitions(fromStatus, restaurantConfig) {
   const allowed = [...(BASE_TRANSITIONS[fromStatus] || [])];
   const allowDirectPayment = Boolean(
     restaurantConfig &&
-      restaurantConfig.flow &&
-      restaurantConfig.flow.allowDirectAwaitingPaymentFromPending
+      ((restaurantConfig.flow &&
+        restaurantConfig.flow.allowDirectAwaitingPaymentFromPending) ||
+        (restaurantConfig.payment &&
+          restaurantConfig.payment.manualTransferEnabled === true))
   );
 
   if (

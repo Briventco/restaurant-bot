@@ -4,6 +4,7 @@ const { validateBody } = require("../middleware/validateBody");
 function serializeSettings(restaurant) {
   const safeRestaurant = restaurant || {};
   const bot = safeRestaurant.bot || {};
+  const payment = safeRestaurant.payment || {};
 
   return {
     name: String(safeRestaurant.name || "").trim(),
@@ -15,6 +16,11 @@ function serializeSettings(restaurant) {
     acceptOrders: bot.enabled !== false,
     autoConfirm: Boolean(bot.autoConfirm),
     notifyOnOrder: bot.notifyOnOrder !== false,
+    manualTransferEnabled: payment.manualTransferEnabled === true,
+    bankName: String(payment.bankName || "").trim(),
+    accountName: String(payment.accountName || "").trim(),
+    accountNumber: String(payment.accountNumber || "").trim(),
+    paymentInstructions: String(payment.paymentInstructions || "").trim(),
   };
 }
 
@@ -51,6 +57,11 @@ function createSettingsRoutes({
       acceptOrders: { type: "boolean", required: false },
       autoConfirm: { type: "boolean", required: false },
       notifyOnOrder: { type: "boolean", required: false },
+      manualTransferEnabled: { type: "boolean", required: false },
+      bankName: { type: "string", required: false },
+      accountName: { type: "string", required: false },
+      accountNumber: { type: "string", required: false },
+      paymentInstructions: { type: "string", required: false },
     }),
     async (req, res, next) => {
       try {
@@ -84,6 +95,32 @@ function createSettingsRoutes({
               typeof req.body.notifyOnOrder === "boolean"
                 ? req.body.notifyOnOrder
                 : currentBot.notifyOnOrder !== false,
+          },
+          payment: {
+            ...(currentRestaurant.payment || {}),
+            manualTransferEnabled:
+              typeof req.body.manualTransferEnabled === "boolean"
+                ? req.body.manualTransferEnabled
+                : currentRestaurant.payment?.manualTransferEnabled === true,
+            bankName:
+              typeof req.body.bankName === "string" ? req.body.bankName.trim() : "",
+            accountName:
+              typeof req.body.accountName === "string" ? req.body.accountName.trim() : "",
+            accountNumber:
+              typeof req.body.accountNumber === "string"
+                ? req.body.accountNumber.trim()
+                : "",
+            paymentInstructions:
+              typeof req.body.paymentInstructions === "string"
+                ? req.body.paymentInstructions.trim()
+                : "",
+          },
+          flow: {
+            ...(currentRestaurant.flow || {}),
+            allowDirectAwaitingPaymentFromPending:
+              typeof req.body.manualTransferEnabled === "boolean"
+                ? req.body.manualTransferEnabled
+                : currentRestaurant.payment?.manualTransferEnabled === true,
           },
         });
         if (restaurantHealthService) {

@@ -14,6 +14,8 @@ const {
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
   buildActiveOrderExistsMessage,
+  buildPaymentReviewAcknowledgedMessage,
+  buildPaymentStillUnderReviewMessage,
 } = require("../templates/messages");
 
 const FLOW_STATES = {
@@ -133,6 +135,24 @@ function looksLikeNewOrderAttempt(lower) {
     lower.includes("order ") ||
     lower.includes("buy ") ||
     lower.includes("get ")
+  );
+}
+
+function looksLikePaymentReported(lower) {
+  return (
+    lower === "paid" ||
+    lower === "payment made" ||
+    lower === "payment sent" ||
+    lower === "i have paid" ||
+    lower === "i paid" ||
+    lower.includes("i have paid") ||
+    lower.includes("i paid") ||
+    lower.includes("payment sent") ||
+    lower.includes("payment done") ||
+    lower.includes("transfer made") ||
+    lower.includes("transfer done") ||
+    lower.includes("sent proof") ||
+    lower.includes("payment proof")
   );
 }
 
@@ -320,6 +340,7 @@ function createInboundMessageService({
   channelGateway,
   conversationSessionRepo,
   restaurantRepo,
+  paymentService,
   llmService,
   logger,
   menuCooldownMs,
@@ -1451,6 +1472,59 @@ function createInboundMessageService({
           orderId: result.order && result.order.id,
         };
       }
+    }
+
+    if (
+      activeOrder &&
+      (activeOrder.status === ORDER_STATUSES.AWAITING_PAYMENT ||
+        activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW) &&
+      looksLikePaymentReported(lower)
+    ) {
+      if (activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW) {
+        const replyText = buildPaymentStillUnderReviewMessage();
+        if (sendMessage) {
+          await orderService.sendMessageToOrderCustomer(activeOrder, replyText, {
+            type: "payment_review_reminder",
+            sourceAction: "customerPaymentReviewReminder",
+            sourceRef: activeOrder.id,
+            providerMessageId,
+          });
+        }
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "payment_already_under_review",
+          replyText,
+          orderId: activeOrder.id,
+        };
+      }
+
+      const updatedOrder = await paymentService.markCustomerPaymentReported({
+        restaurantId,
+        orderId: activeOrder.id,
+        actorId: normalized.channelCustomerId,
+        note: incomingMessage,
+        providerMessageId,
+      });
+
+      const replyText = buildPaymentReviewAcknowledgedMessage();
+      if (sendMessage) {
+        await orderService.sendMessageToOrderCustomer(updatedOrder, replyText, {
+          type: "payment_review_acknowledged",
+          sourceAction: "customerPaymentReported",
+          sourceRef: updatedOrder.id,
+          providerMessageId,
+        });
+      }
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "payment_reported",
+        replyText,
+        orderId: updatedOrder.id,
+      };
     }
 
     if (

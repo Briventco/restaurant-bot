@@ -10,6 +10,7 @@ const { createHttpError } = require("../utils/httpError");
 const {
   buildOrderUpdatedMessage,
   buildConfirmMessage,
+  buildManualPaymentInstructionsMessage,
   buildUnavailableItemsMessage,
   buildAwaitingCustomerUpdatePrompt,
   buildAwaitingCustomerEditPrompt,
@@ -98,6 +99,21 @@ function createOrderService({
   orderParsingService,
   outboxService,
 }) {
+  function getManualPaymentConfig(restaurant) {
+    const payment =
+      restaurant && restaurant.payment && typeof restaurant.payment === "object"
+        ? restaurant.payment
+        : {};
+
+    return {
+      manualTransferEnabled: payment.manualTransferEnabled === true,
+      bankName: String(payment.bankName || "").trim(),
+      accountName: String(payment.accountName || "").trim(),
+      accountNumber: String(payment.accountNumber || "").trim(),
+      paymentInstructions: String(payment.paymentInstructions || "").trim(),
+    };
+  }
+
   function hashText(value) {
     return crypto.createHash("sha1").update(String(value || "")).digest("hex");
   }
@@ -714,6 +730,59 @@ function createOrderService({
   }
 
   async function confirmOrder({ restaurantId, orderId, actor }) {
+    const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+    if (!restaurant) {
+      throw createHttpError(404, "Restaurant not found");
+    }
+
+    const paymentConfig = getManualPaymentConfig(restaurant);
+
+    if (paymentConfig.manualTransferEnabled) {
+      if (
+        !paymentConfig.bankName ||
+        !paymentConfig.accountName ||
+        !paymentConfig.accountNumber
+      ) {
+        throw createHttpError(
+          409,
+          "Manual payment is enabled, but bank transfer details are incomplete."
+        );
+      }
+
+      const updatedOrder = await transitionOrderStatus({
+        restaurantId,
+        orderId,
+        toStatus: ORDER_STATUSES.AWAITING_PAYMENT,
+        actor,
+        reason: "order_accepted_awaiting_payment",
+      });
+
+      const orderAfterPaymentState = await orderRepo.updateOrder(restaurantId, orderId, {
+        paymentState: "pending_transfer",
+      });
+
+      await sendMessageToOrderCustomer(
+        orderAfterPaymentState || updatedOrder,
+        buildManualPaymentInstructionsMessage({
+          total: updatedOrder.total,
+          bankName: paymentConfig.bankName,
+          accountName: paymentConfig.accountName,
+          accountNumber: paymentConfig.accountNumber,
+          note: paymentConfig.paymentInstructions,
+        }),
+        {
+          type: "payment_prompt",
+          sourceAction: "confirmOrderAwaitingPayment",
+          sourceRef: orderId,
+          bankName: paymentConfig.bankName,
+          accountName: paymentConfig.accountName,
+          accountNumber: paymentConfig.accountNumber,
+        }
+      );
+
+      return orderAfterPaymentState || updatedOrder;
+    }
+
     const updatedOrder = await transitionOrderStatus({
       restaurantId,
       orderId,

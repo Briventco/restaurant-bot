@@ -1,4 +1,8 @@
 const { ORDER_STATUSES } = require("../constants/orderStatuses");
+const {
+  buildPaymentConfirmedMessage,
+  buildPaymentRejectedMessage,
+} = require("../templates/messages");
 
 function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
   async function resolveReviewReceipt({ restaurantId, order, receiptId }) {
@@ -86,6 +90,54 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
     return paymentReceiptRepo.listPaymentReceipts(restaurantId, orderId);
   }
 
+  async function markCustomerPaymentReported({
+    restaurantId,
+    orderId,
+    actorId,
+    note = "",
+    providerMessageId = "",
+  }) {
+    const order = await orderService.getOrderOrThrow(restaurantId, orderId);
+
+    if (
+      order.status !== ORDER_STATUSES.AWAITING_PAYMENT &&
+      order.status !== ORDER_STATUSES.PAYMENT_REVIEW
+    ) {
+      const error = new Error(
+        `Order must be in ${ORDER_STATUSES.AWAITING_PAYMENT} or ${ORDER_STATUSES.PAYMENT_REVIEW} to report payment`
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    let transitioned = order;
+    if (order.status === ORDER_STATUSES.AWAITING_PAYMENT) {
+      transitioned = await orderService.transitionOrderStatus({
+        restaurantId,
+        orderId,
+        toStatus: ORDER_STATUSES.PAYMENT_REVIEW,
+        actor: {
+          type: "customer",
+          id: actorId || order.channelCustomerId,
+        },
+        reason: "customer_reported_payment",
+        metadata: {
+          note: String(note || "").trim(),
+          providerMessageId: String(providerMessageId || "").trim(),
+        },
+      });
+    }
+
+    const updatedOrder = await orderRepo.updateOrder(restaurantId, orderId, {
+      paymentState: "under_review",
+      paymentReportedAt: new Date().toISOString(),
+      paymentReportNote: String(note || "").trim(),
+      latestProviderMessageId: String(providerMessageId || order.latestProviderMessageId || "").trim(),
+    });
+
+    return updatedOrder || transitioned;
+  }
+
   async function confirmPaymentReview({
     restaurantId,
     orderId,
@@ -94,35 +146,53 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
     note,
   }) {
     const order = await orderService.getOrderOrThrow(restaurantId, orderId);
-    if (order.status !== ORDER_STATUSES.PAYMENT_REVIEW) {
+    if (
+      order.status !== ORDER_STATUSES.PAYMENT_REVIEW &&
+      order.status !== ORDER_STATUSES.AWAITING_PAYMENT
+    ) {
       const error = new Error(
-        `Order must be in ${ORDER_STATUSES.PAYMENT_REVIEW} to confirm payment`
+        `Order must be in ${ORDER_STATUSES.PAYMENT_REVIEW} or ${ORDER_STATUSES.AWAITING_PAYMENT} to confirm payment`
       );
       error.statusCode = 409;
       throw error;
     }
 
     const receipt = await resolveReviewReceipt({ restaurantId, order, receiptId });
-    if (!receipt) {
-      const error = new Error("Payment receipt not found");
-      error.statusCode = 404;
-      throw error;
-    }
 
     const reviewedAt = new Date().toISOString();
-    const updatedReceipt = await paymentReceiptRepo.updatePaymentReceipt(
-      restaurantId,
-      orderId,
-      receipt.id,
-      {
-        status: "approved",
-        reviewedBy: String(actorId || ""),
-        reviewNote: String(note || ""),
-        reviewedAt,
-      }
-    );
+    let updatedReceipt = null;
+    if (receipt) {
+      updatedReceipt = await paymentReceiptRepo.updatePaymentReceipt(
+        restaurantId,
+        orderId,
+        receipt.id,
+        {
+          status: "approved",
+          reviewedBy: String(actorId || ""),
+          reviewNote: String(note || ""),
+          reviewedAt,
+        }
+      );
+    }
 
-    const transitioned = await orderService.transitionOrderStatus({
+    let transitioned = order;
+    if (order.status === ORDER_STATUSES.AWAITING_PAYMENT) {
+      transitioned = await orderService.transitionOrderStatus({
+        restaurantId,
+        orderId,
+        toStatus: ORDER_STATUSES.PAYMENT_REVIEW,
+        actor: {
+          type: "staff",
+          id: actorId || "staff",
+        },
+        reason: "manual_payment_marked_for_review",
+        metadata: {
+          receiptId: receipt ? receipt.id : "",
+        },
+      });
+    }
+
+    transitioned = await orderService.transitionOrderStatus({
       restaurantId,
       orderId,
       toStatus: ORDER_STATUSES.CONFIRMED,
@@ -132,20 +202,30 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
       },
       reason: "payment_review_confirmed",
       metadata: {
-        receiptId: receipt.id,
+        receiptId: receipt ? receipt.id : "",
       },
     });
 
     const orderAfterPayment = await orderRepo.updateOrder(restaurantId, orderId, {
       paymentState: "paid",
-      latestPaymentReceiptId: receipt.id,
+      latestPaymentReceiptId: receipt ? receipt.id : String(order.latestPaymentReceiptId || ""),
       paymentReviewedAt: reviewedAt,
       paymentReviewedBy: String(actorId || ""),
     });
 
+    await orderService.sendMessageToOrderCustomer(
+      orderAfterPayment || transitioned,
+      buildPaymentConfirmedMessage(),
+      {
+        type: "payment_confirmed",
+        sourceAction: "confirmPaymentReview",
+        sourceRef: orderId,
+      }
+    );
+
     return {
       order: orderAfterPayment || transitioned,
-      receipt: updatedReceipt || receipt,
+      receipt: updatedReceipt || receipt || null,
     };
   }
 
@@ -158,34 +238,35 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
     note,
   }) {
     const order = await orderService.getOrderOrThrow(restaurantId, orderId);
-    if (order.status !== ORDER_STATUSES.PAYMENT_REVIEW) {
+    if (
+      order.status !== ORDER_STATUSES.PAYMENT_REVIEW &&
+      order.status !== ORDER_STATUSES.AWAITING_PAYMENT
+    ) {
       const error = new Error(
-        `Order must be in ${ORDER_STATUSES.PAYMENT_REVIEW} to reject payment`
+        `Order must be in ${ORDER_STATUSES.PAYMENT_REVIEW} or ${ORDER_STATUSES.AWAITING_PAYMENT} to reject payment`
       );
       error.statusCode = 409;
       throw error;
     }
 
     const receipt = await resolveReviewReceipt({ restaurantId, order, receiptId });
-    if (!receipt) {
-      const error = new Error("Payment receipt not found");
-      error.statusCode = 404;
-      throw error;
-    }
 
     const reviewedAt = new Date().toISOString();
-    const updatedReceipt = await paymentReceiptRepo.updatePaymentReceipt(
-      restaurantId,
-      orderId,
-      receipt.id,
-      {
-        status: "rejected",
-        reviewedBy: String(actorId || ""),
-        reviewReason: String(reason || "").trim(),
-        reviewNote: String(note || ""),
-        reviewedAt,
-      }
-    );
+    let updatedReceipt = null;
+    if (receipt) {
+      updatedReceipt = await paymentReceiptRepo.updatePaymentReceipt(
+        restaurantId,
+        orderId,
+        receipt.id,
+        {
+          status: "rejected",
+          reviewedBy: String(actorId || ""),
+          reviewReason: String(reason || "").trim(),
+          reviewNote: String(note || ""),
+          reviewedAt,
+        }
+      );
+    }
 
     const transitioned = await orderService.transitionOrderStatus({
       restaurantId,
@@ -197,28 +278,40 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
       },
       reason: "payment_review_rejected",
       metadata: {
-        receiptId: receipt.id,
+        receiptId: receipt ? receipt.id : "",
         reason: String(reason || "").trim(),
       },
     });
 
     const orderAfterPayment = await orderRepo.updateOrder(restaurantId, orderId, {
       paymentState: "rejected",
-      latestPaymentReceiptId: receipt.id,
+      latestPaymentReceiptId: receipt ? receipt.id : String(order.latestPaymentReceiptId || ""),
       paymentReviewedAt: reviewedAt,
       paymentReviewedBy: String(actorId || ""),
       paymentReviewReason: String(reason || "").trim(),
     });
 
+    await orderService.sendMessageToOrderCustomer(
+      orderAfterPayment || transitioned,
+      buildPaymentRejectedMessage(String(reason || "").trim()),
+      {
+        type: "payment_rejected",
+        sourceAction: "rejectPaymentReview",
+        sourceRef: orderId,
+        reason: String(reason || "").trim(),
+      }
+    );
+
     return {
       order: orderAfterPayment || transitioned,
-      receipt: updatedReceipt || receipt,
+      receipt: updatedReceipt || receipt || null,
     };
   }
 
   return {
     submitPaymentReceipt,
     listPaymentReceipts,
+    markCustomerPaymentReported,
     confirmPaymentReview,
     rejectPaymentReview,
   };

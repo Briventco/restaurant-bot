@@ -306,6 +306,7 @@ function createApp() {
     channelGateway,
     conversationSessionRepo,
     restaurantRepo,
+    paymentService,
     llmService,
     logger,
     menuCooldownMs: env.INBOUND_MENU_COOLDOWN_SECONDS * 1000,

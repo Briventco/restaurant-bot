@@ -91,6 +91,26 @@ function buildConfirmMessage(total) {
   return `Order confirmed.\n\nTotal: N${total}\nStatus: Preparing your order.`;
 }
 
+function buildManualPaymentInstructionsMessage({
+  total,
+  bankName = "",
+  accountName = "",
+  accountNumber = "",
+  note = "",
+}) {
+  let text = `Your order has been accepted.\n\nTotal: N${total}\n\nPlease make payment by bank transfer using the details below:\n`;
+  text += `Bank: ${bankName || "Not provided"}\n`;
+  text += `Account Name: ${accountName || "Not provided"}\n`;
+  text += `Account Number: ${accountNumber || "Not provided"}`;
+
+  if (note) {
+    text += `\n\n${note}`;
+  }
+
+  text += "\n\nAfter payment, send proof or tell us you have paid. We will confirm it and continue your order.";
+  return text;
+}
+
 function buildUnavailableItemsMessage(items, note) {
   let message = "Sorry.\n\n";
   message += "The following items are currently unavailable:\n";
@@ -202,6 +222,27 @@ function buildOrderReadyMessage({ fulfillmentType }) {
   return "Your order is ready for pickup.";
 }
 
+function buildPaymentConfirmedMessage() {
+  return "Payment received successfully. We have started preparing your order.";
+}
+
+function buildPaymentRejectedMessage(note = "") {
+  let text = "We could not confirm your payment yet.";
+  if (note) {
+    text += `\n\nReason: ${note}`;
+  }
+  text += "\n\nPlease try again or send a clearer payment proof.";
+  return text;
+}
+
+function buildPaymentReviewAcknowledgedMessage() {
+  return "Thanks, we have marked your payment for review. The restaurant team will confirm it shortly.";
+}
+
+function buildPaymentStillUnderReviewMessage() {
+  return "Your payment is already under review. We will update you as soon as the restaurant confirms it.";
+}
+
 module.exports = {
   formatMenu,
   buildGuidedMenuList,
@@ -213,6 +254,7 @@ module.exports = {
   buildOrderReceivedMessage,
   buildOrderUpdatedMessage,
   buildConfirmMessage,
+  buildManualPaymentInstructionsMessage,
   buildUnavailableItemsMessage,
   buildAwaitingCustomerUpdatePrompt,
   buildAwaitingCustomerEditPrompt,
@@ -226,4 +268,8 @@ module.exports = {
   buildOrderRejectedMessage,
   buildOrderCancelledMessage,
   buildOrderReadyMessage,
+  buildPaymentConfirmedMessage,
+  buildPaymentRejectedMessage,
+  buildPaymentReviewAcknowledgedMessage,
+  buildPaymentStillUnderReviewMessage,
 };
