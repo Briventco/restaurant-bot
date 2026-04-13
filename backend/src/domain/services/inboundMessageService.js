@@ -14,6 +14,7 @@ const {
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
   buildActiveOrderExistsMessage,
+  buildPaymentReferenceSavedMessage,
   buildPaymentReviewAcknowledgedMessage,
   buildPaymentStillUnderReviewMessage,
 } = require("../templates/messages");
@@ -24,6 +25,7 @@ const FLOW_STATES = {
   AWAITING_FULFILLMENT_TYPE: "awaiting_fulfillment_type",
   AWAITING_ADDRESS: "awaiting_address",
   AWAITING_CONFIRMATION: "awaiting_confirmation",
+  AWAITING_PAYMENT_REFERENCE: "awaiting_payment_reference",
 };
 
 const CUSTOMER_BLOCKING_ORDER_STATUSES = [
@@ -1323,6 +1325,43 @@ function createInboundMessageService({
     );
 
     if (existingSession) {
+      if (
+        existingSession.state === FLOW_STATES.AWAITING_PAYMENT_REFERENCE &&
+        existingSession.orderId
+      ) {
+        const updatedOrder = await paymentService.appendCustomerPaymentReference({
+          restaurantId,
+          orderId: existingSession.orderId,
+          note: incomingMessage,
+          actorId: normalized.channelCustomerId,
+          providerMessageId,
+        });
+
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+
+        const replyText = buildPaymentReferenceSavedMessage();
+        if (sendMessage) {
+          await orderService.sendMessageToOrderCustomer(updatedOrder, replyText, {
+            type: "payment_reference_saved",
+            sourceAction: "customerPaymentReferenceSaved",
+            sourceRef: updatedOrder.id,
+            providerMessageId,
+          });
+        }
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "payment_reference_saved",
+          replyText,
+          orderId: updatedOrder.id,
+        };
+      }
+
       const guidedResult = await handleGuidedSession({
         restaurantId,
         normalized,
@@ -1507,6 +1546,16 @@ function createInboundMessageService({
         note: incomingMessage,
         providerMessageId,
       });
+
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          state: FLOW_STATES.AWAITING_PAYMENT_REFERENCE,
+          orderId: updatedOrder.id,
+        }
+      );
 
       const replyText = buildPaymentReviewAcknowledgedMessage();
       if (sendMessage) {

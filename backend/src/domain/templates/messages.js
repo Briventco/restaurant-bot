@@ -246,6 +246,10 @@ function buildPaymentStillUnderReviewMessage() {
   return "Your payment is already under review. If you have not shared it yet, please send your order number or the name/number used for the transfer. We will update you once the restaurant confirms payment.";
 }
 
+function buildPaymentReferenceSavedMessage() {
+  return "Thanks, I have added those payment details for the restaurant team. They will confirm your payment and update you shortly.";
+}
+
 module.exports = {
   formatMenu,
   buildGuidedMenuList,
@@ -275,4 +279,5 @@ module.exports = {
   buildPaymentRejectedMessage,
   buildPaymentReviewAcknowledgedMessage,
   buildPaymentStillUnderReviewMessage,
+  buildPaymentReferenceSavedMessage,
 };

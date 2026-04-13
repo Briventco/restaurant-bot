@@ -138,6 +138,40 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
     return updatedOrder || transitioned;
   }
 
+  async function appendCustomerPaymentReference({
+    restaurantId,
+    orderId,
+    note,
+    actorId,
+    providerMessageId = "",
+  }) {
+    const order = await orderService.getOrderOrThrow(restaurantId, orderId);
+    const trimmedNote = String(note || "").trim();
+
+    if (!trimmedNote) {
+      const error = new Error("Payment reference note is required");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const previousNote = String(order.paymentReportNote || "").trim();
+    const appendedNote = previousNote
+      ? `${previousNote}\nFollow-up: ${trimmedNote}`
+      : trimmedNote;
+
+    const updatedOrder = await orderRepo.updateOrder(restaurantId, orderId, {
+      paymentState:
+        order.status === ORDER_STATUSES.PAYMENT_REVIEW ? "under_review" : order.paymentState,
+      paymentReportNote: appendedNote,
+      paymentReportedAt: order.paymentReportedAt || new Date().toISOString(),
+      paymentReferenceSharedAt: new Date().toISOString(),
+      paymentReferenceSharedBy: String(actorId || order.channelCustomerId || "").trim(),
+      latestProviderMessageId: String(providerMessageId || order.latestProviderMessageId || "").trim(),
+    });
+
+    return updatedOrder || order;
+  }
+
   async function confirmPaymentReview({
     restaurantId,
     orderId,
@@ -312,6 +346,7 @@ function createPaymentService({ paymentReceiptRepo, orderRepo, orderService }) {
     submitPaymentReceipt,
     listPaymentReceipts,
     markCustomerPaymentReported,
+    appendCustomerPaymentReference,
     confirmPaymentReview,
     rejectPaymentReview,
   };
