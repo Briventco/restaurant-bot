@@ -34,6 +34,7 @@ function createSettingsRoutes({
   requireRestaurantAccess,
   restaurantRepo,
   restaurantHealthService,
+  orderService,
 }) {
   const router = Router({ mergeParams: true });
 
@@ -160,6 +161,31 @@ function createSettingsRoutes({
 
         res.status(200).json({
           settings: serializeSettings(restaurant),
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/settings/order-alerts/test",
+    requireApiKey(["settings.write"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        if (!orderService || typeof orderService.sendRestaurantTestAlert !== "function") {
+          throw new Error("Restaurant test alert service is not available");
+        }
+
+        const result = await orderService.sendRestaurantTestAlert({
+          restaurantId: req.restaurantId,
+          requestedBy: req.user && req.user.uid ? req.user.uid : "settings",
+        });
+
+        res.status(200).json({
+          ok: true,
+          ...result,
         });
       } catch (error) {
         next(error);

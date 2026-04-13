@@ -282,6 +282,11 @@ function buildRestaurantContactCustomerMessage(order = {}) {
   return `Order #${order.id || "-"} is still waiting.\n\nCustomer contact: ${customerPhone || "Not available"}\n\nPlease reach out to the customer directly or continue from the dashboard.`;
 }
 
+function buildRestaurantTestAlertMessage(restaurant = {}) {
+  const restaurantName = String(restaurant.name || "").trim() || "Your restaurant";
+  return `Test alert from ${restaurantName}.\n\nIf you received this, the restaurant WhatsApp order alert setup is working for this number.`;
+}
+
 module.exports = {
   formatMenu,
   buildGuidedMenuList,
@@ -315,4 +320,5 @@ module.exports = {
   buildRestaurantOrderAlertMessage,
   buildRestaurantOrderAlertHandledMessage,
   buildRestaurantContactCustomerMessage,
+  buildRestaurantTestAlertMessage,
 };

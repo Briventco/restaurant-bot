@@ -444,6 +444,7 @@ function createApp() {
       requireRestaurantAccess,
       restaurantRepo,
       restaurantHealthService,
+      orderService,
     })
   );
   app.use(

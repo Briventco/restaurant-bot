@@ -19,6 +19,7 @@ const {
   buildOrderCancelledMessage,
   buildOrderReadyMessage,
   buildRestaurantOrderAlertMessage,
+  buildRestaurantTestAlertMessage,
 } = require("../templates/messages");
 
 function calculateTotal(items) {
@@ -306,6 +307,69 @@ function createOrderService({
         }
       })
     );
+  }
+
+  async function sendRestaurantTestAlert({ restaurantId, requestedBy = "" }) {
+    const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+    if (!restaurant) {
+      throw createHttpError(404, "Restaurant not found");
+    }
+
+    const recipients = getOrderAlertRecipients(restaurant);
+    if (!recipients.length) {
+      throw createHttpError(
+        409,
+        "No restaurant alert WhatsApp numbers are configured yet."
+      );
+    }
+
+    const testOrder = {
+      id: "test-alert",
+      restaurantId,
+      channel: "whatsapp-web",
+    };
+
+    const results = await Promise.all(
+      recipients.map(async (recipient) => {
+        try {
+          const dispatchResult = await sendRestaurantAlertMessage({
+            order: testOrder,
+            recipient,
+            text: buildRestaurantTestAlertMessage(restaurant),
+            metadata: {
+              type: "restaurant_test_alert",
+              sourceAction: "sendRestaurantTestAlert",
+              sourceRef: requestedBy || "settings",
+            },
+          });
+
+          const finalStatus =
+            (dispatchResult &&
+              dispatchResult.message &&
+              dispatchResult.message.status) ||
+            "queued";
+
+          return {
+            recipient,
+            ok: finalStatus === "sent" || finalStatus === "queued" || finalStatus === "processing",
+            status: finalStatus,
+            error: "",
+          };
+        } catch (error) {
+          return {
+            recipient,
+            ok: false,
+            status: "failed",
+            error: error && error.message ? error.message : "Failed to send test alert",
+          };
+        }
+      })
+    );
+
+    return {
+      restaurantId,
+      results,
+    };
   }
 
   async function logInboundMessage(order, text, metadata = {}) {
@@ -1136,6 +1200,7 @@ function createOrderService({
     cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,
     sendRestaurantAlertMessage,
+    sendRestaurantTestAlert,
     logInboundMessage,
   };
 }
