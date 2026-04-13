@@ -18,6 +18,7 @@ const {
   buildOrderRejectedMessage,
   buildOrderCancelledMessage,
   buildOrderReadyMessage,
+  buildRestaurantOrderAlertMessage,
 } = require("../templates/messages");
 
 function calculateTotal(items) {
@@ -99,7 +100,12 @@ function createOrderService({
   restaurantRepo,
   orderParsingService,
   outboxService,
+  conversationSessionRepo,
 }) {
+  function normalizePhoneLike(value) {
+    return String(value || "").replace(/[^0-9]/g, "");
+  }
+
   function getManualPaymentConfig(restaurant) {
     const payment =
       restaurant && restaurant.payment && typeof restaurant.payment === "object"
@@ -113,6 +119,19 @@ function createOrderService({
       accountNumber: String(payment.accountNumber || "").trim(),
       paymentInstructions: String(payment.paymentInstructions || "").trim(),
     };
+  }
+
+  function getOrderAlertRecipients(restaurant) {
+    const bot =
+      restaurant && restaurant.bot && typeof restaurant.bot === "object"
+        ? restaurant.bot
+        : {};
+
+    return Array.isArray(bot.orderAlertRecipients)
+      ? bot.orderAlertRecipients
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : [];
   }
 
   function hashText(value) {
@@ -202,6 +221,91 @@ function createOrderService({
     return {
       deliveryStatus,
     };
+  }
+
+  async function sendRestaurantAlertMessage({
+    order,
+    recipient,
+    text,
+    metadata = {},
+  }) {
+    await outboxService.enqueueAndMaybeDispatch({
+      restaurantId: order.restaurantId,
+      channel: order.channel,
+      recipient,
+      text,
+      messageType: String(metadata.type || "restaurant_alert").trim() || "restaurant_alert",
+      sourceAction:
+        String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert",
+      sourceRef: String(metadata.sourceRef || order.id || "").trim(),
+      idempotencyKey:
+        String(metadata.idempotencyKey || "").trim() ||
+        [
+          "restaurant_alert",
+          order.restaurantId,
+          order.id,
+          String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert",
+          normalizePhoneLike(recipient) || "none",
+        ].join(":"),
+      metadata: {
+        orderId: order.id,
+        internalAlert: true,
+        alertRecipient: recipient,
+        ...metadata,
+      },
+    });
+  }
+
+  async function notifyRestaurantOrderAlert(order) {
+    const restaurant = await restaurantRepo.getRestaurantById(order.restaurantId);
+    if (!restaurant) {
+      return;
+    }
+
+    const bot =
+      restaurant && restaurant.bot && typeof restaurant.bot === "object"
+        ? restaurant.bot
+        : {};
+
+    if (bot.notifyOnOrder === false) {
+      return;
+    }
+
+    const recipients = getOrderAlertRecipients(restaurant);
+    if (!recipients.length) {
+      return;
+    }
+
+    const alertText = buildRestaurantOrderAlertMessage(order);
+
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        await sendRestaurantAlertMessage({
+          order,
+          recipient,
+          text: alertText,
+          metadata: {
+            type: "restaurant_order_alert",
+            sourceAction: "newOrderAlert",
+            sourceRef: order.id,
+          },
+        });
+
+        if (conversationSessionRepo) {
+          await conversationSessionRepo.upsertSession(
+            order.restaurantId,
+            order.channel,
+            recipient,
+            {
+              state: "awaiting_staff_order_action",
+              role: "restaurant_staff_alert",
+              orderId: order.id,
+              alertType: "new_order",
+            }
+          );
+        }
+      })
+    );
   }
 
   async function logInboundMessage(order, text, metadata = {}) {
@@ -308,6 +412,8 @@ function createOrderService({
       },
     });
 
+    await notifyRestaurantOrderAlert(order);
+
     return order;
   }
 
@@ -380,6 +486,8 @@ function createOrderService({
       },
     });
 
+    await notifyRestaurantOrderAlert(order);
+
     return order;
   }
 
@@ -441,6 +549,8 @@ function createOrderService({
         itemCount: safeMatched.length,
       },
     });
+
+    await notifyRestaurantOrderAlert(order);
 
     return order;
   }
@@ -1025,6 +1135,7 @@ function createOrderService({
     markOrderReady,
     cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,
+    sendRestaurantAlertMessage,
     logInboundMessage,
   };
 }

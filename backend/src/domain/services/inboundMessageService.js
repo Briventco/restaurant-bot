@@ -17,6 +17,8 @@ const {
   buildPaymentReferenceSavedMessage,
   buildPaymentReviewAcknowledgedMessage,
   buildPaymentStillUnderReviewMessage,
+  buildRestaurantOrderAlertHandledMessage,
+  buildRestaurantContactCustomerMessage,
 } = require("../templates/messages");
 
 const FLOW_STATES = {
@@ -26,6 +28,7 @@ const FLOW_STATES = {
   AWAITING_ADDRESS: "awaiting_address",
   AWAITING_CONFIRMATION: "awaiting_confirmation",
   AWAITING_PAYMENT_REFERENCE: "awaiting_payment_reference",
+  AWAITING_STAFF_ORDER_ACTION: "awaiting_staff_order_action",
 };
 
 const CUSTOMER_BLOCKING_ORDER_STATUSES = [
@@ -191,6 +194,10 @@ function extractPaymentReferenceDetails(rawText) {
     .trim();
 
   return stripped;
+}
+
+function normalizePhoneLike(value) {
+  return String(value || "").replace(/[^0-9]/g, "");
 }
 
 function looksLikeQuestion(lower, rawText) {
@@ -403,6 +410,27 @@ function createInboundMessageService({
 
     menuCooldownByChat.set(key, now + effectiveMenuCooldownMs);
     return false;
+  }
+
+  function isRestaurantStaffAlertSender(restaurant, normalized) {
+    const bot =
+      restaurant && restaurant.bot && typeof restaurant.bot === "object"
+        ? restaurant.bot
+        : {};
+    const recipients = Array.isArray(bot.orderAlertRecipients) ? bot.orderAlertRecipients : [];
+    const incomingCandidates = [
+      normalizePhoneLike(normalized.channelCustomerId),
+      normalizePhoneLike(normalized.customerPhone),
+    ].filter(Boolean);
+
+    if (!incomingCandidates.length) {
+      return false;
+    }
+
+    return recipients.some((recipient) => {
+      const normalizedRecipient = normalizePhoneLike(recipient);
+      return normalizedRecipient && incomingCandidates.includes(normalizedRecipient);
+    });
   }
 
   async function sendText(sendMessage, to, text) {
@@ -1310,6 +1338,139 @@ function createInboundMessageService({
       };
     }
 
+    const incomingMessage = normalized.text || "";
+    const lower = normalizeText(incomingMessage);
+    const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+    const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
+    const existingSession = await conversationSessionRepo.getSession(
+      restaurantId,
+      normalized.channel,
+      normalized.channelCustomerId
+    );
+
+    if (
+      isStaffAlertSender &&
+      existingSession &&
+      existingSession.state === FLOW_STATES.AWAITING_STAFF_ORDER_ACTION &&
+      existingSession.orderId
+    ) {
+      const activeStaffOrder = await orderService.getOrder({
+        restaurantId,
+        orderId: existingSession.orderId,
+      });
+
+      if (activeStaffOrder.status !== ORDER_STATUSES.PENDING_CONFIRMATION) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+
+        const replyText = `Order #${activeStaffOrder.id} is already ${String(
+          activeStaffOrder.status || "updated"
+        ).replace(/_/g, " ")}.`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_order_already_updated",
+          replyText,
+          orderId: activeStaffOrder.id,
+        };
+      }
+
+      if (lower === "1" || lower === "confirm" || lower === "confirm order") {
+        const updatedOrder = await orderService.confirmOrder({
+          restaurantId,
+          orderId: activeStaffOrder.id,
+          actor: {
+            type: "staff",
+            id: normalized.channelCustomerId,
+          },
+        });
+
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+
+        const replyText = buildRestaurantOrderAlertHandledMessage(
+          updatedOrder,
+          "Customer has been updated."
+        );
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_confirmed_order",
+          replyText,
+          orderId: updatedOrder.id,
+        };
+      }
+
+      if (lower === "2" || lower === "not available") {
+        const updatedOrder = await orderService.rejectOrder({
+          restaurantId,
+          orderId: activeStaffOrder.id,
+          actor: {
+            type: "staff",
+            id: normalized.channelCustomerId,
+          },
+          note: "One or more items are not available right now.",
+        });
+
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+
+        const replyText = buildRestaurantOrderAlertHandledMessage(
+          updatedOrder,
+          "Customer has been notified."
+        );
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_rejected_order",
+          replyText,
+          orderId: updatedOrder.id,
+        };
+      }
+
+      if (lower === "3" || lower === "contact customer") {
+        const replyText = buildRestaurantContactCustomerMessage(activeStaffOrder);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_contact_customer",
+          replyText,
+          orderId: activeStaffOrder.id,
+        };
+      }
+
+      {
+        const replyText =
+          "Reply with one option:\n1 - Confirm\n2 - Not Available\n3 - Contact Customer";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_order_action_prompt",
+          replyText,
+          orderId: activeStaffOrder.id,
+        };
+      }
+    }
+
     const customer = await customerService.upsertCustomerFromChannelMessage({
       restaurantId,
       channel: normalized.channel,
@@ -1317,9 +1478,6 @@ function createInboundMessageService({
       customerPhone: normalized.customerPhone,
       displayName: normalized.displayName || "",
     });
-
-    const incomingMessage = normalized.text || "";
-    const lower = normalizeText(incomingMessage);
 
     const activeOrder = await orderService.findActiveOrderByCustomer({
       restaurantId,
@@ -1352,12 +1510,6 @@ function createInboundMessageService({
         type: "empty_message",
       };
     }
-
-    const existingSession = await conversationSessionRepo.getSession(
-      restaurantId,
-      normalized.channel,
-      normalized.channelCustomerId
-    );
 
     if (existingSession) {
       if (

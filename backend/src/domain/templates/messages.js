@@ -250,6 +250,38 @@ function buildPaymentReferenceSavedMessage() {
   return "Thanks, I have added those payment details for the restaurant team. They will confirm your payment and update you shortly.";
 }
 
+function buildRestaurantOrderAlertMessage(order = {}) {
+  const lines = [];
+  lines.push(`New Order #${order.id || "-"}`);
+  lines.push("");
+  lines.push(buildOrderSummaryLineItems(order.matched || []));
+  lines.push(`Total = N${Number(order.total || order.amount || 0)}`);
+  lines.push("");
+
+  if (String(order.fulfillmentType || "pickup").trim().toLowerCase() === "delivery") {
+    lines.push(`Delivery: ${order.deliveryAddress || "Address not provided"}`);
+  } else {
+    lines.push("Pickup order");
+  }
+
+  lines.push("");
+  lines.push("Reply:");
+  lines.push("1 - Confirm");
+  lines.push("2 - Not Available");
+  lines.push("3 - Contact Customer");
+
+  return lines.join("\n");
+}
+
+function buildRestaurantOrderAlertHandledMessage(order = {}, statusText = "") {
+  return `Order #${order.id || "-"} updated.${statusText ? ` ${statusText}` : ""}`;
+}
+
+function buildRestaurantContactCustomerMessage(order = {}) {
+  const customerPhone = String(order.customerPhone || order.channelCustomerId || "").trim();
+  return `Order #${order.id || "-"} is still waiting.\n\nCustomer contact: ${customerPhone || "Not available"}\n\nPlease reach out to the customer directly or continue from the dashboard.`;
+}
+
 module.exports = {
   formatMenu,
   buildGuidedMenuList,
@@ -280,4 +312,7 @@ module.exports = {
   buildPaymentReviewAcknowledgedMessage,
   buildPaymentStillUnderReviewMessage,
   buildPaymentReferenceSavedMessage,
+  buildRestaurantOrderAlertMessage,
+  buildRestaurantOrderAlertHandledMessage,
+  buildRestaurantContactCustomerMessage,
 };

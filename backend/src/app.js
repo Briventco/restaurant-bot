@@ -290,6 +290,7 @@ function createApp() {
     restaurantRepo,
     orderParsingService,
     outboxService,
+    conversationSessionRepo,
   });
 
   const paymentService = createPaymentService({

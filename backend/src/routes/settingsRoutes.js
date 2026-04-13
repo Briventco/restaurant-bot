@@ -16,6 +16,11 @@ function serializeSettings(restaurant) {
     acceptOrders: bot.enabled !== false,
     autoConfirm: Boolean(bot.autoConfirm),
     notifyOnOrder: bot.notifyOnOrder !== false,
+    orderAlertRecipients: Array.isArray(bot.orderAlertRecipients)
+      ? bot.orderAlertRecipients
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : [],
     manualTransferEnabled: payment.manualTransferEnabled === true,
     bankName: String(payment.bankName || "").trim(),
     accountName: String(payment.accountName || "").trim(),
@@ -57,6 +62,22 @@ function createSettingsRoutes({
       acceptOrders: { type: "boolean", required: false },
       autoConfirm: { type: "boolean", required: false },
       notifyOnOrder: { type: "boolean", required: false },
+      orderAlertRecipients: {
+        type: "array",
+        required: false,
+        custom: (value) => {
+          if (!Array.isArray(value)) {
+            return null;
+          }
+
+          const invalid = value.find((item) => typeof item !== "string");
+          if (invalid !== undefined) {
+            return "orderAlertRecipients must contain only strings";
+          }
+
+          return null;
+        },
+      },
       manualTransferEnabled: { type: "boolean", required: false },
       bankName: { type: "string", required: false },
       accountName: { type: "string", required: false },
@@ -95,6 +116,13 @@ function createSettingsRoutes({
               typeof req.body.notifyOnOrder === "boolean"
                 ? req.body.notifyOnOrder
                 : currentBot.notifyOnOrder !== false,
+            orderAlertRecipients: Array.isArray(req.body.orderAlertRecipients)
+              ? req.body.orderAlertRecipients
+                  .map((value) => String(value || "").trim())
+                  .filter(Boolean)
+              : Array.isArray(currentBot.orderAlertRecipients)
+                ? currentBot.orderAlertRecipients
+                : [],
           },
           payment: {
             ...(currentRestaurant.payment || {}),
