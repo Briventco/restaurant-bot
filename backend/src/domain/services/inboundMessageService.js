@@ -158,6 +158,41 @@ function looksLikePaymentReported(lower) {
   );
 }
 
+function extractPaymentReferenceDetails(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length > 1) {
+    const [, ...rest] = lines;
+    const joined = rest.join(" ").trim();
+    if (joined) {
+      return joined;
+    }
+  }
+
+  const stripped = text
+    .replace(/i\s+have\s+paid/gi, "")
+    .replace(/payment\s+sent/gi, "")
+    .replace(/payment\s+made/gi, "")
+    .replace(/payment\s+done/gi, "")
+    .replace(/transfer\s+made/gi, "")
+    .replace(/transfer\s+done/gi, "")
+    .replace(/sent\s+proof/gi, "")
+    .replace(/payment\s+proof/gi, "")
+    .replace(/paid/gi, "")
+    .replace(/^[\s:,-]+|[\s:,-]+$/g, "")
+    .trim();
+
+  return stripped;
+}
+
 function looksLikeQuestion(lower, rawText) {
   const text = String(rawText || "").trim();
   return (
@@ -1546,6 +1581,36 @@ function createInboundMessageService({
         note: incomingMessage,
         providerMessageId,
       });
+
+      const paymentReference = extractPaymentReferenceDetails(incomingMessage);
+      if (paymentReference) {
+        const orderWithReference = await paymentService.appendCustomerPaymentReference({
+          restaurantId,
+          orderId: updatedOrder.id,
+          note: paymentReference,
+          actorId: normalized.channelCustomerId,
+          providerMessageId,
+        });
+
+        const replyText =
+          "Thanks, I have noted your payment message and added your transfer details for the restaurant team. They will confirm your payment shortly.";
+        if (sendMessage) {
+          await orderService.sendMessageToOrderCustomer(orderWithReference, replyText, {
+            type: "payment_review_acknowledged_with_reference",
+            sourceAction: "customerPaymentReportedWithReference",
+            sourceRef: orderWithReference.id,
+            providerMessageId,
+          });
+        }
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "payment_reported_with_reference",
+          replyText,
+          orderId: orderWithReference.id,
+        };
+      }
 
       await conversationSessionRepo.upsertSession(
         restaurantId,
