@@ -107,7 +107,10 @@ function buildManualPaymentInstructionsMessage({
     text += `\n\n${note}`;
   }
 
-  text += "\n\nAfter payment, send proof or tell us you have paid. We will confirm it and continue your order.";
+  text +=
+    "\n\nAfter payment, reply with: I HAVE PAID";
+  text +=
+    "\nThen send your order number or the name/number used for the transfer so we can confirm your payment.";
   return text;
 }
 
@@ -236,11 +239,11 @@ function buildPaymentRejectedMessage(note = "") {
 }
 
 function buildPaymentReviewAcknowledgedMessage() {
-  return "Thanks, we have marked your payment for review. The restaurant team will confirm it shortly.";
+  return "Thanks, I have noted your payment message. Please share your order number or the name/number used for the transfer so the restaurant can confirm it. Your payment is not confirmed yet.";
 }
 
 function buildPaymentStillUnderReviewMessage() {
-  return "Your payment is already under review. We will update you as soon as the restaurant confirms it.";
+  return "Your payment is already under review. If you have not shared it yet, please send your order number or the name/number used for the transfer. We will update you once the restaurant confirms payment.";
 }
 
 module.exports = {
