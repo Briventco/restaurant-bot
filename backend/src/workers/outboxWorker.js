@@ -48,6 +48,7 @@ function createChannelGatewayForWorker() {
       sessionRepo: providerSessionRepo,
       logger,
       qrTtlSeconds: env.WHATSAPP_QR_TTL_SECONDS,
+      browserExecutablePath: env.WHATSAPP_BROWSER_EXECUTABLE_PATH,
     });
   } else if (externalWhatsappRuntimeEnabled) {
     whatsappAdapter = createWhatsappRuntimeHttpAdapter({

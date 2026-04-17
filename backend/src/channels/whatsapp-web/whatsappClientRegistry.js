@@ -1,4 +1,21 @@
+const fs = require("fs");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+
+function resolveBrowserExecutablePath(configuredPath = "") {
+  const candidates = [
+    configuredPath,
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_EXECUTABLE_PATH,
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || "";
+}
 
 function sanitizeClientId(restaurantId) {
   return String(restaurantId).replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -9,9 +26,17 @@ function createWhatsappClientRegistry({
   logger,
   qrTtlSeconds,
   onInboundMessage,
+  browserExecutablePath = "",
 }) {
   const clients = new Map();
   const qrCache = new Map();
+  const resolvedBrowserExecutablePath = resolveBrowserExecutablePath(
+    browserExecutablePath
+  );
+
+  function removeClient(restaurantId) {
+    clients.delete(restaurantId);
+  }
 
   async function setSessionState(restaurantId, patch) {
     try {
@@ -81,6 +106,7 @@ function createWhatsappClientRegistry({
         reason,
       });
 
+      removeClient(restaurantId);
       clearQrCache(restaurantId);
       void setSessionState(restaurantId, {
         status: "disconnected",
@@ -96,6 +122,7 @@ function createWhatsappClientRegistry({
         message,
       });
 
+      removeClient(restaurantId);
       clearQrCache(restaurantId);
       void setSessionState(restaurantId, {
         status: "disconnected",
@@ -126,7 +153,21 @@ function createWhatsappClientRegistry({
   async function startSession(restaurantId) {
     const existing = clients.get(restaurantId);
     if (existing) {
-      return getSessionStatus(restaurantId);
+      const existingStatus = await getSessionStatus(restaurantId);
+      if (
+        ["disconnected", "auth_failure"].includes(
+          String(existingStatus.status || "").trim().toLowerCase()
+        )
+      ) {
+        try {
+          await existing.client.destroy();
+        } catch (_error) {
+          // Best-effort cleanup before starting a fresh session.
+        }
+        removeClient(restaurantId);
+      } else {
+        return existingStatus;
+      }
     }
 
     await setSessionState(restaurantId, {
@@ -142,6 +183,7 @@ function createWhatsappClientRegistry({
       }),
       puppeteer: {
         headless: true,
+        executablePath: resolvedBrowserExecutablePath || undefined,
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
       },
     });
@@ -149,7 +191,19 @@ function createWhatsappClientRegistry({
     bindClientEvents(restaurantId, client);
     clients.set(restaurantId, { client });
 
-    await client.initialize();
+    try {
+      await client.initialize();
+    } catch (error) {
+      removeClient(restaurantId);
+      clearQrCache(restaurantId);
+      await setSessionState(restaurantId, {
+        status: "disconnected",
+        qrAvailable: false,
+        lastDisconnectedAt: new Date().toISOString(),
+        lastError: error.message || "session_start_failed",
+      });
+      throw error;
+    }
 
     return getSessionStatus(restaurantId);
   }
@@ -183,7 +237,7 @@ function createWhatsappClientRegistry({
     try {
       await entry.client.destroy();
     } finally {
-      clients.delete(restaurantId);
+      removeClient(restaurantId);
       clearQrCache(restaurantId);
       await setSessionState(restaurantId, {
         status: "disconnected",

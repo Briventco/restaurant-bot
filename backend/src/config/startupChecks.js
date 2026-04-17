@@ -1,5 +1,11 @@
 function runStartupChecks({ env, logger }) {
-  if (String(env.WHATSAPP_PROVIDER || "").trim().toLowerCase() === "meta") {
+  const whatsappProvider = String(env.WHATSAPP_PROVIDER || "").trim().toLowerCase();
+  const usingWebjsProvider =
+    whatsappProvider === "webjs" || whatsappProvider === "whatsapp-web";
+  const usingExternalRuntimeProvider =
+    whatsappProvider === "runtime-http" || whatsappProvider === "external-runtime";
+
+  if (whatsappProvider === "meta") {
     if (!env.META_ACCESS_TOKEN) {
       const error = new Error(
         "Invalid Meta config: META_ACCESS_TOKEN is required when WHATSAPP_PROVIDER=meta."
@@ -28,7 +34,7 @@ function runStartupChecks({ env, logger }) {
     throw error;
   }
 
-  if (env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME) {
+  if (env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME || usingExternalRuntimeProvider) {
     if (!env.WHATSAPP_RUNTIME_BASE_URL) {
       const error = new Error(
         "Invalid runtime config: WHATSAPP_RUNTIME_BASE_URL is required when external runtime is enabled."
@@ -47,13 +53,15 @@ function runStartupChecks({ env, logger }) {
   }
 
   if (
-    String(env.WHATSAPP_PROVIDER || "").trim().toLowerCase() !== "meta" &&
+    !usingWebjsProvider &&
+    whatsappProvider !== "meta" &&
+    !usingExternalRuntimeProvider &&
     !env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME &&
     !env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME
   ) {
     logger.warn("WhatsApp runtime is disabled in backend config", {
       recommendation:
-        "Enable BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME for production multi-tenant runtime.",
+        "Set WHATSAPP_PROVIDER=webjs or configure an external runtime for production multi-tenant messaging.",
     });
   }
 

@@ -147,6 +147,10 @@ function createApp() {
   const whatsappProvider = String(env.WHATSAPP_PROVIDER || "runtime-http").trim().toLowerCase();
   const internalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME;
   const externalWhatsappRuntimeEnabled = env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME;
+  const usingWebjsProvider =
+    whatsappProvider === "webjs" || whatsappProvider === "whatsapp-web";
+  const usingExternalRuntimeProvider =
+    whatsappProvider === "runtime-http" || whatsappProvider === "external-runtime";
   let whatsappAdapter;
 
   async function resolveRestaurantMetaConfig({ restaurantId }) {
@@ -228,19 +232,19 @@ function createApp() {
       phoneNumberId: env.META_PHONE_NUMBER_ID,
       wabaId: env.META_WABA_ID,
     });
-  } else if (internalWhatsappRuntimeEnabled) {
+  } else if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
     whatsappAdapter = createWhatsappAdapter({
       sessionRepo: providerSessionRepo,
       logger,
       qrTtlSeconds: env.WHATSAPP_QR_TTL_SECONDS,
+      browserExecutablePath: env.WHATSAPP_BROWSER_EXECUTABLE_PATH,
     });
 
-    logger.warn("Backend internal WhatsApp runtime is ENABLED", {
-      mode: "dual_runtime",
-      recommendation:
-        "Disable BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME to keep whatsapp-bot as the only runtime.",
+    logger.info("Backend WhatsApp provider is whatsapp-web.js", {
+      mode: "webjs_runtime",
+      startupRestoreEnabled: env.WHATSAPP_RESTORE_SESSIONS_ON_BOOT,
     });
-  } else if (externalWhatsappRuntimeEnabled) {
+  } else if (usingExternalRuntimeProvider || externalWhatsappRuntimeEnabled) {
     whatsappAdapter = createWhatsappRuntimeHttpAdapter({
       runtimeBaseUrl: env.WHATSAPP_RUNTIME_BASE_URL,
       runtimeApiKey: env.WHATSAPP_RUNTIME_API_KEY,
@@ -337,7 +341,7 @@ function createApp() {
     logger,
   });
 
-  if (internalWhatsappRuntimeEnabled) {
+  if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
     whatsappAdapter.setInboundHandler(async (payload) => {
       try {
         await inboundMessageService.handleInboundEvent(payload);
@@ -551,6 +555,79 @@ function createApp() {
 
   app.locals.restaurantHealthService = restaurantHealthService;
   app.locals.restaurantActivationService = restaurantActivationService;
+  app.locals.whatsappProviderMode = usingWebjsProvider ? "webjs" : whatsappProvider;
+  app.locals.restoreWhatsappSessionsOnBoot = async function restoreWhatsappSessionsOnBoot() {
+    if (!(usingWebjsProvider || internalWhatsappRuntimeEnabled)) {
+      return {
+        restoredCount: 0,
+        skippedCount: 0,
+        totalCandidates: 0,
+      };
+    }
+
+    const restaurants = await restaurantRepo.listRestaurants({
+      limit: env.WHATSAPP_RESTORE_SESSION_LIMIT,
+    });
+    const restorableStatuses = new Set([
+      "connected",
+      "authenticating",
+      "starting",
+    ]);
+
+    let restoredCount = 0;
+    let skippedCount = 0;
+    let totalCandidates = 0;
+
+    for (const restaurant of restaurants) {
+      const restaurantId = String(
+        (restaurant && (restaurant.id || restaurant.restaurantId)) || ""
+      ).trim();
+      if (!restaurantId) {
+        continue;
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      const storedSession = await providerSessionRepo.getSession(
+        restaurantId,
+        "whatsapp-web"
+      );
+
+      if (!storedSession) {
+        continue;
+      }
+
+      totalCandidates += 1;
+      const storedStatus = String(
+        storedSession.providerStatus || storedSession.status || ""
+      ).trim().toLowerCase();
+
+      if (!restorableStatuses.has(storedStatus)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await channelSessionService.start({
+          channel: "whatsapp-web",
+          restaurantId,
+        });
+        restoredCount += 1;
+      } catch (error) {
+        skippedCount += 1;
+        logger.warn("Failed to restore WhatsApp session on boot", {
+          restaurantId,
+          message: error.message,
+        });
+      }
+    }
+
+    return {
+      restoredCount,
+      skippedCount,
+      totalCandidates,
+    };
+  };
 
   return app;
 }

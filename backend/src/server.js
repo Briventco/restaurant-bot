@@ -115,6 +115,23 @@ if (
     intervalMs: env.RESTAURANT_ACTIVATION_MONITOR_INTERVAL_MS,
   });
 }
+if (
+  env.WHATSAPP_RESTORE_SESSIONS_ON_BOOT &&
+  app.locals &&
+  typeof app.locals.restoreWhatsappSessionsOnBoot === "function"
+) {
+  app.locals
+    .restoreWhatsappSessionsOnBoot()
+    .then((result) => {
+      logger.info("WhatsApp session restore completed", result || {});
+    })
+    .catch((error) => {
+      logger.warn("WhatsApp session restore failed", {
+        message: error.message,
+        stack: error.stack,
+      });
+    });
+}
 
 console.log("BOOTING RESTAURANT BACKEND APP");
 console.log("API_BASE =", API_BASE);

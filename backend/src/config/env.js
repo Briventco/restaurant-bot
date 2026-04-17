@@ -38,7 +38,12 @@ function toStringArray(value, fallback = []) {
 const env = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: toNumber(process.env.PORT, 3002),
-  WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || "runtime-http",
+  WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER || "webjs",
+  WHATSAPP_BROWSER_EXECUTABLE_PATH:
+    process.env.WHATSAPP_BROWSER_EXECUTABLE_PATH ||
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    process.env.CHROME_EXECUTABLE_PATH ||
+    "",
   LLM_PROVIDER: process.env.LLM_PROVIDER || "openai",
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
   OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5-mini",
@@ -61,6 +66,14 @@ const env = {
   BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME: toBoolean(
     process.env.BACKEND_ENABLE_EXTERNAL_WHATSAPP_RUNTIME,
     false
+  ),
+  WHATSAPP_RESTORE_SESSIONS_ON_BOOT: toBoolean(
+    process.env.WHATSAPP_RESTORE_SESSIONS_ON_BOOT,
+    true
+  ),
+  WHATSAPP_RESTORE_SESSION_LIMIT: toNumber(
+    process.env.WHATSAPP_RESTORE_SESSION_LIMIT,
+    25
   ),
   WHATSAPP_RUNTIME_BASE_URL: process.env.WHATSAPP_RUNTIME_BASE_URL || "",
   WHATSAPP_RUNTIME_API_KEY: process.env.WHATSAPP_RUNTIME_API_KEY || "",

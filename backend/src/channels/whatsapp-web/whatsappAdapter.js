@@ -1,13 +1,19 @@
 const { normalizeInboundMessage } = require("./whatsappEventMapper");
 const { createWhatsappClientRegistry } = require("./whatsappClientRegistry");
 
-function createWhatsappAdapter({ sessionRepo, logger, qrTtlSeconds }) {
+function createWhatsappAdapter({
+  sessionRepo,
+  logger,
+  qrTtlSeconds,
+  browserExecutablePath,
+}) {
   let inboundHandler = null;
 
   const clientRegistry = createWhatsappClientRegistry({
     sessionRepo,
     logger,
     qrTtlSeconds,
+    browserExecutablePath,
     onInboundMessage: async ({ restaurantId, message }) => {
       if (!inboundHandler) {
         return;
