@@ -13,7 +13,8 @@ const deliveryZoneRepo = require("./repositories/deliveryZoneRepo");
 const customerRepo = require("./repositories/customerRepo");
 const orderRepo = require("./repositories/orderRepo");
 const paymentReceiptRepo = require("./repositories/paymentReceiptRepo");
-const providerSessionRepo = require("./repositories/providerSessionRepo");
+  const providerSessionRepo = require("./repositories/providerSessionRepo");
+  const whatsappSessionEventRepo = require("./repositories/whatsappSessionEventRepo");
 const inboundEventRepo = require("./repositories/inboundEventRepo");
 const routingAuditRepo = require("./repositories/routingAuditRepo");
 const restaurantHealthRepo = require("./repositories/restaurantHealthRepo");
@@ -235,6 +236,7 @@ function createApp() {
   } else if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
     whatsappAdapter = createWhatsappAdapter({
       sessionRepo: providerSessionRepo,
+      sessionEventRepo: whatsappSessionEventRepo,
       logger,
       qrTtlSeconds: env.WHATSAPP_QR_TTL_SECONDS,
       browserExecutablePath: env.WHATSAPP_BROWSER_EXECUTABLE_PATH,
@@ -394,9 +396,10 @@ function createApp() {
       userRepo,
       menuRepo,
       orderRepo,
-      deliveryZoneRepo,
-      providerSessionRepo,
-      routingAuditRepo,
+        deliveryZoneRepo,
+        providerSessionRepo,
+        whatsappSessionEventRepo,
+        routingAuditRepo,
       restaurantHealthRepo,
       activationJobRepo,
       outboxService,

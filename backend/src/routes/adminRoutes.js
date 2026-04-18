@@ -267,11 +267,21 @@ async function buildSessionSnapshot({
     restaurant: restaurant.name || "Restaurant",
     phone: whatsapp.phone || restaurant.phone || "",
     status: whatsapp.status,
+    provider: whatsapp.provider || "",
     configured: whatsapp.configured,
+    activationReady: Boolean(whatsapp.activationReady),
     bindingMode: whatsapp.bindingMode,
+    provisioningState: whatsapp.provisioningState,
     routingMode: whatsapp.routingMode,
     routingHint: whatsapp.routingHint,
     lastActive: whatsapp.lastActive,
+    lastConnectedAt:
+      (session && session.lastConnectedAt) || whatsapp.lastActive || null,
+    lastDisconnectedAt: (session && session.lastDisconnectedAt) || null,
+    qrAvailable: Boolean(session && session.qrAvailable),
+    qrGeneratedAt: (session && session.qrGeneratedAt) || null,
+    qrExpiresAt: (session && session.qrExpiresAt) || null,
+    lastError: String((session && session.lastError) || "").trim(),
     messagesSent: sentCount,
     messagesDelivered: sentCount,
     messagesFailed: failedCount,
@@ -329,6 +339,7 @@ function createAdminRoutes({
   orderRepo,
   deliveryZoneRepo,
   providerSessionRepo,
+  whatsappSessionEventRepo,
   routingAuditRepo,
   restaurantHealthRepo,
   activationJobRepo,
@@ -986,6 +997,79 @@ function createAdminRoutes({
       res.status(200).json({
         success: true,
         session: liveSession,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/sessions/:restaurantId/start", async (req, res, next) => {
+    try {
+      const restaurant = await restaurantRepo.getRestaurantById(req.params.restaurantId);
+      if (!restaurant) {
+        res.status(404).json({ error: "Restaurant not found" });
+        return;
+      }
+
+      const liveSession = await channelSessionService.start({
+        channel: "whatsapp-web",
+        restaurantId: req.params.restaurantId,
+      });
+
+      res.status(200).json({
+        success: true,
+        session: liveSession,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/sessions/:restaurantId/qr", async (req, res, next) => {
+    try {
+      const restaurant = await restaurantRepo.getRestaurantById(req.params.restaurantId);
+      if (!restaurant) {
+        res.status(404).json({ error: "Restaurant not found" });
+        return;
+      }
+
+      const qr = await channelSessionService.getQr({
+        channel: "whatsapp-web",
+        restaurantId: req.params.restaurantId,
+        includeImage: false,
+      });
+
+      if (!qr) {
+        res.status(404).json({ error: "No active QR is available" });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        qr,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/sessions/:restaurantId/events", async (req, res, next) => {
+    try {
+      const restaurant = await restaurantRepo.getRestaurantById(req.params.restaurantId);
+      if (!restaurant) {
+        res.status(404).json({ error: "Restaurant not found" });
+        return;
+      }
+
+      const limit = Number(req.query.limit) > 0 ? Number(req.query.limit) : 20;
+      const items = await whatsappSessionEventRepo.listRecentSessionEvents({
+        restaurantId: req.params.restaurantId,
+        limit,
+      });
+
+      res.status(200).json({
+        success: true,
+        items,
       });
     } catch (error) {
       next(error);

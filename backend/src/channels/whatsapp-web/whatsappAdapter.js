@@ -3,6 +3,7 @@ const { createWhatsappClientRegistry } = require("./whatsappClientRegistry");
 
 function createWhatsappAdapter({
   sessionRepo,
+  sessionEventRepo,
   logger,
   qrTtlSeconds,
   browserExecutablePath,
@@ -11,6 +12,7 @@ function createWhatsappAdapter({
 
   const clientRegistry = createWhatsappClientRegistry({
     sessionRepo,
+    sessionEventRepo,
     logger,
     qrTtlSeconds,
     browserExecutablePath,

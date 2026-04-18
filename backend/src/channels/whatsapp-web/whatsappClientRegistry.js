@@ -23,6 +23,7 @@ function sanitizeClientId(restaurantId) {
 
 function createWhatsappClientRegistry({
   sessionRepo,
+  sessionEventRepo,
   logger,
   qrTtlSeconds,
   onInboundMessage,
@@ -33,6 +34,16 @@ function createWhatsappClientRegistry({
   const resolvedBrowserExecutablePath = resolveBrowserExecutablePath(
     browserExecutablePath
   );
+  const EVENT_SEVERITY_BY_NAME = {
+    start_requested: "info",
+    qr_generated: "info",
+    authenticated: "info",
+    connected: "info",
+    manual_disconnect: "info",
+    disconnected: "warning",
+    auth_failure: "error",
+    start_failed: "error",
+  };
 
   function removeClient(restaurantId) {
     clients.delete(restaurantId);
@@ -79,6 +90,9 @@ function createWhatsappClientRegistry({
     client.on("qr", (qr) => {
       logger.info("WhatsApp QR generated", { restaurantId });
       setQrCache(restaurantId, qr);
+      void createSessionEvent(restaurantId, "qr_generated", {
+        expiresAt: new Date(Date.now() + qrTtlSeconds * 1000).toISOString(),
+      });
     });
 
     client.on("authenticated", () => {
@@ -87,6 +101,7 @@ function createWhatsappClientRegistry({
       void setSessionState(restaurantId, {
         status: "authenticating",
       });
+      void createSessionEvent(restaurantId, "authenticated");
     });
 
     client.on("ready", () => {
@@ -98,6 +113,7 @@ function createWhatsappClientRegistry({
         lastConnectedAt: new Date().toISOString(),
         lastError: "",
       });
+      void createSessionEvent(restaurantId, "connected");
     });
 
     client.on("disconnected", (reason) => {
@@ -114,6 +130,9 @@ function createWhatsappClientRegistry({
         lastDisconnectedAt: new Date().toISOString(),
         lastError: reason || "",
       });
+      void createSessionEvent(restaurantId, "disconnected", {
+        reason: reason || "",
+      });
     });
 
     client.on("auth_failure", (message) => {
@@ -128,6 +147,9 @@ function createWhatsappClientRegistry({
         status: "disconnected",
         qrAvailable: false,
         lastError: message || "auth_failure",
+      });
+      void createSessionEvent(restaurantId, "auth_failure", {
+        message: message || "auth_failure",
       });
     });
 
@@ -176,6 +198,7 @@ function createWhatsappClientRegistry({
       qrGeneratedAt: null,
       qrExpiresAt: null,
     });
+    await createSessionEvent(restaurantId, "start_requested");
 
     const client = new Client({
       authStrategy: new LocalAuth({
@@ -202,10 +225,35 @@ function createWhatsappClientRegistry({
         lastDisconnectedAt: new Date().toISOString(),
         lastError: error.message || "session_start_failed",
       });
+      await createSessionEvent(restaurantId, "start_failed", {
+        message: error.message || "session_start_failed",
+      });
       throw error;
     }
 
     return getSessionStatus(restaurantId);
+  }
+
+  async function createSessionEvent(restaurantId, event, details = {}) {
+    if (!sessionEventRepo || typeof sessionEventRepo.createSessionEvent !== "function") {
+      return;
+    }
+
+    const normalizedEvent = String(event || "").trim().toLowerCase();
+
+    try {
+      await sessionEventRepo.createSessionEvent(restaurantId, {
+        event: normalizedEvent,
+        severity: EVENT_SEVERITY_BY_NAME[normalizedEvent] || "info",
+        details,
+      });
+    } catch (error) {
+      logger.error("Failed to write WhatsApp session event", {
+        restaurantId,
+        event,
+        message: error.message,
+      });
+    }
   }
 
   async function sendMessage({ restaurantId, to, text }) {
@@ -245,6 +293,7 @@ function createWhatsappClientRegistry({
         lastDisconnectedAt: new Date().toISOString(),
         lastError: "",
       });
+      await createSessionEvent(restaurantId, "manual_disconnect");
     }
   }
 
