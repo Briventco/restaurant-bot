@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "shardId": "wa-shard-1",
+  "maxTenantsPerProcess": 2,
+  "tenants": [
+    {
+      "restaurantId": "lead_mall",
+      "enabled": true,
+      "disabledReason": "",
+      "whatsappClientId": "wa_lead_mall",
+      "backendApiBaseUrl": "http://localhost:3002",
+      "backendApiKey": "botruntime.leadmallruntime2026",
+      "allowAllChats": true,
+      "allowedChatIds": [],
+      "allowedPhonePrefixes": ["234"],
+      "ignoreGroupChats": true,
+      "reconnect": {
+        "baseDelayMs": 5000,
+        "maxDelayMs": 120000,
+        "maxAttemptsBeforePause": 20
+      }
+    },
+    {
+      "restaurantId": "restaurant_demo_2",
+      "enabled": false,
+      "disabledReason": "configure_next_restaurant_before_enabling",
+      "whatsappClientId": "wa_restaurant_demo_2",
+      "backendApiBaseUrl": "http://localhost:3002",
+      "backendApiKey": "replace-with-second-restaurant-runtime-key",
+      "allowAllChats": true,
+      "allowedChatIds": [],
+      "allowedPhonePrefixes": ["234"],
+      "ignoreGroupChats": true,
+      "reconnect": {
+        "baseDelayMs": 5000,
+        "maxDelayMs": 120000,
+        "maxAttemptsBeforePause": 20
+      }
+    }
+  ]
+}
