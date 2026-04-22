@@ -14,6 +14,8 @@ function probeRoute(app, path, timeoutMs = 4000) {
     req.get = (name) => req.headers[String(name).toLowerCase()];
 
     
+
+    
     const res = new EventEmitter();
     res.statusCode = 200;
     res.headers = {};
