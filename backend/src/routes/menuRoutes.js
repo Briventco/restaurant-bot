@@ -5,6 +5,7 @@ function createMenuRoutes({
   requireApiKey,
   requireRestaurantAccess,
   menuRepo,
+  restaurantOnboardingService,
   restaurantHealthService,
 }) {
   const router = Router({ mergeParams: true });
@@ -52,6 +53,12 @@ function createMenuRoutes({
             source: "menu_created",
           });
         }
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "menu",
+          });
+        }
 
         res.status(201).json({ item });
       } catch (error) {
@@ -96,6 +103,12 @@ function createMenuRoutes({
             source: "menu_updated",
           });
         }
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "menu",
+          });
+        }
 
         res.status(200).json({ item: updated });
       } catch (error) {
@@ -115,6 +128,12 @@ function createMenuRoutes({
           await restaurantHealthService.evaluateAndPersistRestaurantHealth({
             restaurantId: req.restaurantId,
             source: "menu_deleted",
+          });
+        }
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "menu",
           });
         }
         res.status(204).send();

@@ -53,7 +53,9 @@ function mapTokenError(error) {
   return authError(401, "token_invalid", "Failed to verify authentication token");
 }
 
-function createAuthService({ admin, userRepo, logger }) {
+const { normalizeOnboardingState } = require("../domain/services/restaurantOnboardingService");
+
+function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
   async function verifySessionByIdToken(idToken) {
     if (typeof idToken !== "string" || !idToken.trim()) {
       throw authError(401, "missing_token", "Missing Bearer token");
@@ -115,6 +117,13 @@ function createAuthService({ admin, userRepo, logger }) {
       role,
       permissions: profile.permissions,
     });
+    const restaurant =
+      normalizedRestaurantId && restaurantRepo
+        ? await restaurantRepo.getRestaurantById(normalizedRestaurantId)
+        : null;
+    const onboarding = normalizeOnboardingState(
+      restaurant && restaurant.onboarding ? restaurant.onboarding : null
+    );
 
     logger.info("Auth session verification succeeded", {
       uid,
@@ -131,7 +140,9 @@ function createAuthService({ admin, userRepo, logger }) {
       ),
       role,
       restaurantId: normalizedRestaurantId,
+      restaurantName: restaurant && restaurant.name ? String(restaurant.name) : "",
       permissions,
+      onboarding,
       isActive: true,
       createdAt: profile.createdAt || null,
       updatedAt: profile.updatedAt || null,

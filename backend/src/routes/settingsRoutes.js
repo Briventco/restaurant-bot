@@ -33,6 +33,7 @@ function createSettingsRoutes({
   requireApiKey,
   requireRestaurantAccess,
   restaurantRepo,
+  restaurantOnboardingService,
   restaurantHealthService,
   orderService,
 }) {
@@ -156,6 +157,12 @@ function createSettingsRoutes({
           await restaurantHealthService.evaluateAndPersistRestaurantHealth({
             restaurantId: req.restaurantId,
             source: "settings_updated",
+          });
+        }
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "settings",
           });
         }
 

@@ -5,6 +5,7 @@ function createDeliveryZoneRoutes({
   requireApiKey,
   requireRestaurantAccess,
   deliveryZoneRepo,
+  restaurantOnboardingService,
 }) {
   const router = Router({ mergeParams: true });
 
@@ -61,6 +62,12 @@ function createDeliveryZoneRoutes({
           enabled: req.body.enabled !== false,
           notes: String(req.body.notes || "").trim(),
         });
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "delivery",
+          });
+        }
 
         res.status(201).json({
           success: true,
@@ -114,6 +121,12 @@ function createDeliveryZoneRoutes({
           res.status(404).json({ error: "Delivery zone not found" });
           return;
         }
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "delivery",
+          });
+        }
 
         res.status(200).json({
           success: true,
@@ -141,6 +154,12 @@ function createDeliveryZoneRoutes({
         }
 
         await deliveryZoneRepo.deleteDeliveryZone(req.restaurantId, req.params.zoneId);
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "delivery",
+          });
+        }
         res.status(200).json({ success: true });
       } catch (error) {
         next(error);

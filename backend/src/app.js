@@ -47,6 +47,12 @@ const {
   createRestaurantActivationService,
 } = require("./domain/services/restaurantActivationService");
 const {
+  createRestaurantOnboardingService,
+} = require("./domain/services/restaurantOnboardingService");
+const {
+  resolveWhatsappChannelStatus,
+} = require("./utils/whatsappChannelStatus");
+const {
   createHealthAlertService,
 } = require("./domain/services/healthAlertService");
 const { createAuthService } = require("./auth/authService");
@@ -129,7 +135,7 @@ function createApp() {
 
   const requireApiKey = createRequireApiKey({ apiKeyRepo, logger });
   const requireRestaurantAccess = createRequireRestaurantAccess({ restaurantRepo });
-  const authService = createAuthService({ admin, userRepo, logger });
+  const authService = createAuthService({ admin, userRepo, restaurantRepo, logger });
   const requireAuth = createRequireAuth({ authService, logger });
   const requireApiKeyOrPortalAuth = createRequirePortalOrApiKey({
     requireApiKey,
@@ -355,6 +361,17 @@ function createApp() {
     env,
     logger,
   });
+  const restaurantOnboardingService = createRestaurantOnboardingService({
+    admin,
+    restaurantRepo,
+    userRepo,
+    menuRepo,
+    deliveryZoneRepo,
+    providerSessionRepo,
+    resolveWhatsappChannelStatus,
+    env,
+    restaurantHealthService,
+  });
 
   if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
     whatsappAdapter.setInboundHandler(async (payload) => {
@@ -398,7 +415,15 @@ function createApp() {
 
   // Keep router-based health routes mounted as a compatibility fallback.
   app.use(API_BASE, createHealthRoutes());
-  app.use(API_BASE, createAuthRoutes({ requireAuth, authService, logger }));
+  app.use(
+    API_BASE,
+    createAuthRoutes({
+      requireAuth,
+      authService,
+      restaurantOnboardingService,
+      logger,
+    })
+  );
   app.use(
     `${API_BASE}/admin`,
     createAdminRoutes({
@@ -419,6 +444,7 @@ function createApp() {
       channelSessionService,
       restaurantHealthService,
       restaurantActivationService,
+      restaurantOnboardingService,
       env,
     })
   );
@@ -443,7 +469,11 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       restaurantRepo,
+      userRepo,
+      menuRepo,
+      deliveryZoneRepo,
       providerSessionRepo,
+      restaurantOnboardingService,
       restaurantHealthService,
       env,
     })
@@ -454,6 +484,7 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       menuRepo,
+      restaurantOnboardingService,
       restaurantHealthService,
     })
   );
@@ -463,6 +494,7 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       restaurantRepo,
+      restaurantOnboardingService,
       restaurantHealthService,
       orderService,
     })
@@ -473,6 +505,7 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       deliveryZoneRepo,
+      restaurantOnboardingService,
     })
   );
   app.use(

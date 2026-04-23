@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const { authError, sendAuthError } = require("../auth/authErrors");
+const { validateBody } = require("../middleware/validateBody");
 
 function summarizeToken(idToken) {
   const normalized = String(idToken || "").trim();
@@ -10,8 +11,65 @@ function summarizeToken(idToken) {
   };
 }
 
-function createAuthRoutes({ requireAuth, authService, logger = console }) {
+function createAuthRoutes({
+  requireAuth,
+  authService,
+  restaurantOnboardingService,
+  logger = console,
+}) {
   const router = Router();
+
+  router.post(
+    "/auth/restaurant-signup",
+    validateBody({
+      restaurantName: { type: "string", required: true, minLength: 2 },
+      adminEmail: { type: "string", required: true, minLength: 5 },
+      adminPassword: { type: "string", required: true, minLength: 6 },
+      adminDisplayName: { type: "string", required: false },
+      restaurantId: { type: "string", required: false },
+      phone: { type: "string", required: false },
+      address: { type: "string", required: false },
+      timezone: { type: "string", required: false },
+      openingHours: { type: "string", required: false },
+      closingHours: { type: "string", required: false },
+    }),
+    async (req, res, next) => {
+      try {
+        const created = await restaurantOnboardingService.createRestaurantWorkspace({
+          restaurantName: req.body.restaurantName,
+          adminEmail: req.body.adminEmail,
+          adminPassword: req.body.adminPassword,
+          adminDisplayName: req.body.adminDisplayName,
+          restaurantId: req.body.restaurantId,
+          phone: req.body.phone,
+          address: req.body.address,
+          timezone: req.body.timezone,
+          openingHours: req.body.openingHours,
+          closingHours: req.body.closingHours,
+          seedSampleMenu: false,
+          createdBy: "self_serve_signup",
+          source: "self_serve_signup",
+        });
+
+        logger.info("POST /auth/restaurant-signup succeeded", {
+          restaurantId: created.restaurant && created.restaurant.id,
+          adminEmail: created.adminUser && created.adminUser.email,
+        });
+        res.status(201).json({
+          success: true,
+          ...created,
+        });
+      } catch (error) {
+        if (error && error.statusCode === 409) {
+          res.status(409).json({
+            error: error.message,
+          });
+          return;
+        }
+        next(error);
+      }
+    }
+  );
 
   router.post("/auth/session", async (req, res) => {
     try {

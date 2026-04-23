@@ -1,6 +1,6 @@
 const { Router } = require("express");
 const { validateBody } = require("../middleware/validateBody");
-const { ROLES, getDefaultPermissionsForRole } = require("../auth/permissions");
+const { ROLES } = require("../auth/permissions");
 const {
   resolveWhatsappChannelStatus,
   normalizeProvisioningState,
@@ -11,46 +11,6 @@ const {
   getAllowedLifecycleTransition,
   getLifecycleTransitionOptions,
 } = require("../domain/services/restaurantActivationValidationService");
-
-function slugifyRestaurantId(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "restaurant";
-}
-
-async function buildUniqueRestaurantId(preferredId, restaurantName, restaurantRepo) {
-  const baseId = slugifyRestaurantId(preferredId || restaurantName);
-  let candidate = baseId;
-  let counter = 2;
-
-  // Keep incrementing until we find an unused restaurant document id.
-  while (await restaurantRepo.getRestaurantById(candidate)) {
-    candidate = `${baseId}_${counter}`;
-    counter += 1;
-  }
-
-  return candidate;
-}
-
-function createSampleMenuItems(restaurantName) {
-  const safeName = String(restaurantName || "Restaurant").trim();
-  return [
-    {
-      name: `${safeName} Rice Bowl`,
-      category: "Main",
-      price: 3500,
-      available: true,
-    },
-    {
-      name: `${safeName} Signature Drink`,
-      category: "Drinks",
-      price: 1200,
-      available: true,
-    },
-  ];
-}
 
 function inferRestaurantStatus(restaurant = {}) {
   return restaurant.status === "suspended" || restaurant.isActive === false
@@ -347,6 +307,7 @@ function createAdminRoutes({
   channelSessionService,
   restaurantHealthService,
   restaurantActivationService,
+  restaurantOnboardingService,
   env,
 }) {
   const router = Router();
@@ -1322,105 +1283,33 @@ function createAdminRoutes({
     }),
     async (req, res, next) => {
       try {
-        const restaurantName = req.body.restaurantName.trim();
-        const adminEmail = req.body.adminEmail.trim().toLowerCase();
-        const adminPassword = req.body.adminPassword;
-        const adminDisplayName =
-          String(req.body.adminDisplayName || "").trim() || `${restaurantName} Admin`;
-        const restaurantId = await buildUniqueRestaurantId(
-          req.body.restaurantId,
-          restaurantName,
-          restaurantRepo
-        );
-
-        let authUser;
-        try {
-          authUser = await admin.auth().createUser({
-            email: adminEmail,
-            password: adminPassword,
-            displayName: adminDisplayName,
-            disabled: false,
-          });
-        } catch (error) {
-          if (error && error.code === "auth/email-already-exists") {
-            res.status(409).json({
-              error: "A portal user with that admin email already exists.",
-            });
-            return;
-          }
-          throw error;
-        }
-
-        const restaurant = await restaurantRepo.upsertRestaurant(restaurantId, {
-          name: restaurantName,
-          email: adminEmail,
-          phone: String(req.body.phone || "").trim(),
-          address: String(req.body.address || "").trim(),
-          timezone: String(req.body.timezone || "Africa/Lagos").trim(),
-          plan: "Starter",
-          openingHours: String(req.body.openingHours || "08:00").trim(),
-          closingHours: String(req.body.closingHours || "22:00").trim(),
-          bot: {
-            enabled: true,
-            autoConfirm: false,
-            notifyOnOrder: true,
-          },
-          activation: {
-            state: "draft",
-            note: "Restaurant created and waiting for configuration.",
-            updatedBy: req.user.uid,
-            updatedAt: new Date().toISOString(),
-          },
+        const created = await restaurantOnboardingService.createRestaurantWorkspace({
+          restaurantName: req.body.restaurantName,
+          adminEmail: req.body.adminEmail,
+          adminPassword: req.body.adminPassword,
+          adminDisplayName: req.body.adminDisplayName,
+          restaurantId: req.body.restaurantId,
+          phone: req.body.phone,
+          address: req.body.address,
+          timezone: req.body.timezone,
+          openingHours: req.body.openingHours,
+          closingHours: req.body.closingHours,
+          seedSampleMenu: req.body.seedSampleMenu === true,
           createdBy: req.user.uid,
-          whatsapp: {
-            configured: false,
-            provider: "",
-            provisioningState: "unassigned",
-            phone: "",
-            phoneNumberId: "",
-            wabaId: "",
-          },
+          source: "super_admin_onboarding",
         });
-
-        const adminProfile = await userRepo.upsertUser(authUser.uid, {
-          email: adminEmail,
-          displayName: adminDisplayName,
-          role: ROLES.RESTAURANT_ADMIN,
-          restaurantId,
-          permissions: getDefaultPermissionsForRole(ROLES.RESTAURANT_ADMIN),
-          isActive: true,
-        });
-
-        let seededMenuCount = 0;
-        if (req.body.seedSampleMenu === true) {
-          const sampleMenu = createSampleMenuItems(restaurantName);
-          for (const item of sampleMenu) {
-            await menuRepo.createMenuItem(restaurantId, item);
-          }
-          seededMenuCount = sampleMenu.length;
-        }
-        if (restaurantHealthService) {
-          await restaurantHealthService.evaluateAndPersistRestaurantHealth({
-            restaurantId,
-            source: "restaurant_onboarded",
-          });
-        }
 
         res.status(201).json({
           success: true,
-          restaurant,
-          adminUser: {
-            uid: adminProfile.uid,
-            email: adminProfile.email,
-            displayName: adminProfile.displayName,
-            role: adminProfile.role,
-            restaurantId: adminProfile.restaurantId,
-          },
-          onboarding: {
-            seededMenuCount,
-          },
+          ...created,
         });
       } catch (error) {
+        if (error && error.statusCode === 409) {
+          res.status(409).json({
+            error: error.message,
+          });
+          return;
+        }
         next(error);
       }
     }

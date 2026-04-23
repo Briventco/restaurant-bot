@@ -5,12 +5,20 @@ const {
   normalizeProvisioningState,
   getWhatsappProvisioningTransitions,
 } = require("../utils/whatsappChannelStatus");
+const {
+  buildChecklistProgress,
+  normalizeOnboardingState,
+} = require("../domain/services/restaurantOnboardingService");
 
 function createRestaurantRoutes({
   requireApiKey,
   requireRestaurantAccess,
   restaurantRepo,
+  userRepo,
+  menuRepo,
+  deliveryZoneRepo,
   providerSessionRepo,
+  restaurantOnboardingService,
   restaurantHealthService,
   env,
 }) {
@@ -70,6 +78,139 @@ function createRestaurantRoutes({
         }
 
         res.status(200).json({ restaurant });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.patch(
+    "/restaurant/onboarding",
+    requireApiKey(["restaurants.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      action: {
+        type: "string",
+        required: true,
+        custom: (value) =>
+          String(value || "").trim().toLowerCase() === "complete"
+            ? null
+            : "action must be complete",
+      },
+    }),
+    async (req, res, next) => {
+      try {
+        const [menuItems, deliveryZones, session] = await Promise.all([
+          menuRepo.listMenuItems(req.restaurantId),
+          deliveryZoneRepo.listDeliveryZones(req.restaurantId),
+          providerSessionRepo.getSession(req.restaurantId, "whatsapp-web"),
+        ]);
+
+        const whatsapp = resolveWhatsappChannelStatus({
+          restaurant: req.restaurant,
+          restaurantId: req.restaurantId,
+          session,
+          env,
+        });
+        const progress = buildChecklistProgress({
+          restaurant: req.restaurant,
+          menuItems,
+          deliveryZones,
+          whatsapp,
+        });
+
+        if (!progress.requiredComplete) {
+          res.status(400).json({
+            error: "Complete the required setup items before finishing onboarding.",
+            onboarding: {
+              ...normalizeOnboardingState(req.restaurant.onboarding),
+              progress,
+            },
+          });
+          return;
+        }
+
+        const completedSteps = progress.checks
+          .filter((item) => item.complete)
+          .map((item) => item.id);
+        const now = new Date().toISOString();
+        const updatedRestaurant = await restaurantRepo.upsertRestaurant(req.restaurantId, {
+          onboarding: {
+            ...(req.restaurant.onboarding && typeof req.restaurant.onboarding === "object"
+              ? req.restaurant.onboarding
+              : {}),
+            status: "completed",
+            currentStep: "done",
+            completedSteps,
+            completedAt: now,
+            lastCompletedAt: now,
+            updatedAt: now,
+            updatedBy: req.user && req.user.uid ? req.user.uid : "restaurant_admin",
+          },
+        });
+
+        res.status(200).json({
+          success: true,
+          onboarding: {
+            ...normalizeOnboardingState(updatedRestaurant.onboarding),
+            progress,
+          },
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
+    "/restaurant/onboarding",
+    requireApiKey(["restaurants.read"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const [menuItems, deliveryZones, session, users] = await Promise.all([
+          menuRepo.listMenuItems(req.restaurantId),
+          deliveryZoneRepo.listDeliveryZones(req.restaurantId),
+          providerSessionRepo.getSession(req.restaurantId, "whatsapp-web"),
+          userRepo.listUsersByRestaurantId(req.restaurantId),
+        ]);
+
+        const whatsapp = resolveWhatsappChannelStatus({
+          restaurant: req.restaurant,
+          restaurantId: req.restaurantId,
+          session,
+          env,
+        });
+        const progress = buildChecklistProgress({
+          restaurant: req.restaurant,
+          menuItems,
+          deliveryZones,
+          whatsapp,
+        });
+        const onboarding = normalizeOnboardingState(req.restaurant.onboarding);
+
+        res.status(200).json({
+          success: true,
+          onboarding: {
+            ...onboarding,
+            progress,
+          },
+          restaurant: {
+            id: req.restaurant.id,
+            name: req.restaurant.name || "",
+            phone: req.restaurant.phone || "",
+            address: req.restaurant.address || "",
+            openingHours: req.restaurant.openingHours || "",
+            closingHours: req.restaurant.closingHours || "",
+            timezone: req.restaurant.timezone || "Africa/Lagos",
+          },
+          counts: {
+            menuItems: menuItems.length,
+            deliveryZones: deliveryZones.length,
+            users: users.length,
+          },
+          whatsapp,
+        });
       } catch (error) {
         next(error);
       }
@@ -283,6 +424,12 @@ function createRestaurantRoutes({
           await restaurantHealthService.evaluateAndPersistRestaurantHealth({
             restaurantId: req.restaurantId,
             source: "whatsapp_config_updated",
+          });
+        }
+        if (restaurantOnboardingService) {
+          await restaurantOnboardingService.syncRestaurantOnboardingProgress({
+            restaurantId: req.restaurantId,
+            actorId: req.user && req.user.uid ? req.user.uid : "whatsapp",
           });
         }
 
