@@ -56,8 +56,10 @@ function createInitialOnboardingState({ source = "self_serve_signup", actorId = 
 }
 
 function normalizeOnboardingState(onboarding = {}) {
-  const completedSteps = Array.isArray(onboarding.completedSteps)
-    ? onboarding.completedSteps
+  const safeOnboarding =
+    onboarding && typeof onboarding === "object" ? onboarding : {};
+  const completedSteps = Array.isArray(safeOnboarding.completedSteps)
+    ? safeOnboarding.completedSteps
         .map((value) => String(value || "").trim().toLowerCase())
         .filter(Boolean)
     : [];
@@ -65,15 +67,18 @@ function normalizeOnboardingState(onboarding = {}) {
   const dedupedCompletedSteps = Array.from(new Set(completedSteps));
 
   return {
-    status: String(onboarding.status || "not_started").trim().toLowerCase() || "not_started",
-    source: String(onboarding.source || "").trim(),
-    currentStep: String(onboarding.currentStep || "").trim().toLowerCase() || "",
+    status:
+      String(safeOnboarding.status || "not_started").trim().toLowerCase() ||
+      "not_started",
+    source: String(safeOnboarding.source || "").trim(),
+    currentStep:
+      String(safeOnboarding.currentStep || "").trim().toLowerCase() || "",
     completedSteps: dedupedCompletedSteps,
-    startedAt: onboarding.startedAt || null,
-    completedAt: onboarding.completedAt || null,
-    lastCompletedAt: onboarding.lastCompletedAt || null,
-    updatedAt: onboarding.updatedAt || null,
-    updatedBy: String(onboarding.updatedBy || "").trim(),
+    startedAt: safeOnboarding.startedAt || null,
+    completedAt: safeOnboarding.completedAt || null,
+    lastCompletedAt: safeOnboarding.lastCompletedAt || null,
+    updatedAt: safeOnboarding.updatedAt || null,
+    updatedBy: String(safeOnboarding.updatedBy || "").trim(),
   };
 }
 
