@@ -118,7 +118,14 @@ function loadSingleTenantConfig(constants) {
 function loadMultiTenantConfig(constants) {
   const filePath = String(constants.BOT_TENANTS_FILE || "").trim();
   if (!filePath) {
-    throw new Error("BOT_TENANTS_FILE is required when BOT_RUNTIME_MODE=multi");
+    return {
+      version: 1,
+      shardId: constants.BOT_SHARD_ID || "wa-shard-default",
+      maxTenantsPerProcess: Math.max(1, Math.min(5, constants.BOT_MAX_TENANTS_PER_PROCESS)),
+      tenants: [],
+      mode: "multi",
+      sourceFile: "",
+    };
   }
 
   const absolutePath = path.isAbsolute(filePath)

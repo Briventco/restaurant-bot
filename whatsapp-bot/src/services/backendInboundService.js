@@ -3,6 +3,7 @@ function createBackendInboundService({
   backendApiPrefix,
   restaurantId,
   apiKey,
+  runtimeKey,
   requestTimeoutMs,
   logger,
 }) {
@@ -21,8 +22,8 @@ function createBackendInboundService({
       throw new Error("BOT_RESTAURANT_ID is required");
     }
 
-    if (!apiKey) {
-      throw new Error("BACKEND_API_KEY is required");
+    if (!apiKey && !runtimeKey) {
+      throw new Error("BACKEND_API_KEY or BACKEND_RUNTIME_REGISTRY_KEY is required");
     }
   }
 
@@ -41,12 +42,19 @@ function createBackendInboundService({
     }, requestTimeoutMs);
 
     try {
+      const headers = {
+        "content-type": "application/json",
+      };
+      if (apiKey) {
+        headers["x-api-key"] = apiKey;
+      }
+      if (runtimeKey) {
+        headers["x-runtime-key"] = runtimeKey;
+      }
+
       const response = await fetch(buildUrl(), {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-        },
+        headers,
         body: JSON.stringify({
           channel: normalizedMessage.channel,
           channelCustomerId: normalizedMessage.channelCustomerId,

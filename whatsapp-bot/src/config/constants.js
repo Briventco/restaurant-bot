@@ -90,6 +90,8 @@ const constants = {
   PORT: toNumber(process.env.PORT, 3001),
   BOT_RUNTIME_MODE: (process.env.BOT_RUNTIME_MODE || "single").trim().toLowerCase(),
   BOT_SHARD_ID: process.env.BOT_SHARD_ID || "wa-shard-default",
+  BOT_SHARD_INDEX: toNumber(process.env.BOT_SHARD_INDEX, 0),
+  BOT_SHARD_COUNT: toNumber(process.env.BOT_SHARD_COUNT, 1),
   BOT_MAX_TENANTS_PER_PROCESS: toNumber(
     process.env.BOT_MAX_TENANTS_PER_PROCESS,
     5
@@ -142,6 +144,20 @@ const constants = {
   BACKEND_API_BASE_URL: process.env.BACKEND_API_BASE_URL || "http://localhost:3002",
   BACKEND_API_PREFIX: process.env.BACKEND_API_PREFIX || "/api/v1",
   BACKEND_API_KEY: process.env.BACKEND_API_KEY || "",
+  BACKEND_RUNTIME_REGISTRY_ENABLED: toBoolean(
+    process.env.BACKEND_RUNTIME_REGISTRY_ENABLED,
+    true
+  ),
+  BACKEND_RUNTIME_REGISTRY_PATH:
+    process.env.BACKEND_RUNTIME_REGISTRY_PATH || "/api/v1/runtime/tenants",
+  BACKEND_RUNTIME_REGISTRY_KEY:
+    process.env.BACKEND_RUNTIME_REGISTRY_KEY ||
+    process.env.BOT_RUNTIME_ADMIN_KEY ||
+    "",
+  BACKEND_TENANT_SYNC_INTERVAL_MS: toNumber(
+    process.env.BACKEND_TENANT_SYNC_INTERVAL_MS,
+    30000
+  ),
   BACKEND_REQUEST_TIMEOUT_MS: toNumber(process.env.BACKEND_REQUEST_TIMEOUT_MS, 15000),
   PUPPETEER_PROTOCOL_TIMEOUT_MS: toNumber(
     process.env.PUPPETEER_PROTOCOL_TIMEOUT_MS,

@@ -93,6 +93,7 @@ const {
 const { createLegacyCompatRoutes } = require("./routes/legacyCompatRoutes");
 const { createMessageRoutes } = require("./routes/messageRoutes");
 const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
+const { createRuntimeRegistryRoutes } = require("./routes/runtimeRegistryRoutes");
 
 const API_VERSION = "v1";
 const API_BASE = `/api/${API_VERSION}`;
@@ -425,6 +426,14 @@ function createApp() {
     })
   );
   app.use(
+    API_BASE,
+    createRuntimeRegistryRoutes({
+      env,
+      restaurantRepo,
+      logger,
+    })
+  );
+  app.use(
     `${API_BASE}/admin`,
     createAdminRoutes({
       requireAuth,
@@ -565,6 +574,8 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       inboundMessageService,
+      restaurantRepo,
+      env,
       logger,
     })
   );

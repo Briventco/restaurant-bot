@@ -98,13 +98,49 @@ function createMessageRoutes({
   requireApiKey,
   requireRestaurantAccess,
   inboundMessageService,
+  restaurantRepo,
+  env,
   logger,
 }) {
   const router = Router({ mergeParams: true });
+  const runtimeRegistryKey = String(
+    env &&
+      (env.BACKEND_RUNTIME_REGISTRY_KEY || env.WHATSAPP_RUNTIME_API_KEY || "")
+  ).trim();
+
+  async function requireRuntimeKeyOrApiKey(req, res, next) {
+    const incomingRuntimeKey = String(req.header("x-runtime-key") || "").trim();
+    if (runtimeRegistryKey && incomingRuntimeKey && incomingRuntimeKey === runtimeRegistryKey) {
+      const restaurantId = String(req.params.restaurantId || "").trim();
+      if (!restaurantId) {
+        res.status(400).json({ error: "Missing restaurantId in request path" });
+        return;
+      }
+
+      const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+      if (!restaurant) {
+        res.status(404).json({ error: "Restaurant not found" });
+        return;
+      }
+
+      req.restaurantId = restaurantId;
+      req.restaurant = restaurant;
+      req.auth = {
+        restaurantId,
+        keyId: "runtime-registry-key",
+        scopes: ["messages.inbound"],
+      };
+      next();
+      return;
+    }
+
+    const middleware = requireApiKey(["messages.inbound"]);
+    middleware(req, res, next);
+  }
 
   router.post(
     "/messages/inbound",
-    requireApiKey(["messages.inbound"]),
+    requireRuntimeKeyOrApiKey,
     requireRestaurantAccess,
     validateBody({
       channel: { required: true, type: "string" },

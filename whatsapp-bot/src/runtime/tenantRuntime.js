@@ -138,6 +138,7 @@ function createTenantRuntime({
     backendApiPrefix: constants.BACKEND_API_PREFIX,
     restaurantId: tenantConfig.restaurantId,
     apiKey: tenantConfig.backendApiKey,
+    runtimeKey: constants.BACKEND_RUNTIME_REGISTRY_KEY,
     requestTimeoutMs: constants.BACKEND_REQUEST_TIMEOUT_MS,
     logger,
   });

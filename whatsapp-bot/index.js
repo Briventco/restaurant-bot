@@ -534,6 +534,8 @@ async function main() {
     JSON.stringify({
       runtimeMode: constants.BOT_RUNTIME_MODE,
       shardId: constants.BOT_SHARD_ID,
+      shardIndex: constants.BOT_SHARD_INDEX,
+      shardCount: constants.BOT_SHARD_COUNT,
       maxTenantsPerProcess: constants.BOT_MAX_TENANTS_PER_PROCESS,
       backendApiBaseUrl: constants.BACKEND_API_BASE_URL,
       backendApiPrefix: constants.BACKEND_API_PREFIX,

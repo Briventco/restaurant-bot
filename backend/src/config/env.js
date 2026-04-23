@@ -81,6 +81,12 @@ const env = {
     process.env.WHATSAPP_RUNTIME_REQUEST_TIMEOUT_MS,
     15000
   ),
+  BACKEND_RUNTIME_REGISTRY_KEY:
+    process.env.BACKEND_RUNTIME_REGISTRY_KEY ||
+    process.env.WHATSAPP_RUNTIME_API_KEY ||
+    "",
+  BACKEND_RUNTIME_PUBLIC_BASE_URL:
+    process.env.BACKEND_RUNTIME_PUBLIC_BASE_URL || "",
   META_WEBHOOK_ENABLED: toBoolean(
     process.env.META_WEBHOOK_ENABLED,
     false
