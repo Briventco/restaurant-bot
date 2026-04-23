@@ -91,19 +91,32 @@ const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
 const API_VERSION = "v1";
 const API_BASE = `/api/${API_VERSION}`;
 
+function normalizeCorsOrigin(origin) {
+  return String(origin || "")
+    .trim()
+    .replace(/\/+$/, "");
+}
+
 function createApp() {
   const app = express();
   const allowedOrigins = new Set(
-    Array.isArray(env.CORS_ALLOWED_ORIGINS) ? env.CORS_ALLOWED_ORIGINS : []
+    (Array.isArray(env.CORS_ALLOWED_ORIGINS) ? env.CORS_ALLOWED_ORIGINS : [])
+      .map(normalizeCorsOrigin)
+      .filter(Boolean)
   );
   const corsOptions = {
     origin(origin, callback) {
-      if (!origin || allowedOrigins.size === 0 || allowedOrigins.has(origin)) {
+      const normalizedOrigin = normalizeCorsOrigin(origin);
+      if (
+        !normalizedOrigin ||
+        allowedOrigins.size === 0 ||
+        allowedOrigins.has(normalizedOrigin)
+      ) {
         callback(null, true);
         return;
       }
 
-      callback(new Error(`Origin ${origin} is not allowed by CORS`));
+      callback(new Error(`Origin ${normalizedOrigin} is not allowed by CORS`));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
