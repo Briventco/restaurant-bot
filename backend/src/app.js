@@ -398,7 +398,7 @@ function createApp() {
 
   // Keep router-based health routes mounted as a compatibility fallback.
   app.use(API_BASE, createHealthRoutes());
-  app.use(API_BASE, createAuthRoutes({ requireAuth, authService }));
+  app.use(API_BASE, createAuthRoutes({ requireAuth, authService, logger }));
   app.use(
     `${API_BASE}/admin`,
     createAdminRoutes({

@@ -1,6 +1,23 @@
 const { authError } = require("./authErrors");
 const { ROLES, isValidRole, resolvePermissionsForUser } = require("./permissions");
 
+function summarizeToken(idToken) {
+  const normalized = String(idToken || "").trim();
+  if (!normalized) {
+    return {
+      present: false,
+      length: 0,
+      preview: "",
+    };
+  }
+
+  return {
+    present: true,
+    length: normalized.length,
+    preview: normalized.slice(0, 12),
+  };
+}
+
 function normalizeRestaurantId(role, restaurantId) {
   if (role === ROLES.SUPER_ADMIN) {
     return null;
@@ -42,6 +59,10 @@ function createAuthService({ admin, userRepo, logger }) {
       throw authError(401, "missing_token", "Missing Bearer token");
     }
 
+    logger.info("Auth session verification started", {
+      token: summarizeToken(idToken),
+    });
+
     let decodedToken;
     try {
       decodedToken = await admin.auth().verifyIdToken(idToken.trim());
@@ -58,17 +79,34 @@ function createAuthService({ admin, userRepo, logger }) {
       throw authError(401, "token_invalid", "Token does not include a uid");
     }
 
+    logger.info("Firebase token verified", {
+      uid,
+      email: String(decodedToken.email || ""),
+    });
+
     const profile = await userRepo.getUserByUid(uid);
     if (!profile) {
+      logger.warn("User profile lookup failed", {
+        uid,
+      });
       throw authError(404, "user_profile_missing", "User profile not found");
     }
 
     if (profile.isActive !== true) {
+      logger.warn("User profile inactive", {
+        uid,
+        role: String(profile.role || ""),
+        restaurantId: String(profile.restaurantId || ""),
+      });
       throw authError(403, "user_inactive", "User account is inactive");
     }
 
     const role = String(profile.role || "").trim();
     if (!isValidRole(role)) {
+      logger.warn("User profile has invalid role", {
+        uid,
+        role,
+      });
       throw authError(403, "invalid_user_role", "User profile has an invalid role");
     }
 
@@ -76,6 +114,13 @@ function createAuthService({ admin, userRepo, logger }) {
     const permissions = resolvePermissionsForUser({
       role,
       permissions: profile.permissions,
+    });
+
+    logger.info("Auth session verification succeeded", {
+      uid,
+      role,
+      restaurantId: normalizedRestaurantId,
+      permissionsCount: permissions.length,
     });
 
     return {

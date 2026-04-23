@@ -15,13 +15,32 @@ function extractBearerToken(req) {
   return match[1].trim();
 }
 
+function summarizeToken(idToken) {
+  const normalized = String(idToken || "").trim();
+  return {
+    present: Boolean(normalized),
+    length: normalized.length,
+    preview: normalized ? normalized.slice(0, 12) : "",
+  };
+}
+
 function createRequireAuth({ authService, logger }) {
   return async function requireAuth(req, res, next) {
     const idToken = extractBearerToken(req);
     if (!idToken) {
+      logger.warn("Portal auth missing bearer token", {
+        method: req.method,
+        path: req.originalUrl,
+      });
       sendAuthError(res, authError(401, "missing_token", "Missing Bearer token"));
       return;
     }
+
+    logger.info("Portal auth middleware started", {
+      method: req.method,
+      path: req.originalUrl,
+      token: summarizeToken(idToken),
+    });
 
     try {
       const user = await authService.verifySessionByIdToken(idToken);
@@ -37,11 +56,20 @@ function createRequireAuth({ authService, logger }) {
           "",
         scopes: user.permissions || [],
       };
+      logger.info("Portal auth middleware succeeded", {
+        method: req.method,
+        path: req.originalUrl,
+        uid: user.uid,
+        role: user.role,
+        restaurantId: user.restaurantId,
+      });
       next();
     } catch (error) {
       logger.warn("Portal auth failed", {
         message: error.message,
         statusCode: error.statusCode || 0,
+        method: req.method,
+        path: req.originalUrl,
       });
       sendAuthError(res, error);
     }
