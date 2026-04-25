@@ -1,11 +1,72 @@
 const fs = require("fs");
+const path = require("path");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
+function findChromeExecutableInCache(cacheDir) {
+  if (!cacheDir || !fs.existsSync(cacheDir) || !fs.statSync(cacheDir).isDirectory()) {
+    return "";
+  }
+
+  const chromeRoot = path.join(cacheDir, "chrome");
+  if (!fs.existsSync(chromeRoot) || !fs.statSync(chromeRoot).isDirectory()) {
+    return "";
+  }
+
+  const versionDirs = fs.readdirSync(chromeRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+
+  for (const versionDir of versionDirs) {
+    const versionPath = path.join(chromeRoot, versionDir);
+    const executable = findChromeExecutableRecursively(versionPath, 4);
+    if (executable) {
+      return executable;
+    }
+  }
+
+  return "";
+}
+
+function findChromeExecutableRecursively(directory, depth) {
+  if (depth < 0 || !fs.existsSync(directory)) {
+    return "";
+  }
+
+  const entries = fs.readdirSync(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const candidatePath = path.join(directory, entry.name);
+    if (
+      entry.isFile() &&
+      (entry.name === "chrome" || entry.name === "chrome.exe" || entry.name === "msedge.exe")
+    ) {
+      return candidatePath;
+    }
+  }
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const found = findChromeExecutableRecursively(path.join(directory, entry.name), depth - 1);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return "";
+}
+
 function resolveBrowserExecutablePath(configuredPath = "") {
+  const cacheDir = String(process.env.PUPPETEER_CACHE_DIR || path.join(process.cwd(), ".cache/puppeteer")).trim();
+  const cachedExecutable = findChromeExecutableInCache(cacheDir);
+
   const candidates = [
     configuredPath,
+    process.env.WHATSAPP_BROWSER_EXECUTABLE_PATH,
     process.env.PUPPETEER_EXECUTABLE_PATH,
     process.env.CHROME_EXECUTABLE_PATH,
+    cachedExecutable,
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
