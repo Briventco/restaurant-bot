@@ -5,6 +5,7 @@
   "description": "Multi-tenant backend MVP for restaurant ordering",
   "main": "src/server.js",
   "scripts": {
+    "postinstall": "node scripts/installChromium.js",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "worker:outbox": "node src/workers/outboxWorker.js",
