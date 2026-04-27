@@ -264,6 +264,7 @@ function createWhatsappClientRegistry({
     const client = new Client({
       authStrategy: new LocalAuth({
         clientId: `restaurant_${sanitizeClientId(restaurantId)}`,
+        dataPath: process.env.WHATSAPP_SESSION_DATA_PATH || path.join(process.cwd(), '.wwebjs_auth'),
       }),
       puppeteer: {
         headless: true,
