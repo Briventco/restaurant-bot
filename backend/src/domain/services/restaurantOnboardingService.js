@@ -96,6 +96,18 @@ function isHoursComplete(restaurant = {}) {
   );
 }
 
+function isSettingsComplete(restaurant = {}) {
+  return Boolean(
+    restaurant.acceptOrders === true &&
+    restaurant.notifyOnOrder === true &&
+    restaurant.manualTransferEnabled === true &&
+    String(restaurant.bankName || "").trim() &&
+    String(restaurant.accountName || "").trim() &&
+    String(restaurant.accountNumber || "").trim() &&
+    String(restaurant.orderAlertRecipients || "").trim()
+  );
+}
+
 function buildChecklistProgress({ restaurant, menuItems, deliveryZones, whatsapp }) {
   const checks = [
     {
@@ -134,9 +146,21 @@ function buildChecklistProgress({ restaurant, menuItems, deliveryZones, whatsapp
       complete: Boolean(whatsapp && whatsapp.configured),
       href: "/whatsapp",
     },
+    {
+      id: "settings",
+      label: "Order & Payment Settings",
+      complete: isSettingsComplete(restaurant),
+      href: "/settings",
+    },
+    {
+      id: "subscription",
+      label: "Select subscription plan",
+      complete: Boolean(restaurant?.plan && restaurant.plan !== null),
+      href: "/subscription",
+    },
   ];
 
-  const requiredStepIds = ["profile", "hours", "menu", "whatsapp"];
+  const requiredStepIds = ["profile", "hours", "menu", "whatsapp", "settings", "subscription"];
   const requiredComplete = requiredStepIds.every((stepId) =>
     checks.some((item) => item.id === stepId && item.complete)
   );
@@ -215,7 +239,7 @@ function createRestaurantOnboardingService({
         phone: String(phone || "").trim(),
         address: String(address || "").trim(),
         timezone: String(timezone || "Africa/Lagos").trim(),
-        plan: "Starter",
+        plan: null,
         openingHours: String(openingHours || "08:00").trim(),
         closingHours: String(closingHours || "22:00").trim(),
         bot: {

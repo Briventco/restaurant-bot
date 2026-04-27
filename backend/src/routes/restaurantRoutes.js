@@ -21,6 +21,8 @@ function createRestaurantRoutes({
   restaurantOnboardingService,
   restaurantHealthService,
   env,
+  subscriptionPlanRepo,
+  restaurantSubscriptionRepo,
 }) {
   const router = Router({ mergeParams: true });
 
@@ -436,6 +438,108 @@ function createRestaurantRoutes({
         res.status(200).json({
           success: true,
           whatsapp: restaurant.whatsapp || patch,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  // ── Subscription Routes for Restaurant Admins ──
+
+  // List available subscription plans
+  router.get(
+    "/subscription-plans",
+    requireApiKey(["restaurants.read"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const plans = await subscriptionPlanRepo.listPlans({ includeInactive: false });
+        res.status(200).json({
+          success: true,
+          plans,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  // Get restaurant's current subscription
+  router.get(
+    "/subscription",
+    requireApiKey(["restaurants.read"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const subscription = await restaurantSubscriptionRepo.getSubscriptionByRestaurantId(req.restaurantId);
+        
+        if (!subscription) {
+          return res.status(200).json({
+            success: true,
+            subscription: null,
+          });
+        }
+
+        // Enrich with plan details
+        const plan = await subscriptionPlanRepo.getPlanById(subscription.planId);
+        
+        res.status(200).json({
+          success: true,
+          subscription: {
+            ...subscription,
+            planDetails: plan,
+          },
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  // Subscribe to a plan
+  router.post(
+    "/subscription",
+    requireApiKey(["restaurants.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      planId: { type: "string", required: true },
+      planName: { type: "string", required: true },
+      amount: { type: "number", required: true },
+      currency: { type: "string", required: false },
+      billingCycle: { type: "string", required: false },
+      autoRenew: { type: "boolean", required: false },
+    }),
+    async (req, res, next) => {
+      try {
+        // Check if restaurant already has an active subscription in current billing period
+        const hasActiveSubscription = await restaurantSubscriptionRepo.hasActiveSubscriptionInPeriod(req.restaurantId);
+        
+        if (hasActiveSubscription) {
+          return res.status(400).json({
+            success: false,
+            error: "You already have an active subscription. Please wait for it to expire before subscribing again.",
+          });
+        }
+
+        const subscription = await restaurantSubscriptionRepo.createSubscription({
+          restaurantId: req.restaurantId,
+          planId: req.body.planId,
+          planName: req.body.planName,
+          amount: req.body.amount,
+          currency: req.body.currency || 'NGN',
+          billingCycle: req.body.billingCycle || 'monthly',
+          autoRenew: req.body.autoRenew !== false,
+        });
+        
+        // Update restaurant's plan field
+        await restaurantRepo.upsertRestaurant(req.restaurantId, {
+          plan: req.body.planName,
+        });
+        
+        res.status(201).json({
+          success: true,
+          subscription,
         });
       } catch (error) {
         next(error);

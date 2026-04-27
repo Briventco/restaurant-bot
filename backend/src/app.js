@@ -21,6 +21,8 @@ const restaurantHealthRepo = require("./repositories/restaurantHealthRepo");
 const activationJobRepo = require("./repositories/activationJobRepo");
 const outboxRepo = require("./repositories/outboxRepo");
 const conversationSessionRepo = require("./repositories/conversationSessionRepo");
+const subscriptionPlanRepo = require("./repositories/subscriptionPlanRepo");
+const restaurantSubscriptionRepo = require("./repositories/restaurantSubscriptionRepo");
 
 const { createRequireApiKey } = require("./middleware/requireApiKey");
 const { createRequireRestaurantAccess } = require("./middleware/requireRestaurantAccess");
@@ -455,6 +457,8 @@ function createApp() {
       restaurantActivationService,
       restaurantOnboardingService,
       env,
+      subscriptionPlanRepo,
+      restaurantSubscriptionRepo,
     })
   );
   // Unversioned aliases for deployment probes and simple uptime checks.
@@ -485,6 +489,8 @@ function createApp() {
       restaurantOnboardingService,
       restaurantHealthService,
       env,
+      subscriptionPlanRepo,
+      restaurantSubscriptionRepo,
     })
   );
   app.use(
