@@ -58,7 +58,33 @@ function normalizeInboundInput(channel, input = {}) {
     text: String(input.text || ""),
     providerMessageId: String(input.providerMessageId || "").trim(),
     timestamp: Number(input.timestamp) || Date.now(),
+    isFromMe: Boolean(input.isFromMe),
+    isStatus: Boolean(input.isStatus),
+    isBroadcast: Boolean(input.isBroadcast),
   };
+}
+
+function shouldIgnoreSystemInbound(normalized) {
+  const channelCustomerId = String(normalized && normalized.channelCustomerId ? normalized.channelCustomerId : "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized && normalized.isFromMe) {
+    return "from_me";
+  }
+
+  if ((normalized && normalized.isStatus) || channelCustomerId === "status@broadcast") {
+    return "status_broadcast";
+  }
+
+  if (
+    (normalized && normalized.isBroadcast) ||
+    (channelCustomerId.endsWith("@broadcast") && channelCustomerId !== "status@broadcast")
+  ) {
+    return "broadcast";
+  }
+
+  return "";
 }
 
 function toPositiveInteger(value) {
@@ -2174,6 +2200,15 @@ function createInboundMessageService({
       channel,
       channelGateway.normalizeInboundMessage({ channel, rawEvent })
     );
+    const ignoredReason = shouldIgnoreSystemInbound(normalized);
+    if (ignoredReason) {
+      return {
+        handled: true,
+        ignored: true,
+        shouldReply: false,
+        type: ignoredReason,
+      };
+    }
 
     return processInbound({
       restaurantId,
@@ -2190,6 +2225,15 @@ function createInboundMessageService({
 
   async function handleInboundNormalized({ restaurantId, message, sendMessage = null }) {
     const normalized = normalizeInboundInput(message.channel, message);
+    const ignoredReason = shouldIgnoreSystemInbound(normalized);
+    if (ignoredReason) {
+      return {
+        handled: true,
+        ignored: true,
+        shouldReply: false,
+        type: ignoredReason,
+      };
+    }
 
     return processInbound({
       restaurantId,

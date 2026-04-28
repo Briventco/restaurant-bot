@@ -102,3 +102,45 @@ test("menu/greeting response is throttled by cooldown", async () => {
   assert.equal(second.shouldReply, false);
   assert.equal(second.type, "menu_cooldown");
 });
+
+test("status inbound never produces a reply", async () => {
+  const service = buildService();
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "status@broadcast",
+      customerPhone: "",
+      text: "reply to status",
+      providerMessageId: "msg-status-1",
+      timestamp: Date.now(),
+      isStatus: true,
+    },
+  });
+
+  assert.equal(result.shouldReply, false);
+  assert.equal(result.ignored, true);
+  assert.equal(result.type, "status_broadcast");
+});
+
+test("broadcast inbound never produces a reply", async () => {
+  const service = buildService();
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "newsletter@broadcast",
+      customerPhone: "",
+      text: "broadcast payload",
+      providerMessageId: "msg-broadcast-1",
+      timestamp: Date.now(),
+      isBroadcast: true,
+    },
+  });
+
+  assert.equal(result.shouldReply, false);
+  assert.equal(result.ignored, true);
+  assert.equal(result.type, "broadcast");
+});
