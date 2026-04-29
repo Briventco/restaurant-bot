@@ -144,6 +144,24 @@ function isGreetingText(lower) {
   );
 }
 
+function isAcknowledgementText(lower) {
+  return (
+    lower === "thanks" ||
+    lower === "thank you" ||
+    lower === "thank u" ||
+    lower === "ok" ||
+    lower === "okay" ||
+    lower === "okk" ||
+    lower === "alright" ||
+    lower === "all right" ||
+    lower === "alr" ||
+    lower === "sure" ||
+    lower === "nice" ||
+    lower === "great" ||
+    lower === "good"
+  );
+}
+
 function isMenuOrStockQuestion(lower) {
   return (
     lower === "menu" ||
@@ -1537,6 +1555,55 @@ function createInboundMessageService({
       };
     }
 
+    if (lower === "cancel") {
+      if (activeOrder) {
+        const updatedOrder = await orderService.transitionOrderStatus({
+          restaurantId,
+          orderId: activeOrder.id,
+          toStatus: ORDER_STATUSES.CANCELLED,
+          actor: {
+            type: "customer",
+            id: normalized.channelCustomerId,
+          },
+          reason: "customer_cancelled_active_order",
+        });
+
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+
+        const replyText = "Your current order has been cancelled. You can now place a new one.";
+        if (sendMessage) {
+          await orderService.sendMessageToOrderCustomer(updatedOrder, replyText, {
+            type: "customer_cancelled_order",
+            sourceAction: "customerCancelActiveOrder",
+            sourceRef: updatedOrder.id,
+            providerMessageId,
+          });
+        }
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "cancel_active_order",
+          replyText,
+          orderId: updatedOrder.id,
+        };
+      }
+
+      const replyText = buildNoPendingCancelMessage();
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "cancel_noop",
+        replyText,
+      };
+    }
+
     if (existingSession) {
       if (
         existingSession.state === FLOW_STATES.AWAITING_PAYMENT_REFERENCE &&
@@ -1640,6 +1707,19 @@ function createInboundMessageService({
         menuItems,
         sendMessage,
       });
+    }
+
+    if (isAcknowledgementText(lower)) {
+      const replyText = hasBlockingActiveOrder
+        ? "You are welcome. Your order is still in progress. Reply CANCEL any time if you want to cancel it."
+        : "You are welcome. I am here whenever you are ready. Reply MENU to see what is available.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "acknowledgement",
+        replyText,
+      };
     }
 
     if (!hasBlockingActiveOrder && !looksLikeNewOrderAttempt(lower) && !seemsLikeStructuredOrder) {
@@ -1906,49 +1986,6 @@ function createInboundMessageService({
         type: "pending_order_updated",
         replyText,
         orderId: updatedOrder.id,
-      };
-    }
-
-    if (lower === "cancel") {
-      if (hasBlockingActiveOrder) {
-        const updatedOrder = await orderService.transitionOrderStatus({
-          restaurantId,
-          orderId: activeOrder.id,
-          toStatus: ORDER_STATUSES.CANCELLED,
-          actor: {
-            type: "customer",
-            id: normalized.channelCustomerId,
-          },
-          reason: "customer_cancelled_active_order",
-        });
-
-        const replyText = "Your current order has been cancelled. You can now place a new one.";
-        if (sendMessage) {
-          await orderService.sendMessageToOrderCustomer(updatedOrder, replyText, {
-            type: "customer_cancelled_order",
-            sourceAction: "customerCancelActiveOrder",
-            sourceRef: updatedOrder.id,
-            providerMessageId,
-          });
-        }
-
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "cancel_active_order",
-          replyText,
-          orderId: updatedOrder.id,
-        };
-      }
-
-      const replyText = buildNoPendingCancelMessage();
-      await sendText(sendMessage, normalized.channelCustomerId, replyText);
-
-      return {
-        handled: true,
-        shouldReply: true,
-        type: "cancel_noop",
-        replyText,
       };
     }
 
