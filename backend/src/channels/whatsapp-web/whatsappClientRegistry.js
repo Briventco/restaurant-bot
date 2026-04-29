@@ -82,6 +82,11 @@ function sanitizeClientId(restaurantId) {
   return String(restaurantId).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function isBrowserAlreadyRunningError(error) {
+  const message = String(error && error.message ? error.message : "").toLowerCase();
+  return message.includes("browser is already running for");
+}
+
 function createWhatsappClientRegistry({
   sessionRepo,
   sessionEventRepo,
@@ -92,6 +97,7 @@ function createWhatsappClientRegistry({
 }) {
   const clients = new Map();
   const qrCache = new Map();
+  const startLocks = new Map();
   const resolvedBrowserExecutablePath = resolveBrowserExecutablePath(
     browserExecutablePath
   );
@@ -234,6 +240,12 @@ function createWhatsappClientRegistry({
   }
 
   async function startSession(restaurantId) {
+    const inFlightStart = startLocks.get(restaurantId);
+    if (inFlightStart) {
+      return inFlightStart;
+    }
+
+    const startPromise = (async () => {
     const existing = clients.get(restaurantId);
     if (existing) {
       const existingStatus = await getSessionStatus(restaurantId);
@@ -281,6 +293,24 @@ function createWhatsappClientRegistry({
     } catch (error) {
       removeClient(restaurantId);
       clearQrCache(restaurantId);
+
+      if (isBrowserAlreadyRunningError(error)) {
+        logger.warn("WhatsApp browser profile already in use", {
+          restaurantId,
+          message: error.message,
+        });
+        await setSessionState(restaurantId, {
+          status: "starting",
+          qrAvailable: false,
+          lastError:
+            "Another WhatsApp browser process is already using this session profile. Stop the existing process and retry.",
+        });
+        await createSessionEvent(restaurantId, "start_failed", {
+          message: error.message || "browser_profile_in_use",
+        });
+        return getSessionStatus(restaurantId);
+      }
+
       await setSessionState(restaurantId, {
         status: "disconnected",
         qrAvailable: false,
@@ -294,6 +324,14 @@ function createWhatsappClientRegistry({
     }
 
     return getSessionStatus(restaurantId);
+    })();
+
+    startLocks.set(restaurantId, startPromise);
+    try {
+      return await startPromise;
+    } finally {
+      startLocks.delete(restaurantId);
+    }
   }
 
   async function createSessionEvent(restaurantId, event, details = {}) {

@@ -1,5 +1,6 @@
 const { authError } = require("./authErrors");
 const { ROLES, isValidRole, resolvePermissionsForUser } = require("./permissions");
+const crypto = require("crypto");
 
 function summarizeToken(idToken) {
   const normalized = String(idToken || "").trim();
@@ -56,15 +57,26 @@ function mapTokenError(error) {
 const { normalizeOnboardingState } = require("../domain/services/restaurantOnboardingService");
 
 function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
-  async function verifySessionByIdToken(idToken) {
-    if (typeof idToken !== "string" || !idToken.trim()) {
-      throw authError(401, "missing_token", "Missing Bearer token");
-    }
+  const tokenCache = new Map();
+  const inFlightVerification = new Map();
+  const tokenCacheTtlMs = 60 * 1000;
 
-    logger.info("Auth session verification started", {
-      token: summarizeToken(idToken),
-    });
+  function hashToken(idToken) {
+    return crypto
+      .createHash("sha256")
+      .update(String(idToken || ""), "utf8")
+      .digest("hex");
+  }
 
+  function cloneAuthUser(user) {
+    return {
+      ...user,
+      permissions: Array.isArray(user.permissions) ? [...user.permissions] : [],
+      onboarding: user.onboarding && typeof user.onboarding === "object" ? { ...user.onboarding } : user.onboarding,
+    };
+  }
+
+  async function verifyAndBuildUser(idToken) {
     let decodedToken;
     try {
       decodedToken = await admin.auth().verifyIdToken(idToken.trim());
@@ -147,6 +159,44 @@ function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
       createdAt: profile.createdAt || null,
       updatedAt: profile.updatedAt || null,
     };
+  }
+
+  async function verifySessionByIdToken(idToken) {
+    if (typeof idToken !== "string" || !idToken.trim()) {
+      throw authError(401, "missing_token", "Missing Bearer token");
+    }
+
+    logger.info("Auth session verification started", {
+      token: summarizeToken(idToken),
+    });
+    const tokenHash = hashToken(idToken.trim());
+    const now = Date.now();
+    const cached = tokenCache.get(tokenHash);
+    if (cached && cached.expiresAt > now) {
+      logger.info("Auth session verification cache hit", {
+        tokenHashPrefix: tokenHash.slice(0, 12),
+      });
+      return cloneAuthUser(cached.user);
+    }
+
+    if (inFlightVerification.has(tokenHash)) {
+      logger.info("Auth session verification coalesced", {
+        tokenHashPrefix: tokenHash.slice(0, 12),
+      });
+      return cloneAuthUser(await inFlightVerification.get(tokenHash));
+    }
+
+    const verificationPromise = verifyAndBuildUser(idToken).finally(() => {
+      inFlightVerification.delete(tokenHash);
+    });
+    inFlightVerification.set(tokenHash, verificationPromise);
+
+    const user = await verificationPromise;
+    tokenCache.set(tokenHash, {
+      user: cloneAuthUser(user),
+      expiresAt: now + tokenCacheTtlMs,
+    });
+    return cloneAuthUser(user);
   }
 
   return {

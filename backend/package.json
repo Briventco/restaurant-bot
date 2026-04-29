@@ -13,7 +13,8 @@
     "tenants:audit": "node src/scripts/multiTenantReadinessAudit.js",
     "test": "node --test",
     "check": "node --check src/server.js",
-    "create:api-key": "node src/scripts/createApiKey.js"
+    "create:api-key": "node src/scripts/createApiKey.js",
+    "perf:analyze": "node scripts/analyzePerf.js"
   },
   "engines": {
     "node": ">=20"

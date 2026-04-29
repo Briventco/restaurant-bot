@@ -40,6 +40,14 @@ function extractJsonObject(text) {
 function normalizeDecision(raw) {
   const safe = raw && typeof raw === "object" ? raw : {};
   const confidence = Number(safe.confidence);
+  const safeEntities =
+    safe.entities && typeof safe.entities === "object" ? safe.entities : {};
+  const safeItems = Array.isArray(safeEntities.items)
+    ? safeEntities.items
+        .filter((item) => item && typeof item === "string")
+        .map((item) => String(item).trim())
+        .filter(Boolean)
+    : [];
 
   return {
     intent: String(safe.intent || "unknown").trim().toLowerCase() || "unknown",
@@ -47,10 +55,23 @@ function normalizeDecision(raw) {
     replyText: String(safe.replyText || "").trim(),
     shouldStartGuidedFlow: Boolean(safe.shouldStartGuidedFlow),
     shouldHandleDirectly: Boolean(safe.shouldHandleDirectly),
+    entities: {
+      items: safeItems,
+      quantity: Number.isFinite(Number(safeEntities.quantity))
+        ? Number(safeEntities.quantity)
+        : 0,
+      fulfillmentType: String(safeEntities.fulfillmentType || "")
+        .trim()
+        .toLowerCase(),
+      location: String(safeEntities.location || "").trim(),
+      budget: Number.isFinite(Number(safeEntities.budget))
+        ? Number(safeEntities.budget)
+        : 0,
+    },
   };
 }
 
-function buildDecisionPrompt({ restaurant, menuItems, messageText }) {
+function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext }) {
   const restaurantName = String((restaurant && restaurant.name) || "the restaurant").trim();
   const menuText = (menuItems || [])
     .filter((item) => item.available)
@@ -61,7 +82,7 @@ function buildDecisionPrompt({ restaurant, menuItems, messageText }) {
     "You are a smart, friendly WhatsApp assistant for a restaurant.",
     "Classify and answer incoming customer messages naturally based on what you know about the restaurant.",
     "Return JSON only.",
-    'Return exactly this shape: {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false}',
+    'Return exactly this shape: {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false,"entities":{"items":[],"quantity":0,"fulfillmentType":"","location":"","budget":0}}',
     'Allowed intents: greeting, menu_request, stock_request, availability_question, recommendation, price_question, place_order, delivery_question, support, off_topic, unknown.',
     "Set shouldStartGuidedFlow=true when the bot should launch the guided ordering menu flow.",
     "Set shouldHandleDirectly=true only when replyText is enough and no guided flow is needed.",
@@ -71,13 +92,14 @@ function buildDecisionPrompt({ restaurant, menuItems, messageText }) {
     "If the customer asks something you do not know, do not guess. Briefly say what you do know, offer helpful alternatives, and keep the conversation focused on the restaurant.",
     "Only redirect to the menu when the customer clearly wants to order or explicitly asks for the menu.",
     "For completely off-topic questions, politely stay focused on the restaurant and offer help with the menu, ordering, availability, or delivery.",
+    conversationContext ? `Recent context: ${conversationContext}` : "",
     `Restaurant name: ${restaurantName}`,
     `Available menu: ${menuText}`,
     `Customer message: ${messageText}`,
   ].join("\n");
 }
 
-async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messageText }) {
+async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messageText, conversationContext }) {
   const response = await openai.responses.create({
     model,
     input: [
@@ -97,7 +119,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
         content: [
           {
             type: "input_text",
-            text: buildDecisionPrompt({ restaurant, menuItems, messageText }),
+            text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext }),
           },
         ],
       },
@@ -112,19 +134,35 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
           required: [
             "intent",
             "confidence",
-            "replyText",
-            "shouldStartGuidedFlow",
-            "shouldHandleDirectly",
-          ],
-          properties: {
-            intent: { type: "string" },
-            confidence: { type: "number" },
-            replyText: { type: "string" },
-            shouldStartGuidedFlow: { type: "boolean" },
-            shouldHandleDirectly: { type: "boolean" },
+              "replyText",
+              "shouldStartGuidedFlow",
+              "shouldHandleDirectly",
+              "entities",
+            ],
+            properties: {
+              intent: { type: "string" },
+              confidence: { type: "number" },
+              replyText: { type: "string" },
+              shouldStartGuidedFlow: { type: "boolean" },
+              shouldHandleDirectly: { type: "boolean" },
+              entities: {
+                type: "object",
+                additionalProperties: false,
+                required: ["items", "quantity", "fulfillmentType", "location", "budget"],
+                properties: {
+                  items: {
+                    type: "array",
+                    items: { type: "string" },
+                  },
+                  quantity: { type: "number" },
+                  fulfillmentType: { type: "string" },
+                  location: { type: "string" },
+                  budget: { type: "number" },
+                },
+              },
+            },
           },
         },
-      },
     },
   });
 
@@ -141,6 +179,7 @@ async function classifyWithGemini({
   restaurant,
   menuItems,
   messageText,
+  conversationContext,
   requestTimeoutMs,
 }) {
   const controller = new AbortController();
@@ -162,7 +201,7 @@ async function classifyWithGemini({
               role: "user",
               parts: [
                 {
-                  text: buildDecisionPrompt({ restaurant, menuItems, messageText }),
+                  text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext }),
                 },
               ],
             },
@@ -216,7 +255,7 @@ function createLlmService({
   const openai =
     openAIApiKey && OpenAI ? new OpenAI({ apiKey: openAIApiKey }) : null;
 
-  async function classifyRestaurantMessage({ restaurant, menuItems, messageText }) {
+  async function classifyRestaurantMessage({ restaurant, menuItems, messageText, conversationContext = "" }) {
     const normalizedText = String(messageText || "").trim();
     if (!normalizedText) {
       return {
@@ -225,6 +264,13 @@ function createLlmService({
         replyText: "",
         shouldStartGuidedFlow: false,
         shouldHandleDirectly: false,
+        entities: {
+          items: [],
+          quantity: 0,
+          fulfillmentType: "",
+          location: "",
+          budget: 0,
+        },
       };
     }
 
@@ -237,6 +283,7 @@ function createLlmService({
             restaurant,
             menuItems,
             messageText: normalizedText,
+            conversationContext,
             requestTimeoutMs,
           })) || {
             intent: "unknown",
@@ -244,6 +291,13 @@ function createLlmService({
             replyText: "",
             shouldStartGuidedFlow: false,
             shouldHandleDirectly: false,
+            entities: {
+              items: [],
+              quantity: 0,
+              fulfillmentType: "",
+              location: "",
+              budget: 0,
+            },
           }
         );
       }
@@ -256,12 +310,20 @@ function createLlmService({
             restaurant,
             menuItems,
             messageText: normalizedText,
+            conversationContext,
           })) || {
             intent: "unknown",
             confidence: 0,
             replyText: "",
             shouldStartGuidedFlow: false,
             shouldHandleDirectly: false,
+            entities: {
+              items: [],
+              quantity: 0,
+              fulfillmentType: "",
+              location: "",
+              budget: 0,
+            },
           }
         );
       }
@@ -272,6 +334,13 @@ function createLlmService({
         replyText: "",
         shouldStartGuidedFlow: false,
         shouldHandleDirectly: false,
+        entities: {
+          items: [],
+          quantity: 0,
+          fulfillmentType: "",
+          location: "",
+          budget: 0,
+        },
       };
     } catch (error) {
       logger.warn("LLM message classification failed", {
@@ -284,6 +353,13 @@ function createLlmService({
         replyText: "",
         shouldStartGuidedFlow: false,
         shouldHandleDirectly: false,
+        entities: {
+          items: [],
+          quantity: 0,
+          fulfillmentType: "",
+          location: "",
+          budget: 0,
+        },
       };
     }
   }

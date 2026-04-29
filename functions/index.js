@@ -130,6 +130,29 @@ function matchMenuItems(orderItems) {
   return {matched, unavailable};
 }
 
+function parseFulfillmentType(text = "") {
+  const lower = normalizeText(text);
+
+  if (
+    lower === "1" ||
+    lower.includes("delivery") ||
+    lower.includes("deliver")
+  ) {
+    return "delivery";
+  }
+
+  if (
+    lower === "2" ||
+    lower.includes("pickup") ||
+    lower.includes("pick up") ||
+    lower.includes("pick-up")
+  ) {
+    return "pickup";
+  }
+
+  return null;
+}
+
 function buildConfirmUrl(orderId) {
   return `${process.env.APP_BASE_URL}/confirmOrder?orderId=${orderId}`;
 }
@@ -323,6 +346,8 @@ async function notifyStaffAboutOrder(orderId, orderData, title) {
 async function findActiveOrderByCustomer(from) {
   const activeStatuses = [
     "pending_confirmation",
+    "awaiting_fulfillment_type",
+    "awaiting_customer_confirmation",
     "awaiting_customer_update",
     "awaiting_customer_edit",
     "confirmed",
@@ -347,6 +372,108 @@ async function findActiveOrderByCustomer(from) {
     id: doc.id,
     ref: doc.ref,
     data: doc.data(),
+  };
+}
+
+function renderOrderSummary(order) {
+  let summary = (order.matched || []).map((item) => {
+    return `${item.quantity} x ${item.name} = â‚¦${item.subtotal}`;
+  }).join("\n");
+
+  summary += `\n\nTotal: â‚¦${order.total}`;
+
+  if (order.fulfillmentType) {
+    summary += `\nFulfillment: ${order.fulfillmentType}`;
+  }
+
+  return summary;
+}
+
+async function handleAwaitingFulfillmentType(activeOrder, incomingMessage) {
+  const fulfillmentType = parseFulfillmentType(incomingMessage);
+
+  if (!fulfillmentType) {
+    return {
+      handled: true,
+      reply: `Please choose one option:
+1 - Delivery
+2 - Pickup`,
+    };
+  }
+
+  await activeOrder.ref.update({
+    fulfillmentType,
+    status: "awaiting_customer_confirmation",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const orderWithFulfillment = {
+    ...activeOrder.data,
+    fulfillmentType,
+  };
+
+  let reply = "Great. Please confirm your order:\n\n";
+  reply += renderOrderSummary(orderWithFulfillment);
+  reply += "\n\nReply with CONFIRM to place this order, or CANCEL to stop.";
+
+  return {
+    handled: true,
+    reply,
+  };
+}
+
+async function handleAwaitingCustomerConfirmation(activeOrder, incomingMessage) {
+  const lower = normalizeText(incomingMessage);
+
+  if (lower === "cancel") {
+    await activeOrder.ref.update({
+      status: "cancelled",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return {
+      handled: true,
+      reply: "Your order has been cancelled.",
+    };
+  }
+
+  if (lower !== "confirm") {
+    return {
+      handled: true,
+      reply: "Reply with CONFIRM to place your order, or CANCEL to stop.",
+    };
+  }
+
+  await activeOrder.ref.update({
+    status: "pending_confirmation",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const orderData = {
+    ...activeOrder.data,
+    status: "pending_confirmation",
+  };
+
+  try {
+    await notifyStaffAboutOrder(activeOrder.id, orderData, "NEW ORDER");
+  } catch (staffError) {
+    logger.error("Failed to send staff notification", {
+      message: staffError.message,
+      stack: staffError.stack,
+    });
+  }
+
+  let reply = "Thanks - your order has been received.\n\n";
+  reply += renderOrderSummary(orderData);
+  reply += "\nStatus: Waiting for staff confirmation.";
+
+  if ((orderData.unavailable || []).length) {
+    reply += `\nUnavailable: ${(orderData.unavailable || []).join(", ")}`;
+  }
+
+  return {
+    handled: true,
+    reply,
   };
 }
 
@@ -543,6 +670,34 @@ Reply with what you want, for example:
     const activeOrder = await findActiveOrderByCustomer(from);
 
     if (activeOrder &&
+      activeOrder.data.status === "awaiting_fulfillment_type") {
+      const result = await handleAwaitingFulfillmentType(
+          activeOrder,
+          incomingMessage,
+      );
+
+      if (result.handled) {
+        twiml.message(result.reply);
+        res.type("text/xml").send(twiml.toString());
+        return;
+      }
+    }
+
+    if (activeOrder &&
+      activeOrder.data.status === "awaiting_customer_confirmation") {
+      const result = await handleAwaitingCustomerConfirmation(
+          activeOrder,
+          incomingMessage,
+      );
+
+      if (result.handled) {
+        twiml.message(result.reply);
+        res.type("text/xml").send(twiml.toString());
+        return;
+      }
+    }
+
+    if (activeOrder &&
       activeOrder.data.status === "awaiting_customer_update") {
       const result = await handleAwaitingCustomerUpdate(
           activeOrder,
@@ -599,34 +754,14 @@ ${formatMenu()}`);
       matched,
       unavailable,
       total,
-      status: "pending_confirmation",
+      status: "awaiting_fulfillment_type",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    const orderData = {
-      from,
-      matched,
-      unavailable,
-      total,
-    };
-
-    try {
-      await notifyStaffAboutOrder(orderDoc.id, orderData, "NEW ORDER");
-    } catch (staffError) {
-      logger.error("Failed to send staff notification", {
-        message: staffError.message,
-        stack: staffError.stack,
-      });
-    }
-
-    let customerReply = "Thanks — your order has been received.\n\n";
-
-    customerReply += matched.map((item) => {
-      return `${item.quantity} x ${item.name} = ₦${item.subtotal}`;
-    }).join("\n");
-
-    customerReply += `\n\nTotal: ₦${total}`;
-    customerReply += "\nStatus: Waiting for staff confirmation.";
+    let customerReply = "Nice choice. Do you want delivery or pickup?\n";
+    customerReply += "1 - Delivery\n2 - Pickup\n\n";
+    customerReply += `Order #${orderDoc.id}\n`;
+    customerReply += renderOrderSummary({matched, total});
 
     if (unavailable.length) {
       customerReply += `\nUnavailable: ${unavailable.join(", ")}`;
