@@ -229,6 +229,17 @@ function createWhatsappClientRegistry({
       void createSessionEvent(restaurantId, "disconnected", {
         reason: reason || "",
       });
+
+      // Auto-restart after 5 seconds if not a manual disconnect
+      if (reason !== "LOGOUT" && reason !== "CONFLICT") {
+        logger.info("Scheduling auto-restart for WhatsApp session", {
+          restaurantId,
+          reason,
+        });
+        setTimeout(() => {
+          void startSession(restaurantId);
+        }, 5000);
+      }
     });
 
     client.on("auth_failure", (message) => {
@@ -310,8 +321,18 @@ function createWhatsappClientRegistry({
       puppeteer: {
         headless: true,
         executablePath: resolvedBrowserExecutablePath || undefined,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--disable-gpu",
+        ],
       },
+      takeoverOnConflict: true,
+      takeoverTimeoutMs: 0,
     });
 
     bindClientEvents(restaurantId, client);
@@ -468,6 +489,44 @@ function createWhatsappClientRegistry({
       qrExpiresAt: qr ? qr.expiresAt : stored.qrExpiresAt || null,
     };
   }
+
+  // Heartbeat to keep sessions alive and auto-restart if needed
+  const heartbeatIntervalMs = 60000; // Check every minute
+  const heartbeatTimer = setInterval(async () => {
+    for (const [restaurantId, entry] of clients.entries()) {
+      try {
+        // Skip if a start is already in progress
+        if (startLocks.has(restaurantId)) {
+          continue;
+        }
+
+        const status = await getSessionStatus(restaurantId);
+        if (status.status !== "connected" && status.status !== "authenticating" && status.status !== "starting") {
+          logger.info("Heartbeat detected disconnected session, restarting", {
+            restaurantId,
+            status: status.status,
+          });
+          void startSession(restaurantId);
+        }
+      } catch (error) {
+        logger.error("Heartbeat check failed for WhatsApp session", {
+          restaurantId,
+          message: error.message,
+        });
+      }
+    }
+  }, heartbeatIntervalMs);
+
+  // Cleanup on process exit
+  process.on("beforeExit", () => {
+    clearInterval(heartbeatTimer);
+  });
+  process.on("SIGINT", () => {
+    clearInterval(heartbeatTimer);
+  });
+  process.on("SIGTERM", () => {
+    clearInterval(heartbeatTimer);
+  });
 
   return {
     startSession,

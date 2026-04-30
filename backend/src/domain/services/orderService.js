@@ -324,7 +324,7 @@ function createOrderService({
     }
 
     const testOrder = {
-      id: "test-alert",
+      id: `test-alert-${Date.now()}`,
       restaurantId,
       channel: "whatsapp-web",
     };
