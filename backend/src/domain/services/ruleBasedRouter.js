@@ -22,6 +22,42 @@ function createRuleBasedRouter({
     seemsLikeStructuredOrder,
     sendMessage,
   }) {
+    if (!hasBlockingActiveOrder && !looksLikeNewOrderAttempt(lower) && !seemsLikeStructuredOrder) {
+      const [menuItems, restaurant] = await Promise.all([
+        menuService.listAvailableMenuItems(restaurantId),
+        restaurantRepo.getRestaurantById(restaurantId),
+      ]);
+
+      const llmResult = await chatOrchestrator.maybeHandleWithLlm({
+        restaurantId,
+        normalized,
+        restaurant,
+        menuItems,
+        sendMessage,
+      });
+
+      if (llmResult && llmResult.handled !== false) {
+        return llmResult;
+      }
+
+      if (looksLikeQuestion(lower, incomingMessage)) {
+        const replyText = buildQuestionFallbackReply(lower, incomingMessage, menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "question_fallback",
+          replyText,
+          decision: {
+            handler: "rule_question_fallback",
+            intent: "question",
+            confidence: 0.4,
+            reason: "no_order_signal_and_no_llm_direct_answer",
+          },
+        };
+      }
+    }
+
     if (isGreetingText(lower)) {
       const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
       const replyText = buildGreetingMessage(restaurant && restaurant.name);
@@ -112,42 +148,6 @@ function createRuleBasedRouter({
             : "matched_ack_rule_no_active_order",
         },
       };
-    }
-
-    if (!hasBlockingActiveOrder && !looksLikeNewOrderAttempt(lower) && !seemsLikeStructuredOrder) {
-      const [menuItems, restaurant] = await Promise.all([
-        menuService.listAvailableMenuItems(restaurantId),
-        restaurantRepo.getRestaurantById(restaurantId),
-      ]);
-
-      const llmResult = await chatOrchestrator.maybeHandleWithLlm({
-        restaurantId,
-        normalized,
-        restaurant,
-        menuItems,
-        sendMessage,
-      });
-
-      if (llmResult) {
-        return llmResult;
-      }
-
-      if (looksLikeQuestion(lower, incomingMessage)) {
-        const replyText = buildQuestionFallbackReply(lower, incomingMessage, menuItems);
-        await sendText(sendMessage, normalized.channelCustomerId, replyText);
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "question_fallback",
-          replyText,
-          decision: {
-            handler: "rule_question_fallback",
-            intent: "question",
-            confidence: 0.4,
-            reason: "no_order_signal_and_no_llm_direct_answer",
-          },
-        };
-      }
     }
 
     return null;

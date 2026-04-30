@@ -22,6 +22,7 @@ const {
 const { createChatOrchestrator } = require("./chatOrchestrator");
 const { createRuleBasedRouter } = require("./ruleBasedRouter");
 const { createGuidedSessionRouter } = require("./guidedSessionRouter");
+const { createAiOrchestrator } = require("./aiOrchestrator");
 
 const FLOW_STATES = {
   AWAITING_ITEM: "awaiting_item",
@@ -450,6 +451,8 @@ function createInboundMessageService({
   llmService,
   logger,
   menuCooldownMs,
+  aiShadowMode = false,
+  aiShadowTimeoutMs = 700,
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -544,6 +547,26 @@ function createInboundMessageService({
             : {},
       },
     });
+    if (normalized._shadowDecision) {
+      logger.info("Inbound AI shadow compare", {
+        restaurantId,
+        channel: normalized.channel,
+        channelCustomerId: normalized.channelCustomerId,
+        providerMessageId: buildProviderMessageId(normalized),
+        live: {
+          type: withDecision.type,
+          handler:
+            withDecision.decision && withDecision.decision.handler
+              ? withDecision.decision.handler
+              : "unknown",
+          intent:
+            withDecision.decision && withDecision.decision.intent
+              ? withDecision.decision.intent
+              : "unknown",
+        },
+        shadow: normalized._shadowDecision,
+      });
+    }
 
     appendConversationTurn({
       restaurantId,
@@ -632,6 +655,9 @@ function createInboundMessageService({
     flowStates: FLOW_STATES,
     sendText,
     llmTimeoutMs: 1800,
+  });
+  const aiOrchestrator = createAiOrchestrator({
+    llmService,
   });
   const menuServiceWithCache = {
     ...menuService,
@@ -766,6 +792,38 @@ function createInboundMessageService({
         )
       ),
     ]);
+
+    if (aiShadowMode && incomingMessage.trim()) {
+      try {
+        const shadowResult = await Promise.race([
+          aiOrchestrator.decideMessage({
+            restaurant,
+            menuItems: [],
+            messageText: incomingMessage,
+            conversationContext: String(normalized.conversationContext || ""),
+          }),
+          new Promise((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  valid: false,
+                  reason: "shadow_timeout",
+                  errors: ["shadow_timeout"],
+                }),
+              aiShadowTimeoutMs
+            )
+          ),
+        ]);
+        normalized._shadowDecision = shadowResult;
+      } catch (error) {
+        normalized._shadowDecision = {
+          valid: false,
+          reason: "shadow_error",
+          errors: [String((error && error.message) || "shadow_error")],
+        };
+      }
+    }
+
     const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
     if (

@@ -302,6 +302,7 @@ function createLlmService({
         );
       }
 
+
       if (normalizedProvider === "openai" && openai) {
         return (
           (await classifyWithOpenAI({

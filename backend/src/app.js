@@ -339,6 +339,8 @@ function createApp() {
     llmService,
     logger,
     menuCooldownMs: env.INBOUND_MENU_COOLDOWN_SECONDS * 1000,
+    aiShadowMode: env.AI_SHADOW_MODE,
+    aiShadowTimeoutMs: env.AI_SHADOW_TIMEOUT_MS,
   });
   const healthAlertService = createHealthAlertService({
     env,

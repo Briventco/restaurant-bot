@@ -59,6 +59,14 @@ const env = {
     process.env.INBOUND_MENU_COOLDOWN_SECONDS,
     90
   ),
+  AI_SHADOW_MODE: toBoolean(
+    process.env.AI_SHADOW_MODE,
+    false
+  ),
+  AI_SHADOW_TIMEOUT_MS: toNumber(
+    process.env.AI_SHADOW_TIMEOUT_MS,
+    700
+  ),
   BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME: toBoolean(
     process.env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME,
     false
