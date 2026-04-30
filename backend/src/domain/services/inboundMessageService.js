@@ -662,7 +662,7 @@ function createInboundMessageService({
     conversationSessionRepo,
     flowStates: FLOW_STATES,
     sendText,
-    llmTimeoutMs: 1800,
+    llmTimeoutMs: 8000,
   });
   const aiOrchestrator = createAiOrchestrator({
     llmService,

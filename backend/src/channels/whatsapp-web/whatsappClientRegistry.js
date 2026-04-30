@@ -82,6 +82,28 @@ function sanitizeClientId(restaurantId) {
   return String(restaurantId).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function resolveSessionDataPath() {
+  const explicit = String(process.env.WHATSAPP_SESSION_DATA_PATH || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const renderDiskPath = String(process.env.RENDER_DISK_PATH || "").trim();
+  if (renderDiskPath) {
+    return path.join(renderDiskPath, "wwebjs_auth");
+  }
+
+  return path.join(process.cwd(), ".wwebjs_auth");
+}
+
+function ensureDirectoryExists(directoryPath) {
+  try {
+    fs.mkdirSync(directoryPath, { recursive: true });
+  } catch (_error) {
+    // Best effort; client initialization will fail later with a clearer error.
+  }
+}
+
 function isBrowserAlreadyRunningError(error) {
   const message = String(error && error.message ? error.message : "").toLowerCase();
   return message.includes("browser is already running for");
@@ -101,6 +123,13 @@ function createWhatsappClientRegistry({
   const resolvedBrowserExecutablePath = resolveBrowserExecutablePath(
     browserExecutablePath
   );
+  const sessionDataPath = resolveSessionDataPath();
+  ensureDirectoryExists(sessionDataPath);
+  logger.info("WhatsApp session auth storage configured", {
+    sessionDataPath,
+    usingRenderDiskPath: Boolean(String(process.env.RENDER_DISK_PATH || "").trim()),
+    usingExplicitPath: Boolean(String(process.env.WHATSAPP_SESSION_DATA_PATH || "").trim()),
+  });
   const EVENT_SEVERITY_BY_NAME = {
     start_requested: "info",
     qr_generated: "info",
@@ -276,7 +305,7 @@ function createWhatsappClientRegistry({
     const client = new Client({
       authStrategy: new LocalAuth({
         clientId: `restaurant_${sanitizeClientId(restaurantId)}`,
-        dataPath: process.env.WHATSAPP_SESSION_DATA_PATH || path.join(process.cwd(), '.wwebjs_auth'),
+        dataPath: sessionDataPath,
       }),
       puppeteer: {
         headless: true,
