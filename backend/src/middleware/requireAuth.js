@@ -36,7 +36,7 @@ function createRequireAuth({ authService, logger }) {
       return;
     }
 
-    logger.info("Portal auth middleware started", {
+    logger.debug("Portal auth middleware started", {
       method: req.method,
       path: req.originalUrl,
       token: summarizeToken(idToken),
@@ -56,7 +56,7 @@ function createRequireAuth({ authService, logger }) {
           "",
         scopes: user.permissions || [],
       };
-      logger.info("Portal auth middleware succeeded", {
+      logger.debug("Portal auth middleware succeeded", {
         method: req.method,
         path: req.originalUrl,
         uid: user.uid,

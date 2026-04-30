@@ -93,7 +93,7 @@ function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
       throw authError(401, "token_invalid", "Token does not include a uid");
     }
 
-    logger.info("Firebase token verified", {
+    logger.debug("Firebase token verified", {
       uid,
       email: String(decodedToken.email || ""),
     });
@@ -137,7 +137,7 @@ function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
       restaurant && restaurant.onboarding ? restaurant.onboarding : null
     );
 
-    logger.info("Auth session verification succeeded", {
+    logger.debug("Auth session verification succeeded", {
       uid,
       role,
       restaurantId: normalizedRestaurantId,
@@ -166,21 +166,21 @@ function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
       throw authError(401, "missing_token", "Missing Bearer token");
     }
 
-    logger.info("Auth session verification started", {
+    logger.debug("Auth session verification started", {
       token: summarizeToken(idToken),
     });
     const tokenHash = hashToken(idToken.trim());
     const now = Date.now();
     const cached = tokenCache.get(tokenHash);
     if (cached && cached.expiresAt > now) {
-      logger.info("Auth session verification cache hit", {
+      logger.debug("Auth session verification cache hit", {
         tokenHashPrefix: tokenHash.slice(0, 12),
       });
       return cloneAuthUser(cached.user);
     }
 
     if (inFlightVerification.has(tokenHash)) {
-      logger.info("Auth session verification coalesced", {
+      logger.debug("Auth session verification coalesced", {
         tokenHashPrefix: tokenHash.slice(0, 12),
       });
       return cloneAuthUser(await inFlightVerification.get(tokenHash));
