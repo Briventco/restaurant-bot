@@ -2,6 +2,45 @@ const { createApp, API_BASE } = require("./app");
 const { env } = require("./config/env");
 const { runStartupChecks } = require("./config/startupChecks");
 const logger = require("./infra/logger");
+
+function isRecoverableRuntimeError(error) {
+  const message = String((error && error.message) || "").toLowerCase();
+  return (
+    message.includes("execution context was destroyed") ||
+    message.includes("runtime.callfunctionon timed out") ||
+    message.includes("target closed") ||
+    message.includes("protocol error")
+  );
+}
+
+process.on("unhandledRejection", (reason) => {
+  const message = String((reason && reason.message) || reason || "");
+  if (isRecoverableRuntimeError({ message })) {
+    logger.warn("Unhandled promise rejection (recoverable runtime error)", {
+      message,
+    });
+    return;
+  }
+  logger.error("Unhandled promise rejection", {
+    message,
+    stack: reason && reason.stack ? reason.stack : "",
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  if (isRecoverableRuntimeError(error)) {
+    logger.warn("Uncaught exception (recoverable runtime error)", {
+      message: error.message,
+      stack: error.stack,
+    });
+    return;
+  }
+  logger.error("Uncaught exception", {
+    message: error && error.message ? error.message : "unknown_uncaught_exception",
+    stack: error && error.stack ? error.stack : "",
+  });
+  process.exit(1);
+});
 function probeRoute(app, path, timeoutMs = 4000) {
   const { EventEmitter } = require("events");
   return new Promise((resolve) => {

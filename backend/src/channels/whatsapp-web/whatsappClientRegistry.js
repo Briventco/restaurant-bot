@@ -362,6 +362,7 @@ function createWhatsappClientRegistry({
       }),
       puppeteer: {
         headless: true,
+        protocolTimeout: 120000,
         executablePath: resolvedBrowserExecutablePath || undefined,
         args: [
           "--no-sandbox",
