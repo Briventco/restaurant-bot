@@ -794,34 +794,51 @@ function createInboundMessageService({
     ]);
 
     if (aiShadowMode && incomingMessage.trim()) {
-      try {
-        const shadowResult = await Promise.race([
-          aiOrchestrator.decideMessage({
-            restaurant,
-            menuItems: [],
-            messageText: incomingMessage,
-            conversationContext: String(normalized.conversationContext || ""),
-          }),
-          new Promise((resolve) =>
-            setTimeout(
-              () =>
-                resolve({
-                  valid: false,
-                  reason: "shadow_timeout",
-                  errors: ["shadow_timeout"],
-                }),
-              aiShadowTimeoutMs
-            )
-          ),
-        ]);
-        normalized._shadowDecision = shadowResult;
-      } catch (error) {
-        normalized._shadowDecision = {
-          valid: false,
-          reason: "shadow_error",
-          errors: [String((error && error.message) || "shadow_error")],
-        };
-      }
+      const shadowMeta = {
+        restaurantId,
+        channel: normalized.channel,
+        channelCustomerId: normalized.channelCustomerId,
+        providerMessageId,
+      };
+      (async () => {
+        const shadowStartedAt = Date.now();
+        try {
+          const shadowResult = await Promise.race([
+            aiOrchestrator.decideMessage({
+              restaurant,
+              menuItems: [],
+              messageText: incomingMessage,
+              conversationContext: String(normalized.conversationContext || ""),
+            }),
+            new Promise((resolve) =>
+              setTimeout(
+                () =>
+                  resolve({
+                    valid: false,
+                    reason: "shadow_timeout",
+                    errors: ["shadow_timeout"],
+                  }),
+                aiShadowTimeoutMs
+              )
+            ),
+          ]);
+          logger.info("Inbound AI shadow result", {
+            ...shadowMeta,
+            shadow: shadowResult,
+            shadow_ms: Date.now() - shadowStartedAt,
+          });
+        } catch (error) {
+          logger.info("Inbound AI shadow result", {
+            ...shadowMeta,
+            shadow: {
+              valid: false,
+              reason: "shadow_error",
+              errors: [String((error && error.message) || "shadow_error")],
+            },
+            shadow_ms: Date.now() - shadowStartedAt,
+          });
+        }
+      })();
     }
 
     const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
