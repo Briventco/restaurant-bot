@@ -662,7 +662,11 @@ function createApp() {
       "connected",
       "authenticating",
       "starting",
+      "disconnected",
+      "qr_required",
+      "auth_failure",
     ]);
+    const defaultRestaurantId = String(env.BACKEND_DEFAULT_RESTAURANT_ID || "").trim();
 
     let restoredCount = 0;
     let skippedCount = 0;
@@ -683,6 +687,22 @@ function createApp() {
       );
 
       if (!storedSession) {
+        if (defaultRestaurantId && restaurantId === defaultRestaurantId) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await channelSessionService.start({
+              channel: "whatsapp-web",
+              restaurantId,
+            });
+            restoredCount += 1;
+          } catch (error) {
+            skippedCount += 1;
+            logger.warn("Failed to auto-start default WhatsApp session on boot", {
+              restaurantId,
+              message: error.message,
+            });
+          }
+        }
         continue;
       }
 

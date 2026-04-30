@@ -351,9 +351,17 @@ function buildInlineAvailableItems(menuItems) {
     .join(", ");
 }
 
+function buildNumberedAvailableItems(menuItems) {
+  return (menuItems || [])
+    .filter((item) => item.available)
+    .map((item, index) => `${index + 1}. ${item.name} (N${item.price})`)
+    .join("\n");
+}
+
 function buildQuestionFallbackReply(lower, rawText, menuItems) {
   const availableItems = (menuItems || []).filter((item) => item.available);
   const availableText = buildInlineAvailableItems(availableItems);
+  const numberedAvailableText = buildNumberedAvailableItems(availableItems);
   const hasAvailableItems = availableItems.length > 0;
 
   if (
@@ -363,7 +371,7 @@ function buildQuestionFallbackReply(lower, rawText, menuItems) {
     lower.includes("arrival time")
   ) {
     return hasAvailableItems
-      ? `Yes, we support delivery. Share your location and I'll guide your order from ${availableText}.`
+      ? `Yes, we support delivery. Share your location and I'll guide your order from:\n${numberedAvailableText}`
       : "Yes, we support delivery. Share your location and I will guide your order.";
   }
 
@@ -387,7 +395,7 @@ function buildQuestionFallbackReply(lower, rawText, menuItems) {
 
   if (lower.startsWith("do you have")) {
     return hasAvailableItems
-      ? `We don't currently have that listed on the menu. Right now we have ${availableText}.`
+      ? `We don't currently have that listed on the menu. Right now we have:\n${numberedAvailableText}`
       : "I don't have any available items listed right now.";
   }
 
@@ -404,7 +412,7 @@ function buildQuestionFallbackReply(lower, rawText, menuItems) {
   if (budget) {
     const withinBudget = availableItems.filter((item) => Number(item.price || 0) <= budget);
     if (!withinBudget.length) {
-      return `I don't currently have anything under N${budget}. Right now we have ${availableText}.`;
+      return `I don't currently have anything under N${budget}. Right now we have:\n${numberedAvailableText}`;
     }
 
     const withinBudgetText = withinBudget
@@ -414,7 +422,7 @@ function buildQuestionFallbackReply(lower, rawText, menuItems) {
   }
 
   if (hasAvailableItems) {
-    return `I can help with menu, delivery, or placing an order. Right now we have ${availableText}. Do you want to order now or ask about delivery first?`;
+    return `I can help with menu, delivery, or placing an order. Right now we have:\n${numberedAvailableText}\n\nReply with the number or item name to order.`;
   }
 
   return "I can help with menu, ordering, delivery, and item availability. Do you want to place an order now?";

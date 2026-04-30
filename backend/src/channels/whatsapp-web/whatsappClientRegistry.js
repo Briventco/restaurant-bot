@@ -88,6 +88,11 @@ function normalizeOutboundRecipient(to) {
     return value;
   }
 
+  if (value.endsWith("@lid")) {
+    const base = value.split("@")[0].replace(/\D/g, "");
+    return base ? `${base}@c.us` : value;
+  }
+
   if (value.includes("@")) {
     return value;
   }
@@ -520,7 +525,12 @@ function createWhatsappClientRegistry({
         }
 
         const status = await getSessionStatus(restaurantId);
-        if (status.status !== "connected" && status.status !== "authenticating" && status.status !== "starting") {
+        if (
+          status.status !== "connected" &&
+          status.status !== "authenticating" &&
+          status.status !== "starting" &&
+          status.status !== "qr_required"
+        ) {
           logger.info("Heartbeat detected disconnected session, restarting", {
             restaurantId,
             status: status.status,
