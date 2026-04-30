@@ -30,6 +30,10 @@ function normalizeInboundMessage(rawEvent) {
     (String(channelCustomerId || "").endsWith("@broadcast") &&
       !isStatusBroadcastId(channelCustomerId));
 
+  const transcribedText = String(
+    (rawEvent && rawEvent.__transcribedText) || ""
+  ).trim();
+
   return {
     providerMessageId:
       (rawEvent.id && rawEvent.id._serialized) ||
@@ -39,7 +43,7 @@ function normalizeInboundMessage(rawEvent) {
     channelCustomerId,
     customerPhone: sanitizePhoneFromWhatsappId(channelCustomerId),
     displayName: rawEvent.notifyName || "",
-    text: rawEvent.body || "",
+    text: transcribedText || rawEvent.body || "",
     timestamp: rawEvent.timestamp || Date.now(),
     isFromMe: Boolean(rawEvent.fromMe),
     isStatus: statusLike || isStatusReply,

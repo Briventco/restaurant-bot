@@ -43,6 +43,9 @@ const { createInboundMessageService } = require("./domain/services/inboundMessag
 const { createOutboxService } = require("./domain/services/outboxService");
 const { createLlmService } = require("./domain/services/llmService");
 const {
+  createVoiceTranscriptionService,
+} = require("./domain/services/voiceTranscriptionService");
+const {
   createRestaurantHealthService,
 } = require("./domain/services/restaurantHealthService");
 const {
@@ -163,6 +166,12 @@ function createApp() {
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
     requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
+    logger,
+  });
+  const voiceTranscriptionService = createVoiceTranscriptionService({
+    enabled: env.WHATSAPP_VOICE_ORDERING_ENABLED,
+    openAIApiKey: env.OPENAI_API_KEY,
+    model: env.OPENAI_TRANSCRIPTION_MODEL,
     logger,
   });
 
@@ -381,6 +390,18 @@ function createApp() {
   if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
     whatsappAdapter.setInboundHandler(async (payload) => {
       try {
+        const rawEvent = payload && payload.rawEvent ? payload.rawEvent : null;
+        if (
+          rawEvent &&
+          voiceTranscriptionService.isEnabled &&
+          voiceTranscriptionService.isAudioMessage(rawEvent)
+        ) {
+          const transcript = await voiceTranscriptionService.transcribeOrNull(rawEvent);
+          if (transcript) {
+            rawEvent.__transcribedText = transcript;
+          }
+        }
+
         await inboundMessageService.handleInboundEvent(payload);
       } catch (error) {
         logger.error("Inbound message processing failed", {

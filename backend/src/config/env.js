@@ -47,6 +47,8 @@ const env = {
   LLM_PROVIDER: process.env.LLM_PROVIDER || "openai",
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
   OPENAI_MODEL: process.env.OPENAI_MODEL || "gpt-5-mini",
+  OPENAI_TRANSCRIPTION_MODEL:
+    process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
   GEMINI_MODEL: process.env.GEMINI_MODEL || "gemini-2.0-flash",
   BACKEND_DEFAULT_RESTAURANT_ID:
@@ -66,6 +68,10 @@ const env = {
   AI_SHADOW_TIMEOUT_MS: toNumber(
     process.env.AI_SHADOW_TIMEOUT_MS,
     700
+  ),
+  WHATSAPP_VOICE_ORDERING_ENABLED: toBoolean(
+    process.env.WHATSAPP_VOICE_ORDERING_ENABLED,
+    true
   ),
   BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME: toBoolean(
     process.env.BACKEND_ENABLE_INTERNAL_WHATSAPP_RUNTIME,
