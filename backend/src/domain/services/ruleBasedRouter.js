@@ -13,8 +13,8 @@ function createRuleBasedRouter({
   buildStockAvailabilityMessage,
   buildQuestionFallbackReply,
 }) {
-  function buildConversationalFallbackReply() {
-    return "I’m your Ayo Kitchen assistant. I can help with menu, recommendations, delivery, and placing orders. What would you like to do?";
+  function buildConversationalFallbackReply(restaurantName) {
+    return `I'm your ${restaurantName} assistant. I can help with menu, recommendations, delivery, and placing orders. What would you like to do?`;
   }
 
   async function tryHandleConversation({
@@ -66,7 +66,7 @@ function createRuleBasedRouter({
       };
     }
 
-    const replyText = buildConversationalFallbackReply();
+    const replyText = buildConversationalFallbackReply(restaurant.name);
     await sendText(sendMessage, normalized.channelCustomerId, replyText);
     return {
       handled: true,
