@@ -39,6 +39,8 @@ function createInboundPipeline({
       return;
     }
 
+    const isStaffCommand = Boolean(filter.isStaffCommand);
+
     if (dedupeStore.isDuplicate(dedupeKey)) {
       logger.warn("Inbound deduped", {
         messageId: inbound.messageId || dedupeKey,
@@ -50,6 +52,7 @@ function createInboundPipeline({
     logger.info("Inbound queued", {
       chatId: inbound.chatId,
       messageId: inbound.messageId || dedupeKey,
+      isStaffCommand,
     });
 
     await chatQueue.enqueue(inbound.chatId, async () => {
@@ -58,12 +61,16 @@ function createInboundPipeline({
           chatId: inbound.chatId,
           type: inbound.type,
           messageId: inbound.messageId || dedupeKey,
+          isStaffCommand,
         });
 
-        const decision = await messageService.processInbound(inbound);
+        const decision = isStaffCommand
+          ? await messageService.processStaffCommand(inbound)
+          : await messageService.processInbound(inbound);
         logger.info("Backend response received", {
           chatId: inbound.chatId,
           messageId: inbound.messageId || dedupeKey,
+          isStaffCommand,
           responseType: decision && decision.type ? decision.type : "unknown",
           shouldReply: Boolean(decision && decision.shouldReply),
           duplicate: Boolean(decision && decision.duplicate),

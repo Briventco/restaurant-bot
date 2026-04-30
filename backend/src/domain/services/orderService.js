@@ -21,6 +21,7 @@ const {
   buildRestaurantOrderAlertMessage,
   buildRestaurantTestAlertMessage,
 } = require("../templates/messages");
+const { buildShortOrderCode } = require("../utils/orderReference");
 
 function calculateTotal(items) {
   return (items || []).reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
@@ -105,6 +106,38 @@ function createOrderService({
 }) {
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
+  }
+
+  function buildPhoneCandidates(value) {
+    const raw = String(value || "").trim();
+    const digits = normalizePhoneLike(raw);
+    const variants = new Set();
+
+    if (raw) {
+      variants.add(raw);
+    }
+    if (digits) {
+      variants.add(digits);
+    }
+
+    if (digits.startsWith("0") && digits.length === 11) {
+      variants.add(`234${digits.slice(1)}`);
+    }
+    if (digits.startsWith("234") && digits.length >= 12) {
+      variants.add(`0${digits.slice(3)}`);
+    }
+
+    const numericForms = Array.from(variants).filter((item) => /^\d+$/.test(item));
+    for (const form of numericForms) {
+      variants.add(`${form}@c.us`);
+      variants.add(`${form}@lid`);
+    }
+
+    return Array.from(variants).filter(Boolean);
+  }
+
+  function buildStaffAlertSessionRecipients(recipient) {
+    return buildPhoneCandidates(recipient);
   }
 
   function getManualPaymentConfig(restaurant) {
@@ -277,7 +310,10 @@ function createOrderService({
       return;
     }
 
-    const alertText = buildRestaurantOrderAlertMessage(order);
+    const alertText = buildRestaurantOrderAlertMessage({
+      ...order,
+      shortCode: buildShortOrderCode(order && order.id),
+    });
 
     await Promise.all(
       recipients.map(async (recipient) => {
@@ -293,16 +329,21 @@ function createOrderService({
         });
 
         if (conversationSessionRepo) {
-          await conversationSessionRepo.upsertSession(
-            order.restaurantId,
-            order.channel,
-            recipient,
-            {
-              state: "awaiting_staff_order_action",
-              role: "restaurant_staff_alert",
-              orderId: order.id,
-              alertType: "new_order",
-            }
+          const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
+          await Promise.all(
+            sessionRecipients.map((sessionRecipient) =>
+              conversationSessionRepo.upsertSession(
+                order.restaurantId,
+                order.channel,
+                sessionRecipient,
+                {
+                  state: "awaiting_staff_order_action",
+                  role: "restaurant_staff_alert",
+                  orderId: order.id,
+                  alertType: "new_order",
+                }
+              )
+            )
           );
         }
       })

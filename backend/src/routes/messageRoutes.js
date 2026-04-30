@@ -31,6 +31,44 @@ function normalizeInbound(body) {
   };
 }
 
+function normalizeStaffCommand(body) {
+  return {
+    channel: String(body.channel || "whatsapp-web"),
+    channelCustomerId: String(body.channelCustomerId || "").trim(),
+    customerPhone: String(body.customerPhone || "").trim(),
+    displayName: String(body.displayName || "").trim(),
+    command: String(body.command || ""),
+    providerMessageId: String(body.providerMessageId || "").trim(),
+    timestamp: Number(body.timestamp) || Date.now(),
+    type: String(body.type || "chat"),
+    isFromMe: Boolean(body.isFromMe),
+    isStatus: Boolean(body.isStatus),
+    isBroadcast: Boolean(body.isBroadcast),
+  };
+}
+
+function parseStaffCommand(commandText) {
+  const trimmed = String(commandText || "").trim();
+  if (!trimmed.startsWith('#')) {
+    return null;
+  }
+
+  const parts = trimmed.slice(1).trim().split(/\s+/);
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const action = parts[0].toLowerCase();
+  const orderId = parts[1] || "";
+  const reason = parts.slice(2).join(' ') || '';
+
+  return {
+    action,
+    orderId,
+    reason,
+  };
+}
+
 function isGroupChat(channelCustomerId) {
   return String(channelCustomerId || "").endsWith("@g.us");
 }
@@ -99,6 +137,7 @@ function createMessageRoutes({
   requireRestaurantAccess,
   inboundMessageService,
   restaurantRepo,
+  orderService,
   env,
   logger,
 }) {
@@ -201,6 +240,129 @@ function createMessageRoutes({
         });
 
         res.status(200).json(result);
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/messages/staff-command",
+    requireRuntimeKeyOrApiKey,
+    requireRestaurantAccess,
+    validateBody({
+      channel: { required: true, type: "string" },
+      channelCustomerId: { required: true, type: "string" },
+      customerPhone: { required: false, type: "string" },
+      displayName: { required: false, type: "string" },
+      command: { required: true, type: "string" },
+      providerMessageId: { required: false, type: "string" },
+      timestamp: { required: false, type: "number" },
+      type: { required: false, type: "string" },
+      isFromMe: { required: false, type: "boolean" },
+      isStatus: { required: false, type: "boolean" },
+      isBroadcast: { required: false, type: "boolean" },
+    }),
+    async (req, res, next) => {
+      try {
+        const command = normalizeStaffCommand(req.body || {});
+        const parsed = parseStaffCommand(command.command);
+
+        logger.info("Staff command received", {
+          restaurantId: req.restaurantId,
+          channel: command.channel,
+          channelCustomerId: command.channelCustomerId,
+          command: command.command,
+          parsed,
+        });
+
+        if (!parsed) {
+          res.status(200).json({
+            handled: true,
+            shouldReply: true,
+            replyText: "Invalid command format. Use: #confirm ORDER_ID or #reject ORDER_ID reason",
+            type: "invalid_command",
+          });
+          return;
+        }
+
+        if (!['confirm', 'reject'].includes(parsed.action)) {
+          res.status(200).json({
+            handled: true,
+            shouldReply: true,
+            replyText: "Unknown command. Use: #confirm ORDER_ID or #reject ORDER_ID reason",
+            type: "unknown_command",
+          });
+          return;
+        }
+
+        if (!parsed.orderId) {
+          res.status(200).json({
+            handled: true,
+            shouldReply: true,
+            replyText: "Missing order ID. Use: #confirm ORDER_ID or #reject ORDER_ID reason",
+            type: "missing_order_id",
+          });
+          return;
+        }
+
+        try {
+          const actor = {
+            type: "staff",
+            id: command.channelCustomerId,
+          };
+
+          if (parsed.action === 'confirm') {
+            await orderService.confirmOrder({
+              restaurantId: req.restaurantId,
+              orderId: parsed.orderId,
+              actor,
+            });
+            logger.info("Order confirmed via staff command", {
+              restaurantId: req.restaurantId,
+              orderId: parsed.orderId,
+              staffId: command.channelCustomerId,
+            });
+            res.status(200).json({
+              handled: true,
+              shouldReply: true,
+              replyText: `Order ${parsed.orderId} confirmed. Customer will be notified.`,
+              type: "order_confirmed",
+            });
+          } else if (parsed.action === 'reject') {
+            await orderService.rejectOrder({
+              restaurantId: req.restaurantId,
+              orderId: parsed.orderId,
+              actor,
+              note: parsed.reason,
+            });
+            logger.info("Order rejected via staff command", {
+              restaurantId: req.restaurantId,
+              orderId: parsed.orderId,
+              staffId: command.channelCustomerId,
+              reason: parsed.reason,
+            });
+            res.status(200).json({
+              handled: true,
+              shouldReply: true,
+              replyText: `Order ${parsed.orderId} rejected. Reason: ${parsed.reason || 'Not specified'}. Customer will be notified.`,
+              type: "order_rejected",
+            });
+          }
+        } catch (error) {
+          logger.error("Staff command execution failed", {
+            restaurantId: req.restaurantId,
+            action: parsed.action,
+            orderId: parsed.orderId,
+            error: error.message,
+          });
+          res.status(200).json({
+            handled: true,
+            shouldReply: true,
+            replyText: `Failed to ${parsed.action} order: ${error.message}`,
+            type: "command_failed",
+          });
+        }
       } catch (error) {
         next(error);
       }

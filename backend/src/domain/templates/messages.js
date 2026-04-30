@@ -253,6 +253,9 @@ function buildPaymentReferenceSavedMessage() {
 function buildRestaurantOrderAlertMessage(order = {}) {
   const lines = [];
   lines.push(`New Order #${order.id || "-"}`);
+  if (order.shortCode) {
+    lines.push(`Staff Ref: ${order.shortCode}`);
+  }
   lines.push("");
   lines.push(buildOrderSummaryLineItems(order.matched || []));
   lines.push(`Total = N${Number(order.total || order.amount || 0)}`);
@@ -268,18 +271,16 @@ function buildRestaurantOrderAlertMessage(order = {}) {
   lines.push("Reply:");
   lines.push("1 - Confirm");
   lines.push("2 - Not Available");
-  lines.push("3 - Contact Customer");
+  if (order.shortCode) {
+    lines.push(`#confirm ${order.shortCode} - confirm by code`);
+    lines.push(`#reject ${order.shortCode} out of stock - reject by code`);
+  }
 
   return lines.join("\n");
 }
 
 function buildRestaurantOrderAlertHandledMessage(order = {}, statusText = "") {
   return `Order #${order.id || "-"} updated.${statusText ? ` ${statusText}` : ""}`;
-}
-
-function buildRestaurantContactCustomerMessage(order = {}) {
-  const customerPhone = String(order.customerPhone || order.channelCustomerId || "").trim();
-  return `Order #${order.id || "-"} is still waiting.\n\nCustomer contact: ${customerPhone || "Not available"}\n\nPlease reach out to the customer directly or continue from the dashboard.`;
 }
 
 function buildRestaurantTestAlertMessage(restaurant = {}) {
@@ -319,6 +320,5 @@ module.exports = {
   buildPaymentReferenceSavedMessage,
   buildRestaurantOrderAlertMessage,
   buildRestaurantOrderAlertHandledMessage,
-  buildRestaurantContactCustomerMessage,
   buildRestaurantTestAlertMessage,
 };

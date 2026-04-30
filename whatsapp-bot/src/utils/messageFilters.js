@@ -31,6 +31,12 @@ function shouldIgnoreNormalizedMessage(message, constants) {
     return { ignore: true, reason: "missing_chat_id" };
   }
 
+  // Detect staff commands (messages starting with #)
+  const trimmedBody = String(message.body || "").trim();
+  if (trimmedBody.startsWith('#')) {
+    return { ignore: false, reason: "staff_command", isStaffCommand: true };
+  }
+
   if (!constants.BOT_ALLOW_ALL_CHATS) {
     const hasChatAllowlist =
       constants.ALLOWED_CHAT_IDS && constants.ALLOWED_CHAT_IDS.size > 0;

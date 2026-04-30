@@ -17,12 +17,12 @@ const {
   buildPaymentReviewAcknowledgedMessage,
   buildPaymentStillUnderReviewMessage,
   buildRestaurantOrderAlertHandledMessage,
-  buildRestaurantContactCustomerMessage,
 } = require("../templates/messages");
 const { createChatOrchestrator } = require("./chatOrchestrator");
 const { createRuleBasedRouter } = require("./ruleBasedRouter");
 const { createGuidedSessionRouter } = require("./guidedSessionRouter");
 const { createAiOrchestrator } = require("./aiOrchestrator");
+const { buildShortOrderCode, isShortOrderCode } = require("../utils/orderReference");
 
 const FLOW_STATES = {
   AWAITING_ITEM: "awaiting_item",
@@ -243,8 +243,72 @@ function extractPaymentReferenceDetails(rawText) {
   return stripped;
 }
 
+function extractOrderId(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const tagged = text.match(/#([A-Za-z0-9_-]{6,})/);
+  if (tagged && tagged[1]) {
+    return tagged[1];
+  }
+
+  const direct = text.match(/\b([A-Za-z0-9_-]{10,})\b/);
+  return direct && direct[1] ? direct[1] : "";
+}
+
+function parseStaffHashCommand(rawText) {
+  const trimmed = String(rawText || "").trim();
+  if (!trimmed.startsWith("#")) {
+    return null;
+  }
+
+  const parts = trimmed.slice(1).trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) {
+    return null;
+  }
+
+  const action = String(parts[0] || "").trim().toLowerCase();
+  const orderId = String(parts[1] || "").trim();
+  const reason = parts.slice(2).join(" ").trim();
+  return {
+    action,
+    orderId,
+    reason,
+  };
+}
+
 function normalizePhoneLike(value) {
   return String(value || "").replace(/[^0-9]/g, "");
+}
+
+function buildPhoneCandidates(value) {
+  const raw = String(value || "").trim();
+  const digits = normalizePhoneLike(raw);
+  const variants = new Set();
+
+  if (raw) {
+    variants.add(raw);
+  }
+  if (digits) {
+    variants.add(digits);
+  }
+
+  if (digits.startsWith("0") && digits.length === 11) {
+    variants.add(`234${digits.slice(1)}`);
+  }
+  if (digits.startsWith("234") && digits.length >= 12) {
+    variants.add(`0${digits.slice(3)}`);
+  }
+
+  const numericForms = Array.from(variants).filter((item) => /^\d+$/.test(item));
+  for (const form of numericForms) {
+    variants.add(`${form}@c.us`);
+    variants.add(`${form}@lid`);
+  }
+
+  return Array.from(variants).filter(Boolean);
 }
 
 function looksLikeQuestion(lower, rawText) {
@@ -631,19 +695,91 @@ function createInboundMessageService({
         ? restaurant.bot
         : {};
     const recipients = Array.isArray(bot.orderAlertRecipients) ? bot.orderAlertRecipients : [];
-    const incomingCandidates = [
-      normalizePhoneLike(normalized.channelCustomerId),
-      normalizePhoneLike(normalized.customerPhone),
-    ].filter(Boolean);
+    const incomingCandidates = new Set([
+      ...buildPhoneCandidates(normalized.channelCustomerId),
+      ...buildPhoneCandidates(normalized.customerPhone),
+    ]);
 
-    if (!incomingCandidates.length) {
+    if (!incomingCandidates.size) {
       return false;
     }
 
     return recipients.some((recipient) => {
-      const normalizedRecipient = normalizePhoneLike(recipient);
-      return normalizedRecipient && incomingCandidates.includes(normalizedRecipient);
+      const recipientCandidates = buildPhoneCandidates(recipient);
+      return recipientCandidates.some((candidate) => incomingCandidates.has(candidate));
     });
+  }
+
+  async function getConversationSessionWithAliases(restaurantId, channel, normalized) {
+    const candidates = Array.from(
+      new Set([
+        String(normalized.channelCustomerId || "").trim(),
+        ...buildPhoneCandidates(normalized.channelCustomerId),
+        ...buildPhoneCandidates(normalized.customerPhone),
+      ])
+    ).filter(Boolean);
+
+    for (const candidate of candidates) {
+      const session = await conversationSessionRepo.getSession(
+        restaurantId,
+        channel,
+        candidate
+      );
+      if (session) {
+        return session;
+      }
+    }
+
+    return null;
+  }
+
+  async function resolveOrderIdentifier(restaurantId, rawIdentifier) {
+    const identifier = String(rawIdentifier || "").trim();
+    if (!identifier) {
+      return { orderId: "", found: false };
+    }
+
+    try {
+      const direct = await orderService.getOrder({
+        restaurantId,
+        orderId: identifier,
+      });
+      if (direct && direct.id) {
+        return { orderId: direct.id, found: true };
+      }
+    } catch (_error) {
+      // fall through to short-code lookup
+    }
+
+    if (!isShortOrderCode(identifier)) {
+      return { orderId: identifier, found: false };
+    }
+
+    const normalizedCode = identifier.toUpperCase();
+    const recentOrders = await orderService.listOrders({
+      restaurantId,
+      limit: 200,
+    });
+
+    const matches = (recentOrders || []).filter((order) => {
+      const code = buildShortOrderCode(order && order.id);
+      return code.toUpperCase() === normalizedCode;
+    });
+
+    if (matches.length === 1) {
+      return { orderId: matches[0].id, found: true };
+    }
+
+    if (matches.length > 1) {
+      return {
+        orderId: "",
+        found: false,
+        ambiguous: true,
+        matches: matches.slice(0, 5).map((order) => order.id),
+      };
+    }
+
+    return { orderId: identifier, found: false };
   }
 
   async function sendText(sendMessage, to, text) {
@@ -793,11 +929,7 @@ function createInboundMessageService({
     const [restaurant, existingSession] = await Promise.all([
       timedDb("getRestaurantById", () => restaurantRepo.getRestaurantById(restaurantId)),
       timedDb("getSession", () =>
-        conversationSessionRepo.getSession(
-          restaurantId,
-          normalized.channel,
-          normalized.channelCustomerId
-        )
+        getConversationSessionWithAliases(restaurantId, normalized.channel, normalized)
       ),
     ]);
 
@@ -847,6 +979,107 @@ function createInboundMessageService({
           });
         }
       })();
+    }
+
+    const parsedHashCommand = parseStaffHashCommand(incomingMessage);
+    if (parsedHashCommand) {
+      if (!["confirm", "reject"].includes(parsedHashCommand.action)) {
+        const replyText =
+          "Unknown command. Use:\n#confirm <ORDER_REF>\n#reject <ORDER_REF> <REASON>";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_hash_unknown_command", replyText };
+      }
+
+      if (!parsedHashCommand.orderId) {
+        const replyText =
+          "Missing order reference. Use:\n#confirm <ORDER_REF>\n#reject <ORDER_REF> <REASON>";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_hash_missing_order_id", replyText };
+      }
+
+      const resolved = await resolveOrderIdentifier(
+        restaurantId,
+        parsedHashCommand.orderId
+      );
+      if (resolved.ambiguous) {
+        const replyText =
+          `That short code matches multiple orders. Use full order ID.\nMatches:\n${resolved.matches.join("\n")}`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_hash_ambiguous_order_ref", replyText };
+      }
+      if (!resolved.found) {
+        const replyText = `Order not found for reference "${parsedHashCommand.orderId}".`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_hash_order_not_found", replyText };
+      }
+      const resolvedOrderId = resolved.orderId;
+
+      if (parsedHashCommand.action === "confirm") {
+        try {
+          const updatedOrder = await orderService.confirmOrder({
+            restaurantId,
+            orderId: resolvedOrderId,
+            actor: {
+              type: "staff",
+              id: normalized.channelCustomerId,
+            },
+          });
+          const replyText = `Order #${updatedOrder.id} confirmed. Customer has been updated.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "staff_hash_confirmed_order",
+            replyText,
+            orderId: updatedOrder.id,
+          };
+        } catch (error) {
+          const replyText = `Could not confirm order #${resolvedOrderId}. ${String(
+            (error && error.message) || "Please check the order status on dashboard."
+          )}`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "staff_hash_confirm_failed",
+            replyText,
+            orderId: resolvedOrderId,
+          };
+        }
+      }
+
+      try {
+        const updatedOrder = await orderService.rejectOrder({
+          restaurantId,
+          orderId: resolvedOrderId,
+          actor: {
+            type: "staff",
+            id: normalized.channelCustomerId,
+          },
+          note: parsedHashCommand.reason || "Not available",
+        });
+        const replyText = `Order #${updatedOrder.id} rejected. Customer has been updated.`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_hash_rejected_order",
+          replyText,
+          orderId: updatedOrder.id,
+        };
+      } catch (error) {
+        const replyText = `Could not reject order #${resolvedOrderId}. ${String(
+          (error && error.message) || "Please check the order status on dashboard."
+        )}`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_hash_reject_failed",
+          replyText,
+          orderId: resolvedOrderId,
+        };
+      }
     }
 
     const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
@@ -946,22 +1179,8 @@ function createInboundMessageService({
         };
       }
 
-      if (lower === "3" || lower === "contact customer") {
-        const replyText = buildRestaurantContactCustomerMessage(activeStaffOrder);
-        await sendText(sendMessage, normalized.channelCustomerId, replyText);
-
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "staff_contact_customer",
-          replyText,
-          orderId: activeStaffOrder.id,
-        };
-      }
-
       {
-        const replyText =
-          "Reply with one option:\n1 - Confirm\n2 - Not Available\n3 - Contact Customer";
+        const replyText = "Reply with one option:\n1 - Confirm\n2 - Not Available";
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
 
         return {
@@ -971,6 +1190,136 @@ function createInboundMessageService({
           replyText,
           orderId: activeStaffOrder.id,
         };
+      }
+    }
+
+    if (isStaffAlertSender) {
+      const explicitOrderId = extractOrderId(incomingMessage);
+      
+      if (
+        lower.startsWith("confirm payment") ||
+        lower.startsWith("paid ") ||
+        lower.startsWith("payment confirm")
+      ) {
+        if (!explicitOrderId) {
+          const replyText =
+            "Staff command format:\nCONFIRM PAYMENT <ORDER_ID>\nExample: CONFIRM PAYMENT TQtEJPlrLT7HEHPmLbsW";
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_payment_command_prompt", replyText };
+        }
+
+        try {
+          const orderRefText = explicitOrderId || "";
+          const resolved = await resolveOrderIdentifier(restaurantId, orderRefText);
+          if (resolved.ambiguous) {
+            const replyText =
+              `That payment reference matches multiple orders. Use full order ID.\nMatches:\n${resolved.matches.join("\n")}`;
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return { handled: true, shouldReply: true, type: "staff_payment_ambiguous_order_ref", replyText };
+          }
+          if (!resolved.found) {
+            const replyText = `Order not found for reference "${orderRefText}".`;
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return { handled: true, shouldReply: true, type: "staff_payment_order_not_found", replyText };
+          }
+          const result = await paymentService.confirmPaymentReview({
+            restaurantId,
+            orderId: resolved.orderId,
+            actorId: normalized.channelCustomerId,
+            note: "Confirmed from staff WhatsApp alert number",
+          });
+          const replyText = `Payment confirmed for order #${result.order.id}. Customer has been updated.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_payment_confirmed", replyText, orderId: result.order.id };
+        } catch (error) {
+          const replyText = `Could not confirm payment for order #${explicitOrderId}. ${String(
+            (error && error.message) || "Please check the order status on dashboard."
+          )}`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_payment_confirm_failed", replyText, orderId: explicitOrderId };
+        }
+      }
+
+      if (lower.startsWith("reject payment") || lower.startsWith("payment reject")) {
+        if (!explicitOrderId) {
+          const replyText =
+            "Staff command format:\nREJECT PAYMENT <ORDER_ID> <REASON>\nExample: REJECT PAYMENT TQtEJPlrLT7HEHPmLbsW transfer not seen";
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_payment_reject_prompt", replyText };
+        }
+
+        const reasonText = String(incomingMessage || "")
+          .replace(/reject payment/gi, "")
+          .replace(/payment reject/gi, "")
+          .replace(explicitOrderId, "")
+          .trim();
+        const reason = reasonText || "Payment not confirmed yet";
+        try {
+          const orderRefText = explicitOrderId || "";
+          const resolved = await resolveOrderIdentifier(restaurantId, orderRefText);
+          if (resolved.ambiguous) {
+            const replyText =
+              `That payment reference matches multiple orders. Use full order ID.\nMatches:\n${resolved.matches.join("\n")}`;
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return { handled: true, shouldReply: true, type: "staff_payment_ambiguous_order_ref", replyText };
+          }
+          if (!resolved.found) {
+            const replyText = `Order not found for reference "${orderRefText}".`;
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return { handled: true, shouldReply: true, type: "staff_payment_order_not_found", replyText };
+          }
+          const result = await paymentService.rejectPaymentReview({
+            restaurantId,
+            orderId: resolved.orderId,
+            actorId: normalized.channelCustomerId,
+            reason,
+          });
+          const replyText = `Payment rejected for order #${result.order.id}. Customer has been updated.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_payment_rejected", replyText, orderId: result.order.id };
+        } catch (error) {
+          const replyText = `Could not reject payment for order #${explicitOrderId}. ${String(
+            (error && error.message) || "Please check the order status on dashboard."
+          )}`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_payment_reject_failed", replyText, orderId: explicitOrderId };
+        }
+      }
+
+      const asksForCustomerMenu =
+        isGreetingText(lower) ||
+        isAcknowledgementText(lower) ||
+        isMenuOrStockQuestion(lower) ||
+        looksLikeQuestion(lower, incomingMessage);
+      if (asksForCustomerMenu) {
+        const replyText =
+          "This number is set as a staff order-control line.\n\nUse:\n1 or CONFIRM to accept the pending alert order\n2 or NOT AVAILABLE to reject it\nCONFIRM PAYMENT <ORDER_ID>\nREJECT PAYMENT <ORDER_ID> <REASON>\n\nFor menu/customer chat, use a customer WhatsApp number.";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_line_help", replyText };
+      }
+
+      // Catch staff replies that look like order actions but had no active session
+      // (e.g. session expired, or phone format mismatch on the session lookup).
+      // These must never fall through to the customer-facing LLM bot.
+      if (
+        lower === "1" ||
+        lower === "2" ||
+        lower === "confirm" ||
+        lower === "confirm order" ||
+        lower === "not available"
+      ) {
+        const replyText =
+          "No pending order to action right now. Wait for a new order notification, then reply:\n1 - Confirm\n2 - Not Available";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_no_pending_order", replyText };
+      }
+
+      // Hard catch-all: staff numbers must NEVER reach the customer bot.
+      {
+        const replyText =
+          "This number is set as a staff order-control line.\n\nUse:\n1 or CONFIRM to accept the pending alert order\n2 or NOT AVAILABLE to reject it\nCONFIRM PAYMENT <ORDER_ID>\nREJECT PAYMENT <ORDER_ID> <REASON>\n\nFor menu/customer chat, use a customer WhatsApp number.";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return { handled: true, shouldReply: true, type: "staff_line_help", replyText };
       }
     }
 
@@ -1123,7 +1472,23 @@ function createInboundMessageService({
     }
 
     if (existingSession) {
+      // Staff alert sessions must never be processed by the guided session router.
+      // The staff handlers above (lines 868-975 and 977-1055) are the only correct
+      // handlers for these sessions. If execution reaches here with a staff session,
+      // it means isStaffAlertSender returned false (phone not in orderAlertRecipients)
+      // for a customer who somehow has a staff session stored against their ID.
+      // Clear the stale session and let the message continue as a normal customer flow.
       if (
+        existingSession.state === FLOW_STATES.AWAITING_STAFF_ORDER_ACTION ||
+        existingSession.role === "restaurant_staff_alert"
+      ) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        // Do NOT return — let the message continue as a customer message below.
+      } else if (
         existingSession.state === FLOW_STATES.AWAITING_PAYMENT_REFERENCE &&
         existingSession.orderId
       ) {
@@ -1158,9 +1523,8 @@ function createInboundMessageService({
           replyText,
           orderId: updatedOrder.id,
         };
-      }
-
-      const guidedResult = await timedRouter(() => handleGuidedSession({
+      } else {
+        const guidedResult = await timedRouter(() => handleGuidedSession({
         restaurantId,
         normalized,
         session: existingSession,
@@ -1169,8 +1533,9 @@ function createInboundMessageService({
         sendMessage,
       }));
 
-      if (guidedResult && guidedResult.handled !== false) {
-        return guidedResult;
+        if (guidedResult && guidedResult.handled !== false) {
+          return guidedResult;
+        }
       }
     }
 

@@ -82,6 +82,24 @@ function sanitizeClientId(restaurantId) {
   return String(restaurantId).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function normalizeOutboundRecipient(to) {
+  const value = String(to || "").trim();
+  if (!value) {
+    return value;
+  }
+
+  if (value.includes("@")) {
+    return value;
+  }
+
+  const digits = value.replace(/\D/g, "");
+  if (!digits) {
+    return value;
+  }
+
+  return `${digits}@c.us`;
+}
+
 function resolveSessionDataPath() {
   const explicit = String(process.env.WHATSAPP_SESSION_DATA_PATH || "").trim();
   if (explicit) {
@@ -417,7 +435,8 @@ function createWhatsappClientRegistry({
       throw new Error("Failed to initialize WhatsApp client");
     }
 
-    await entry.client.sendMessage(to, text);
+    const normalizedTo = normalizeOutboundRecipient(to);
+    await entry.client.sendMessage(normalizedTo, text);
   }
 
   async function disconnectSession(restaurantId) {
@@ -539,4 +558,5 @@ function createWhatsappClientRegistry({
 
 module.exports = {
   createWhatsappClientRegistry,
+  normalizeOutboundRecipient,
 };

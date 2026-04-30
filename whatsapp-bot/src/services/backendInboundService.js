@@ -97,8 +97,79 @@ function createBackendInboundService({
     }
   }
 
+  function buildStaffCommandUrl() {
+    return `${baseUrl}${normalizedApiPrefix}/restaurants/${encodeURIComponent(
+      restaurantId
+    )}/messages/staff-command`;
+  }
+
+  async function processStaffCommand(normalizedMessage) {
+    ensureConfigured();
+
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+      controller.abort();
+    }, requestTimeoutMs);
+
+    try {
+      const headers = {
+        "content-type": "application/json",
+      };
+      if (apiKey) {
+        headers["x-api-key"] = apiKey;
+      }
+      if (runtimeKey) {
+        headers["x-runtime-key"] = runtimeKey;
+      }
+
+      const response = await fetch(buildStaffCommandUrl(), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          channel: normalizedMessage.channel,
+          channelCustomerId: normalizedMessage.channelCustomerId,
+          customerPhone: normalizedMessage.customerPhone,
+          displayName: normalizedMessage.displayName || "",
+          command: normalizedMessage.body,
+          providerMessageId: normalizedMessage.messageId,
+          timestamp: normalizedMessage.timestamp,
+          type: normalizedMessage.type || "chat",
+          isFromMe: normalizedMessage.isFromMe,
+          isStatus: normalizedMessage.isStatus,
+          isBroadcast: normalizedMessage.isBroadcast,
+        }),
+        signal: controller.signal,
+      });
+
+      const rawText = await response.text();
+      const payload = rawText ? JSON.parse(rawText) : {};
+
+      if (!response.ok) {
+        const message = payload.error || `HTTP ${response.status}`;
+        throw new Error(`Backend staff command request failed: ${message}`);
+      }
+
+      return payload;
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        logger.error("Backend staff command call timed out", {
+          timeoutMs: requestTimeoutMs,
+        });
+        throw new Error("Backend staff command request timed out");
+      }
+
+      logger.error("Backend staff command call failed", {
+        message: error.message,
+      });
+      throw error;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
   return {
     processInbound,
+    processStaffCommand,
   };
 }
 

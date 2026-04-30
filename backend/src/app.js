@@ -583,6 +583,7 @@ function createApp() {
       requireRestaurantAccess,
       inboundMessageService,
       restaurantRepo,
+      orderService,
       env,
       logger,
     })
