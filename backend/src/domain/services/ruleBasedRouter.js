@@ -13,6 +13,10 @@ function createRuleBasedRouter({
   buildStockAvailabilityMessage,
   buildQuestionFallbackReply,
 }) {
+  function buildConversationalFallbackReply() {
+    return "I’m your Ayo Kitchen assistant. I can help with menu, recommendations, delivery, and placing orders. What would you like to do?";
+  }
+
   async function tryHandleConversation({
     restaurantId,
     normalized,
@@ -22,7 +26,14 @@ function createRuleBasedRouter({
     seemsLikeStructuredOrder,
     sendMessage,
   }) {
-    if (!hasBlockingActiveOrder && !looksLikeNewOrderAttempt(lower) && !seemsLikeStructuredOrder) {
+    if (
+      !hasBlockingActiveOrder &&
+      !looksLikeNewOrderAttempt(lower) &&
+      !seemsLikeStructuredOrder &&
+      !isGreetingText(lower) &&
+      !isMenuOrStockQuestion(lower) &&
+      !isAcknowledgementText(lower)
+    ) {
       const [menuItems, restaurant] = await Promise.all([
         menuService.listAvailableMenuItems(restaurantId),
         restaurantRepo.getRestaurantById(restaurantId),
@@ -56,6 +67,21 @@ function createRuleBasedRouter({
           },
         };
       }
+
+      const replyText = buildConversationalFallbackReply();
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "conversation_fallback",
+        replyText,
+        decision: {
+          handler: "rule_conversation_fallback",
+          intent: "unknown",
+          confidence: 0.35,
+          reason: "llm_unavailable_or_low_signal_non_order_message",
+        },
+      };
     }
 
     if (isGreetingText(lower)) {

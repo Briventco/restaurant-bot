@@ -254,8 +254,16 @@ function looksLikeQuestion(lower, rawText) {
     lower.startsWith("do you") ||
     lower.startsWith("can you") ||
     lower.startsWith("what") ||
+    lower.startsWith("who") ||
+    lower.startsWith("why") ||
+    lower.startsWith("when") ||
     lower.startsWith("which") ||
     lower.startsWith("how") ||
+    lower.startsWith("ehn") ||
+    lower === "ehn" ||
+    lower === "omor" ||
+    lower.includes("what's up") ||
+    lower.includes("wassup") ||
     lower.startsWith("is ") ||
     lower.startsWith("are ")
   );
@@ -973,7 +981,8 @@ function createInboundMessageService({
       looksLikeQuestion(lower, incomingMessage);
 
     const shouldRunEarlyResolve =
-      !isObviousNonOrderMessage && looksLikeNewOrderAttempt(lower);
+      !isObviousNonOrderMessage &&
+      (looksLikeNewOrderAttempt(lower) || /\d/.test(incomingMessage));
 
     const [customer, activeOrder] = await Promise.all([
       timedDb("upsertCustomerFromChannelMessage", () =>

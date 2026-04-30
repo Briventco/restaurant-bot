@@ -579,3 +579,41 @@ test("recent conversation context is passed to llm on follow-up", async () => {
   assert.match(latest, /user:/i);
   assert.match(latest, /assistant:/i);
 });
+
+test("who are you uses conversational fallback not invalid order", async () => {
+  const service = buildService({
+    llmService: {
+      classifyRestaurantMessage: async () => ({
+        intent: "unknown",
+        confidence: 0.2,
+        replyText: "",
+        shouldStartGuidedFlow: false,
+        shouldHandleDirectly: false,
+        entities: {
+          items: [],
+          quantity: 0,
+          fulfillmentType: "",
+          location: "",
+          budget: 0,
+        },
+      }),
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000008@c.us",
+      customerPhone: "+234000000008",
+      text: "Who are you",
+      providerMessageId: "msg-conv-1",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.shouldReply, true);
+  assert.equal(result.type, "llm_fallback_unknown");
+  assert.equal(result.decision.handler, "llm_fallback");
+  assert.doesNotMatch(result.replyText, /couldn't detect a valid order/i);
+});

@@ -45,6 +45,16 @@ function buildClarificationReply(intent, menuItems) {
   return "I can help with menu, delivery, and ordering. Do you want to place an order now or check availability first?";
 }
 
+function buildAssistantFallbackReply(menuItems) {
+  const available = (menuItems || [])
+    .filter((item) => item.available)
+    .map((item) => `${item.name} (N${item.price})`);
+  if (available.length) {
+    return `I’m here to help. We currently have ${available.join(", ")}. Do you want to order now, ask about delivery, or get a recommendation?`;
+  }
+  return "I’m here to help with menu, delivery, and ordering. Tell me what you’d like.";
+}
+
 function normalizeEntities(entities) {
   const safe = entities && typeof entities === "object" ? entities : {};
   return {
@@ -207,6 +217,16 @@ function createChatOrchestrator({
           },
         };
       }
+
+      if (allowGuidedFlow && decision.confidence >= 0.35) {
+        return beginGuidedOrderingFlow({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+        });
+      }
     }
 
     if (
@@ -282,7 +302,27 @@ function createChatOrchestrator({
       };
     }
 
-    return null;
+    const fallbackReply =
+      decision.replyText ||
+      buildClarificationReply(decision.intent, menuItems) ||
+      buildAssistantFallbackReply(menuItems);
+    await sendText(sendMessage, normalized.channelCustomerId, fallbackReply);
+    return {
+      handled: true,
+      shouldReply: true,
+      type: `llm_fallback_${decision.intent || "unknown"}`,
+      replyText: fallbackReply,
+      decision: {
+        handler: "llm_fallback",
+        intent: String(decision.intent || "unknown"),
+        confidence: Number(decision.confidence || 0),
+        reason: "llm_primary_non_transactional_fallback",
+        entities,
+        metrics: {
+          llm_ms: llmMs,
+        },
+      },
+    };
   }
 
   return {
