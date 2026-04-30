@@ -16,6 +16,7 @@ function serializeSettings(restaurant) {
     acceptOrders: bot.enabled !== false,
     autoConfirm: Boolean(bot.autoConfirm),
     notifyOnOrder: bot.notifyOnOrder !== false,
+    demoNumberSellerEnabled: bot.demoNumberSellerEnabled === true,
     orderAlertRecipients: Array.isArray(bot.orderAlertRecipients)
       ? bot.orderAlertRecipients
           .map((value) => String(value || "").trim())
@@ -64,6 +65,7 @@ function createSettingsRoutes({
       acceptOrders: { type: "boolean", required: false },
       autoConfirm: { type: "boolean", required: false },
       notifyOnOrder: { type: "boolean", required: false },
+      demoNumberSellerEnabled: { type: "boolean", required: false },
       orderAlertRecipients: {
         type: "array",
         required: false,
@@ -118,6 +120,10 @@ function createSettingsRoutes({
               typeof req.body.notifyOnOrder === "boolean"
                 ? req.body.notifyOnOrder
                 : currentBot.notifyOnOrder !== false,
+            demoNumberSellerEnabled:
+              typeof req.body.demoNumberSellerEnabled === "boolean"
+                ? req.body.demoNumberSellerEnabled
+                : currentBot.demoNumberSellerEnabled === true,
             orderAlertRecipients: Array.isArray(req.body.orderAlertRecipients)
               ? req.body.orderAlertRecipients
                   .map((value) => String(value || "").trim())

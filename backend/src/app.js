@@ -43,6 +43,9 @@ const { createInboundMessageService } = require("./domain/services/inboundMessag
 const { createOutboxService } = require("./domain/services/outboxService");
 const { createLlmService } = require("./domain/services/llmService");
 const {
+  createNumberSellerDemoService,
+} = require("./domain/services/numberSellerDemoService");
+const {
   createVoiceTranscriptionService,
 } = require("./domain/services/voiceTranscriptionService");
 const {
@@ -320,6 +323,9 @@ function createApp() {
 
   const menuService = createMenuService({ menuRepo });
   const customerService = createCustomerService({ customerRepo });
+  const numberSellerDemoService = createNumberSellerDemoService({
+    conversationSessionRepo,
+  });
 
   const orderService = createOrderService({
     menuRepo,
@@ -346,6 +352,7 @@ function createApp() {
     restaurantRepo,
     paymentService,
     llmService,
+    numberSellerDemoService,
     logger,
     menuCooldownMs: env.INBOUND_MENU_COOLDOWN_SECONDS * 1000,
     aiShadowMode: env.AI_SHADOW_MODE,

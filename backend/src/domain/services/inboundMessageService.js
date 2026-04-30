@@ -529,6 +529,7 @@ function createInboundMessageService({
   restaurantRepo,
   paymentService,
   llmService,
+  numberSellerDemoService = null,
   logger,
   menuCooldownMs,
   aiShadowMode = false,
@@ -940,6 +941,23 @@ function createInboundMessageService({
         getConversationSessionWithAliases(restaurantId, normalized.channel, normalized)
       ),
     ]);
+
+    if (
+      numberSellerDemoService &&
+      typeof numberSellerDemoService.handleMessage === "function"
+    ) {
+      const demoResult = await numberSellerDemoService.handleMessage({
+        restaurantId,
+        restaurant,
+        normalized,
+        existingSession,
+        sendText,
+        sendMessage,
+      });
+      if (demoResult && demoResult.handled) {
+        return demoResult;
+      }
+    }
 
     if (aiShadowMode && incomingMessage.trim()) {
       const shadowMeta = {

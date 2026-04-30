@@ -105,6 +105,25 @@ function normalizeOutboundRecipient(to) {
   return `${digits}@c.us`;
 }
 
+function buildRecipientCandidates(to) {
+  const raw = String(to || "").trim();
+  if (!raw) {
+    return [];
+  }
+
+  const candidates = new Set([normalizeOutboundRecipient(raw)]);
+  const digits = raw.split("@")[0].replace(/\D/g, "");
+  if (digits) {
+    candidates.add(`${digits}@c.us`);
+    candidates.add(`${digits}@lid`);
+  }
+  if (raw.includes("@")) {
+    candidates.add(raw);
+  }
+
+  return Array.from(candidates).filter(Boolean);
+}
+
 function resolveSessionDataPath() {
   const explicit = String(process.env.WHATSAPP_SESSION_DATA_PATH || "").trim();
   if (explicit) {
@@ -440,8 +459,21 @@ function createWhatsappClientRegistry({
       throw new Error("Failed to initialize WhatsApp client");
     }
 
-    const normalizedTo = normalizeOutboundRecipient(to);
-    await entry.client.sendMessage(normalizedTo, text);
+    const candidates = buildRecipientCandidates(to);
+    let lastError = null;
+
+    for (const candidate of candidates) {
+      try {
+        await entry.client.sendMessage(candidate, text);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
   }
 
   async function disconnectSession(restaurantId) {
