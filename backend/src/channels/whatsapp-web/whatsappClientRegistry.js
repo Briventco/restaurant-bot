@@ -82,6 +82,50 @@ function sanitizeClientId(restaurantId) {
   return String(restaurantId).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function getSessionClientDataPath(sessionDataPath, restaurantId) {
+  return path.join(
+    sessionDataPath,
+    `session-restaurant_${sanitizeClientId(restaurantId)}`
+  );
+}
+
+function clearStaleChromiumLocks(sessionDataPath, restaurantId, logger) {
+  const clientDataPath = getSessionClientDataPath(sessionDataPath, restaurantId);
+  const lockFileNames = [
+    "SingletonLock",
+    "SingletonSocket",
+    "SingletonCookie",
+    ".org.chromium.Chromium.*",
+  ];
+
+  if (!fs.existsSync(clientDataPath)) {
+    return;
+  }
+
+  try {
+    const entries = fs.readdirSync(clientDataPath);
+    for (const entry of entries) {
+      const fullPath = path.join(clientDataPath, entry);
+      const isKnownLock = lockFileNames.includes(entry);
+      const isChromiumSocket = entry.startsWith(".org.chromium.Chromium.");
+      if (!isKnownLock && !isChromiumSocket) {
+        continue;
+      }
+
+      try {
+        fs.rmSync(fullPath, { force: true, recursive: true });
+      } catch (_error) {
+        // Best effort; failing here should not block startup.
+      }
+    }
+  } catch (_error) {
+    logger.warn("Failed to inspect WhatsApp session directory for stale locks", {
+      restaurantId,
+      clientDataPath,
+    });
+  }
+}
+
 function normalizeOutboundRecipient(to) {
   const value = String(to || "").trim();
   if (!value) {
@@ -148,7 +192,11 @@ function ensureDirectoryExists(directoryPath) {
 
 function isBrowserAlreadyRunningError(error) {
   const message = String(error && error.message ? error.message : "").toLowerCase();
-  return message.includes("browser is already running for");
+  return (
+    message.includes("browser is already running for") ||
+    message.includes("profile appears to be in use by another chromium process") ||
+    message.includes("process_singleton_posix")
+  );
 }
 
 function createWhatsappClientRegistry({
@@ -355,65 +403,79 @@ function createWhatsappClientRegistry({
     });
     await createSessionEvent(restaurantId, "start_requested");
 
-    const client = new Client({
-      authStrategy: new LocalAuth({
-        clientId: `restaurant_${sanitizeClientId(restaurantId)}`,
-        dataPath: sessionDataPath,
-      }),
-      puppeteer: {
-        headless: true,
-        protocolTimeout: 120000,
-        executablePath: resolvedBrowserExecutablePath || undefined,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--no-first-run",
-          "--no-zygote",
-          "--disable-gpu",
-        ],
-      },
-      takeoverOnConflict: true,
-      takeoverTimeoutMs: 0,
-    });
+    const createClient = () =>
+      new Client({
+        authStrategy: new LocalAuth({
+          clientId: `restaurant_${sanitizeClientId(restaurantId)}`,
+          dataPath: sessionDataPath,
+        }),
+        puppeteer: {
+          headless: true,
+          protocolTimeout: 120000,
+          executablePath: resolvedBrowserExecutablePath || undefined,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-accelerated-2d-canvas",
+            "--no-first-run",
+            "--no-zygote",
+            "--disable-gpu",
+          ],
+        },
+        takeoverOnConflict: true,
+        takeoverTimeoutMs: 0,
+      });
 
-    bindClientEvents(restaurantId, client);
-    clients.set(restaurantId, { client });
+    const initializeClient = async () => {
+      const client = createClient();
+      bindClientEvents(restaurantId, client);
+      clients.set(restaurantId, { client });
+      await client.initialize();
+      return client;
+    };
 
     try {
-      await client.initialize();
+      await initializeClient();
     } catch (error) {
       removeClient(restaurantId);
       clearQrCache(restaurantId);
 
       if (isBrowserAlreadyRunningError(error)) {
-        logger.warn("WhatsApp browser profile already in use", {
+        logger.warn("WhatsApp browser profile lock detected; attempting stale lock cleanup", {
           restaurantId,
           message: error.message,
         });
+        clearStaleChromiumLocks(sessionDataPath, restaurantId, logger);
+
+        try {
+          await initializeClient();
+        } catch (retryError) {
+          removeClient(restaurantId);
+          clearQrCache(restaurantId);
+          await setSessionState(restaurantId, {
+            status: "starting",
+            qrAvailable: false,
+            lastError:
+              "Another WhatsApp browser process is still using this session profile. Wait a moment and retry.",
+          });
+          await createSessionEvent(restaurantId, "start_failed", {
+            message: retryError.message || "browser_profile_in_use",
+          });
+          return getSessionStatus(restaurantId);
+        }
+      } else {
         await setSessionState(restaurantId, {
-          status: "starting",
+          status: "disconnected",
           qrAvailable: false,
-          lastError:
-            "Another WhatsApp browser process is already using this session profile. Stop the existing process and retry.",
+          lastDisconnectedAt: new Date().toISOString(),
+          lastError: error.message || "session_start_failed",
         });
         await createSessionEvent(restaurantId, "start_failed", {
-          message: error.message || "browser_profile_in_use",
+          message: error.message || "session_start_failed",
         });
-        return getSessionStatus(restaurantId);
+        throw error;
       }
-
-      await setSessionState(restaurantId, {
-        status: "disconnected",
-        qrAvailable: false,
-        lastDisconnectedAt: new Date().toISOString(),
-        lastError: error.message || "session_start_failed",
-      });
-      await createSessionEvent(restaurantId, "start_failed", {
-        message: error.message || "session_start_failed",
-      });
-      throw error;
     }
 
     return getSessionStatus(restaurantId);
