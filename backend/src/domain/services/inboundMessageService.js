@@ -806,7 +806,7 @@ function createInboundMessageService({
     conversationSessionRepo,
     flowStates: FLOW_STATES,
     sendText,
-    llmTimeoutMs: 8000,
+    llmTimeoutMs: 15000,
   });
   const aiOrchestrator = createAiOrchestrator({
     llmService,
@@ -951,10 +951,12 @@ function createInboundMessageService({
       (async () => {
         const shadowStartedAt = Date.now();
         try {
+          let shadowMenuItems = [];
+          try { shadowMenuItems = await listAvailableMenuItemsCached(restaurantId); } catch (_e) { /* best-effort */ }
           const shadowResult = await Promise.race([
             aiOrchestrator.decideMessage({
               restaurant,
-              menuItems: [],
+              menuItems: shadowMenuItems,
               messageText: incomingMessage,
               conversationContext: String(normalized.conversationContext || ""),
             }),
@@ -1547,6 +1549,29 @@ function createInboundMessageService({
       }
     }
 
+    // AI-first: Call LLM directly with rich context before rule-based routing
+    const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm", () =>
+      listAvailableMenuItemsCached(restaurantId)
+    );
+    const restaurantForLlm = await timedDb("getRestaurantById_llm", () =>
+      restaurantRepo.getRestaurantById(restaurantId)
+    );
+    
+    const llmResult = await timedRouter(() => chatOrchestrator.maybeHandleWithLlm({
+      restaurantId,
+      normalized,
+      restaurant: restaurantForLlm,
+      menuItems: menuItemsForLlm,
+      sendMessage,
+      activeOrder,
+      sessionState: existingSession,
+    }));
+    
+    if (llmResult && llmResult.handled !== false) {
+      return llmResult;
+    }
+
+    // Fallback to rule-based router if LLM fails
     const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
       restaurantId,
       normalized,

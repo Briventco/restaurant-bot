@@ -55,6 +55,7 @@ function normalizeDecision(raw) {
     replyText: String(safe.replyText || "").trim(),
     shouldStartGuidedFlow: Boolean(safe.shouldStartGuidedFlow),
     shouldHandleDirectly: Boolean(safe.shouldHandleDirectly),
+    suggestedAction: String(safe.suggestedAction || "").trim().toLowerCase() || "",
     entities: {
       items: safeItems,
       quantity: Number.isFinite(Number(safeEntities.quantity))
@@ -71,35 +72,50 @@ function normalizeDecision(raw) {
   };
 }
 
-function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext }) {
+function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }) {
   const restaurantName = String((restaurant && restaurant.name) || "the restaurant").trim();
   const menuText = (menuItems || [])
     .filter((item) => item.available)
     .map((item) => `${item.name} (N${item.price})`)
     .join(", ");
+  
+  const orderContext = activeOrder 
+    ? `Active order: ${activeOrder.status}, items: ${(activeOrder.items || []).map(i => i.name).join(", ")}, total: N${activeOrder.total || 0}`
+    : "No active order";
+  
+  const sessionContext = sessionState
+    ? `Session state: ${sessionState.state || "none"}`
+    : "No active session";
 
   return [
     "You are a smart, friendly WhatsApp assistant for a restaurant.",
-    "Classify and answer incoming customer messages naturally based on what you know about the restaurant.",
+    "You are the PRIMARY decision maker. Understand the customer's intent and suggest the best action.",
     "Return JSON only.",
-    'Return exactly this shape: {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false,"entities":{"items":[],"quantity":0,"fulfillmentType":"","location":"","budget":0}}',
-    'Allowed intents: greeting, menu_request, stock_request, availability_question, recommendation, price_question, place_order, delivery_question, support, off_topic, unknown.',
-    "Set shouldStartGuidedFlow=true when the bot should launch the guided ordering menu flow.",
-    "Set shouldHandleDirectly=true only when replyText is enough and no guided flow is needed.",
+    'Return exactly this shape: {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false,"suggestedAction":"string","entities":{"items":[],"quantity":0,"fulfillmentType":"","location":"","budget":0}}',
+    'Allowed intents: greeting, menu_request, stock_request, availability_question, recommendation, price_question, place_order, add_item, remove_item, delivery_question, cancel, confirm, question, support, off_topic, unknown.',
+    'Allowed suggestedAction: show_menu, create_order, update_order, answer_question, start_guided_flow, clarify, cancel_order, confirm_order, handle_greeting.',
+    "Set suggestedAction based on what the customer wants to do next.",
+    "Set shouldStartGuidedFlow=true when launching the guided menu flow (same as suggestedAction=start_guided_flow).",
+    "Set shouldHandleDirectly=true when replyText is a complete answer and no further action needed.",
     "Use concise, warm, business-safe replies.",
+    "Consider the conversation context, active order, and session state to understand what the customer means.",
+    "If customer has an active order, 'add rice' means add to that order, not start new.",
+    "If customer is in a session, continue that flow instead of starting fresh.",
     "If the customer asks for an item that is not on the available menu, politely say it is not currently available and mention what is available instead.",
     "If the customer asks for a recommendation, base it only on the available menu.",
     "If the customer asks something you do not know, do not guess. Briefly say what you do know, offer helpful alternatives, and keep the conversation focused on the restaurant.",
     "Only redirect to the menu when the customer clearly wants to order or explicitly asks for the menu.",
     "For completely off-topic questions, politely stay focused on the restaurant and offer help with the menu, ordering, availability, or delivery.",
-    conversationContext ? `Recent context: ${conversationContext}` : "",
+    conversationContext ? `Recent conversation: ${conversationContext}` : "",
+    orderContext,
+    sessionContext,
     `Restaurant name: ${restaurantName}`,
     `Available menu: ${menuText}`,
     `Customer message: ${messageText}`,
   ].join("\n");
 }
 
-async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messageText, conversationContext }) {
+async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }) {
   const response = await openai.responses.create({
     model,
     input: [
@@ -110,7 +126,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
             type: "input_text",
             text:
               "Classify restaurant customer messages into JSON only. " +
-              'Return exactly {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false}.',
+              'Return exactly {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false,"suggestedAction":"string","entities":{...}}.',
           },
         ],
       },
@@ -119,7 +135,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
         content: [
           {
             type: "input_text",
-            text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext }),
+            text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }),
           },
         ],
       },
@@ -137,6 +153,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
               "replyText",
               "shouldStartGuidedFlow",
               "shouldHandleDirectly",
+              "suggestedAction",
               "entities",
             ],
             properties: {
@@ -145,6 +162,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
               replyText: { type: "string" },
               shouldStartGuidedFlow: { type: "boolean" },
               shouldHandleDirectly: { type: "boolean" },
+              suggestedAction: { type: "string" },
               entities: {
                 type: "object",
                 additionalProperties: false,
@@ -180,6 +198,8 @@ async function classifyWithGemini({
   menuItems,
   messageText,
   conversationContext,
+  activeOrder,
+  sessionState,
   requestTimeoutMs,
 }) {
   const controller = new AbortController();
@@ -201,7 +221,7 @@ async function classifyWithGemini({
               role: "user",
               parts: [
                 {
-                  text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext }),
+                  text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }),
                 },
               ],
             },
@@ -255,7 +275,7 @@ function createLlmService({
   const openai =
     openAIApiKey && OpenAI ? new OpenAI({ apiKey: openAIApiKey }) : null;
 
-  async function classifyRestaurantMessage({ restaurant, menuItems, messageText, conversationContext = "" }) {
+  async function classifyRestaurantMessage({ restaurant, menuItems, messageText, conversationContext = "", activeOrder = null, sessionState = null }) {
     const normalizedText = String(messageText || "").trim();
     if (!normalizedText) {
       return {
@@ -264,6 +284,7 @@ function createLlmService({
         replyText: "",
         shouldStartGuidedFlow: false,
         shouldHandleDirectly: false,
+        suggestedAction: "",
         entities: {
           items: [],
           quantity: 0,
@@ -284,6 +305,8 @@ function createLlmService({
             menuItems,
             messageText: normalizedText,
             conversationContext,
+            activeOrder,
+            sessionState,
             requestTimeoutMs,
           })) || {
             intent: "unknown",
@@ -291,6 +314,7 @@ function createLlmService({
             replyText: "",
             shouldStartGuidedFlow: false,
             shouldHandleDirectly: false,
+            suggestedAction: "",
             entities: {
               items: [],
               quantity: 0,
@@ -302,7 +326,7 @@ function createLlmService({
         );
       }
 
-    
+
 
       if (normalizedProvider === "openai" && openai) {
         return (
@@ -313,12 +337,15 @@ function createLlmService({
             menuItems,
             messageText: normalizedText,
             conversationContext,
+            activeOrder,
+            sessionState,
           })) || {
             intent: "unknown",
             confidence: 0,
             replyText: "",
             shouldStartGuidedFlow: false,
             shouldHandleDirectly: false,
+            suggestedAction: "",
             entities: {
               items: [],
               quantity: 0,
@@ -337,6 +364,7 @@ function createLlmService({
         replyText: "",
         shouldStartGuidedFlow: false,
         shouldHandleDirectly: false,
+        suggestedAction: "",
         entities: {
           items: [],
           quantity: 0,
@@ -356,6 +384,7 @@ function createLlmService({
         replyText: "",
         shouldStartGuidedFlow: false,
         shouldHandleDirectly: false,
+        suggestedAction: "",
         entities: {
           items: [],
           quantity: 0,

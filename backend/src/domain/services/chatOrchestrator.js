@@ -98,12 +98,36 @@ function buildEntityOrderConfirmation(menuItems, entities) {
   return `Great, I got ${itemText}. Should this be delivery or pickup?`;
 }
 
+function matchLlmEntitiesToMenu(menuItems, entities) {
+  const available = (menuItems || []).filter((item) => item.available);
+  const matched = [];
+  for (const entityName of entities.items || []) {
+    const lower = String(entityName || "").trim().toLowerCase();
+    if (!lower) continue;
+    const found =
+      available.find((item) => String(item.name || "").trim().toLowerCase() === lower) ||
+      available.find((item) => String(item.name || "").trim().toLowerCase().includes(lower)) ||
+      available.find((item) => lower.includes(String(item.name || "").trim().toLowerCase()));
+    if (found) {
+      const qty = entities.quantity > 0 ? entities.quantity : 1;
+      matched.push({
+        menuItemId: found.id,
+        name: found.name,
+        price: Number(found.price || 0),
+        quantity: qty,
+        subtotal: Number(found.price || 0) * qty,
+      });
+    }
+  }
+  return matched;
+}
+
 function createChatOrchestrator({
   llmService,
   conversationSessionRepo,
   flowStates,
   sendText,
-  llmTimeoutMs = 1800,
+  llmTimeoutMs = 15000,
 }) {
   async function beginGuidedOrderingFlow({
     restaurantId,
@@ -140,6 +164,64 @@ function createChatOrchestrator({
     };
   }
 
+  async function beginGuidedOrderingFlowWithItems({
+    restaurantId,
+    normalized,
+    restaurant,
+    menuItems,
+    sendMessage,
+    matched,
+    fulfillmentType,
+  }) {
+    const total = matched.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    const itemSummary = matched.map((i) => `${i.quantity}x ${i.name}`).join(", ");
+
+    if (fulfillmentType === "pickup") {
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        { state: flowStates.AWAITING_CONFIRMATION, matched, total, fulfillmentType: "pickup", deliveryAddress: "" }
+      );
+      const replyText = `Got it! ${itemSummary} for pickup. Total: N${total}.\n\nReply YES to confirm or NO to cancel.`;
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true, shouldReply: true, type: "guided_preseed_confirmation", replyText,
+        decision: { handler: "guided_flow_preseed", intent: "place_order", confidence: 1, reason: "llm_entities_preseeded_pickup" },
+      };
+    }
+
+    if (fulfillmentType === "delivery") {
+      // LLM knows it's delivery but we still need the address — go to AWAITING_ADDRESS
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        { state: flowStates.AWAITING_ADDRESS, matched, total, fulfillmentType: "delivery" }
+      );
+      const replyText = `Great, I got ${itemSummary} for delivery (Total: N${total}).\n\nPlease share your delivery address.`;
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true, shouldReply: true, type: "guided_preseed_address", replyText,
+        decision: { handler: "guided_flow_preseed", intent: "place_order", confidence: 1, reason: "llm_entities_preseeded_delivery" },
+      };
+    }
+
+    // No fulfillment type extracted — ask for it
+    await conversationSessionRepo.upsertSession(
+      restaurantId,
+      normalized.channel,
+      normalized.channelCustomerId,
+      { state: flowStates.AWAITING_FULFILLMENT_TYPE, matched, total }
+    );
+    const replyText = `Great, I got ${itemSummary} (Total: N${total}).\n\nDelivery or pickup? Reply D for Delivery or P for Pickup.`;
+    await sendText(sendMessage, normalized.channelCustomerId, replyText);
+    return {
+      handled: true, shouldReply: true, type: "guided_preseed_fulfillment", replyText,
+      decision: { handler: "guided_flow_preseed", intent: "place_order", confidence: 1, reason: "llm_entities_preseeded" },
+    };
+  }
+
   async function maybeHandleWithLlm({
     restaurantId,
     normalized,
@@ -147,6 +229,8 @@ function createChatOrchestrator({
     menuItems,
     sendMessage,
     allowGuidedFlow = true,
+    activeOrder = null,
+    sessionState = null,
   }) {
     if (!llmService) {
       return null;
@@ -161,6 +245,8 @@ function createChatOrchestrator({
           menuItems,
           messageText: normalized.text,
           conversationContext: String(normalized.conversationContext || ""),
+          activeOrder,
+          sessionState,
         }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error("llm_timeout")), llmTimeoutMs)
@@ -185,6 +271,89 @@ function createChatOrchestrator({
     const entities = normalizeEntities(decision.entities);
     const llmMs = Date.now() - llmStartedAt;
 
+    // Handle suggestedAction from LLM (AI-first approach)
+    if (decision.suggestedAction) {
+      switch (decision.suggestedAction) {
+        case "show_menu":
+        case "start_guided_flow":
+          if (allowGuidedFlow) {
+            return beginGuidedOrderingFlow({
+              restaurantId,
+              normalized,
+              restaurant,
+              menuItems,
+              sendMessage,
+            });
+          }
+          break;
+        case "answer_question":
+          if (decision.replyText) {
+            await sendText(sendMessage, normalized.channelCustomerId, decision.replyText);
+            return {
+              handled: true,
+              shouldReply: true,
+              type: "llm_answer_question",
+              replyText: decision.replyText,
+              decision: {
+                handler: "llm_answer_question",
+                intent: decision.intent,
+                confidence: decision.confidence,
+                reason: "llm_suggested_answer",
+                entities,
+                metrics: { llm_ms },
+              },
+            };
+          }
+          break;
+        case "handle_greeting":
+          if (decision.replyText) {
+            await sendText(sendMessage, normalized.channelCustomerId, decision.replyText);
+            return {
+              handled: true,
+              shouldReply: true,
+              type: "llm_greeting",
+              replyText: decision.replyText,
+              decision: {
+                handler: "llm_greeting",
+                intent: decision.intent,
+                confidence: decision.confidence,
+                reason: "llm_suggested_greeting",
+                entities,
+                metrics: { llm_ms },
+              },
+            };
+          }
+          break;
+        case "create_order":
+        case "update_order": {
+          if (allowGuidedFlow) {
+            // Pre-seed guided flow with LLM-extracted entities to skip item re-selection
+            const prematched = matchLlmEntitiesToMenu(menuItems, entities);
+            if (prematched.length > 0) {
+              return beginGuidedOrderingFlowWithItems({
+                restaurantId,
+                normalized,
+                restaurant,
+                menuItems,
+                sendMessage,
+                matched: prematched,
+                fulfillmentType: entities.fulfillmentType || "",
+              });
+            }
+            return beginGuidedOrderingFlow({
+              restaurantId,
+              normalized,
+              restaurant,
+              menuItems,
+              sendMessage,
+            });
+          }
+          break;
+        }
+      }
+    }
+
+    // Legacy fallback: handle based on intent if suggestedAction not provided
     if (
       allowGuidedFlow &&
       (decision.shouldStartGuidedFlow ||
