@@ -112,6 +112,32 @@ function normalizeCorsOrigin(origin) {
     .replace(/\/+$/, "");
 }
 
+function isOriginAllowed(normalizedOrigin, allowedOrigins) {
+  if (!normalizedOrigin || allowedOrigins.size === 0) {
+    return true;
+  }
+
+  if (allowedOrigins.has(normalizedOrigin)) {
+    return true;
+  }
+
+  for (const pattern of allowedOrigins) {
+    if (!pattern.includes("*")) {
+      continue;
+    }
+
+    const escaped = pattern
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*");
+    const matcher = new RegExp(`^${escaped}$`, "i");
+    if (matcher.test(normalizedOrigin)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function createApp() {
   const app = express();
   const allowedOrigins = new Set(
@@ -122,11 +148,7 @@ function createApp() {
   const corsOptions = {
     origin(origin, callback) {
       const normalizedOrigin = normalizeCorsOrigin(origin);
-      if (
-        !normalizedOrigin ||
-        allowedOrigins.size === 0 ||
-        allowedOrigins.has(normalizedOrigin)
-      ) {
+      if (isOriginAllowed(normalizedOrigin, allowedOrigins)) {
         callback(null, true);
         return;
       }

@@ -30,7 +30,7 @@ function toStringArray(value, fallback = []) {
   }
 
   return String(value)
-    .split(",")
+    .split(/[\n,]/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
