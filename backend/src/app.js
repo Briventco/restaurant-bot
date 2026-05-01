@@ -625,6 +625,8 @@ function createApp() {
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRestaurantAccess,
       inboundMessageService,
+      menuService,
+      orderParsingService,
       restaurantRepo,
       orderService,
       env,

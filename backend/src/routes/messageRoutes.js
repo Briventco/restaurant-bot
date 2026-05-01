@@ -136,6 +136,8 @@ function createMessageRoutes({
   requireApiKey,
   requireRestaurantAccess,
   inboundMessageService,
+  menuService,
+  orderParsingService,
   restaurantRepo,
   orderService,
   env,
@@ -176,6 +178,37 @@ function createMessageRoutes({
     const middleware = requireApiKey(["messages.inbound"]);
     middleware(req, res, next);
   }
+
+  router.post(
+    "/messages/interpret",
+    requireApiKey({
+      anyOf: ["messages.inbound", "orders.read"],
+    }),
+    requireRestaurantAccess,
+    validateBody({
+      text: { required: true, type: "string", minLength: 1 },
+    }),
+    async (req, res, next) => {
+      try {
+        const menuItems = await menuService.listMenuItems(req.restaurantId);
+        const interpretation = await orderParsingService.interpretCustomerMessage(
+          req.body.text,
+          menuItems
+        );
+
+        logger.info("Structured message interpretation generated", {
+          restaurantId: req.restaurantId,
+          intent: interpretation.intent,
+          quantity: interpretation.quantity,
+          clarificationNeeded: interpretation.clarificationNeeded,
+        });
+
+        res.status(200).json(interpretation);
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
 
   router.post(
     "/messages/inbound",

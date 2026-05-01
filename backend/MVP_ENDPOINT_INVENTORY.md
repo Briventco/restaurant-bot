@@ -36,7 +36,10 @@ This inventory maps the backend route surface to the V1 admin portal scope.
 - `GET /api/v1/restaurants/:restaurantId/outbox/stats`
 - `POST /api/v1/restaurants/:restaurantId/outbox/messages/:messageId/retry`
 
-6. Health/deploy checks
+6. Message interpretation
+- `POST /api/v1/restaurants/:restaurantId/messages/interpret`
+
+7. Health/deploy checks
 - `GET /health`
 - `GET /status`
 

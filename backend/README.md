@@ -169,6 +169,7 @@ Key endpoints:
 - `GET /api/v1/restaurants/:restaurantId/restaurant`
 - `PUT /api/v1/restaurants/:restaurantId/restaurant`
 - `PATCH /api/v1/restaurants/:restaurantId/restaurant/bot`
+- `POST /api/v1/restaurants/:restaurantId/messages/interpret`
 - `POST /api/v1/restaurants/:restaurantId/messages/inbound`
 - `GET /api/v1/restaurants/:restaurantId/outbox/messages`
 - `GET /api/v1/restaurants/:restaurantId/outbox/messages/:messageId`
@@ -194,6 +195,22 @@ Key endpoints:
 
 `POST /api/v1/restaurants/:restaurantId/messages/inbound` is the transport handoff endpoint for `whatsapp-bot/`.
 The bot sends normalized inbound events and backend returns `shouldReply` + `replyText`.
+
+`POST /api/v1/restaurants/:restaurantId/messages/interpret` returns Servra-style structured JSON for a raw customer message:
+
+```json
+{
+  "intent": "place_order",
+  "items": [
+    { "name": "Jollof rice", "quantity": 2 }
+  ],
+  "quantity": 2,
+  "deliveryOrPickup": "delivery",
+  "address": "12 Allen Avenue",
+  "paymentIntent": "not_specified",
+  "clarificationNeeded": false
+}
+```
 
 Restaurant-level bot controls live on `restaurants/{restaurantId}.bot`:
 - `enabled` (boolean)

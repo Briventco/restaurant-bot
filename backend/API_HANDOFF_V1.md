@@ -107,6 +107,10 @@ Error:
 - `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/transition`
 - `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/cancel`
 
+### Message interpretation
+
+- `POST /api/v1/restaurants/{restaurantId}/messages/interpret`
+
 ### Payment review
 
 - `POST /api/v1/restaurants/{restaurantId}/orders/{orderId}/payment-receipts`
@@ -243,6 +247,35 @@ Response:
 ```json
 {
   "reason": "customer_requested_cancel"
+}
+```
+
+### 6) Interpret a raw customer message
+
+`POST /api/v1/restaurants/{restaurantId}/messages/interpret`
+
+```json
+{
+  "text": "abeg 2 jollof rice delivery to 12 Allen Avenue"
+}
+```
+
+Response:
+
+```json
+{
+  "intent": "place_order",
+  "items": [
+    {
+      "name": "Jollof rice",
+      "quantity": 2
+    }
+  ],
+  "quantity": 2,
+  "deliveryOrPickup": "delivery",
+  "address": "12 Allen Avenue",
+  "paymentIntent": "not_specified",
+  "clarificationNeeded": false
 }
 ```
 
