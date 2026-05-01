@@ -95,6 +95,7 @@ function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationC
     'Allowed intents: greeting, menu_request, stock_request, availability_question, recommendation, price_question, place_order, add_item, remove_item, delivery_question, cancel, confirm, question, support, off_topic, unknown.',
     'Allowed suggestedAction: show_menu, create_order, update_order, answer_question, start_guided_flow, clarify, cancel_order, confirm_order, handle_greeting.',
     "Set suggestedAction based on what the customer wants to do next.",
+    "entities.quantity is only a total quantity summary across the whole order, not a per-item quantity.",
     "Set shouldStartGuidedFlow=true when launching the guided menu flow (same as suggestedAction=start_guided_flow).",
     "Set shouldHandleDirectly=true when replyText is a complete answer and no further action needed.",
     "Use concise, warm, business-safe replies.",

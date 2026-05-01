@@ -803,6 +803,7 @@ function createInboundMessageService({
 
   const chatOrchestrator = createChatOrchestrator({
     llmService,
+    resolveRequestedItems: orderService.resolveRequestedItems,
     conversationSessionRepo,
     flowStates: FLOW_STATES,
     sendText,
@@ -1410,6 +1411,24 @@ function createInboundMessageService({
       const unavailableItems = Array.isArray(preResolvedRequest && preResolvedRequest.unavailable)
         ? preResolvedRequest.unavailable
         : [];
+      const invalidQuantities = Array.isArray(preResolvedRequest && preResolvedRequest.invalidQuantities)
+        ? preResolvedRequest.invalidQuantities
+        : [];
+
+      if (invalidQuantities.length) {
+        const replyText =
+          `Please use a quantity of at least 1 for: ${invalidQuantities.join(", ")}.`;
+
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "invalid_item_quantity",
+          replyText,
+        };
+      }
+
       if (unavailableItems.length) {
         const menuItems = await timedDb("listAvailableMenuItemsCached_unavailable_precheck", () =>
           listAvailableMenuItemsCached(restaurantId)

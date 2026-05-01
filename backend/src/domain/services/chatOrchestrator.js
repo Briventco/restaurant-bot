@@ -66,32 +66,19 @@ function normalizeEntities(entities) {
   };
 }
 
-function buildEntityOrderConfirmation(menuItems, entities) {
-  const availableNames = new Set(
-    (menuItems || [])
-      .filter((item) => item.available)
-      .map((item) => String(item.name || "").trim().toLowerCase())
-      .filter(Boolean)
-  );
-  const matchedItems = (entities.items || [])
-    .map((name) => String(name || "").trim())
-    .filter(Boolean)
-    .filter((name) => availableNames.has(name.toLowerCase()));
-
-  if (!matchedItems.length) {
+function buildEntityOrderConfirmation(matchedItems, fulfillmentType) {
+  if (!Array.isArray(matchedItems) || !matchedItems.length) {
     return "";
   }
 
-  const quantity = entities.quantity > 0 ? entities.quantity : 1;
-  const itemText =
-    matchedItems.length === 1
-      ? `${quantity} ${matchedItems[0]}`
-      : matchedItems.map((name) => `${quantity} ${name}`).join(", ");
+  const itemText = matchedItems
+    .map((item) => `${Number(item.quantity || 0)}x ${item.name}`)
+    .join(", ");
 
-  if (entities.fulfillmentType === "delivery") {
+  if (fulfillmentType === "delivery") {
     return `Great, I got ${itemText} for delivery. Should I continue with this order?`;
   }
-  if (entities.fulfillmentType === "pickup") {
+  if (fulfillmentType === "pickup") {
     return `Great, I got ${itemText} for pickup. Should I continue with this order?`;
   }
 
@@ -109,13 +96,12 @@ function matchLlmEntitiesToMenu(menuItems, entities) {
       available.find((item) => String(item.name || "").trim().toLowerCase().includes(lower)) ||
       available.find((item) => lower.includes(String(item.name || "").trim().toLowerCase()));
     if (found) {
-      const qty = entities.quantity > 0 ? entities.quantity : 1;
       matched.push({
         menuItemId: found.id,
         name: found.name,
         price: Number(found.price || 0),
-        quantity: qty,
-        subtotal: Number(found.price || 0) * qty,
+        quantity: 1,
+        subtotal: Number(found.price || 0),
       });
     }
   }
@@ -124,6 +110,7 @@ function matchLlmEntitiesToMenu(menuItems, entities) {
 
 function createChatOrchestrator({
   llmService,
+  resolveRequestedItems,
   conversationSessionRepo,
   flowStates,
   sendText,
@@ -270,6 +257,34 @@ function createChatOrchestrator({
     }
     const entities = normalizeEntities(decision.entities);
     const llmMs = Date.now() - llmStartedAt;
+    let parsedMatchedLoaded = false;
+    let parsedMatchedCache = [];
+
+    async function getParsedMatchedItems() {
+      if (parsedMatchedLoaded) {
+        return parsedMatchedCache;
+      }
+
+      parsedMatchedLoaded = true;
+
+      if (typeof resolveRequestedItems !== "function") {
+        parsedMatchedCache = [];
+        return parsedMatchedCache;
+      }
+
+      try {
+        const resolved = await resolveRequestedItems({
+          restaurantId,
+          messageText: normalized.text,
+        });
+        parsedMatchedCache =
+          resolved && Array.isArray(resolved.matched) ? resolved.matched : [];
+      } catch (_error) {
+        parsedMatchedCache = [];
+      }
+
+      return parsedMatchedCache;
+    }
 
     // Handle suggestedAction from LLM (AI-first approach)
     if (decision.suggestedAction) {
@@ -327,8 +342,11 @@ function createChatOrchestrator({
         case "create_order":
         case "update_order": {
           if (allowGuidedFlow) {
-            // Pre-seed guided flow with LLM-extracted entities to skip item re-selection
-            const prematched = matchLlmEntitiesToMenu(menuItems, entities);
+            // Parse the raw message for item-level quantities so pricing always comes from each item.quantity.
+            let prematched = await getParsedMatchedItems();
+            if (!prematched.length) {
+              prematched = matchLlmEntitiesToMenu(menuItems, entities);
+            }
             if (prematched.length > 0) {
               return beginGuidedOrderingFlowWithItems({
                 restaurantId,
@@ -369,7 +387,15 @@ function createChatOrchestrator({
     }
 
     if (decision.intent === "place_order") {
-      const confirmationText = buildEntityOrderConfirmation(menuItems, entities);
+      let prematched = await getParsedMatchedItems();
+      if (!prematched.length) {
+        prematched = matchLlmEntitiesToMenu(menuItems, entities);
+      }
+
+      const confirmationText = buildEntityOrderConfirmation(
+        prematched,
+        entities.fulfillmentType
+      );
       if (confirmationText) {
         await sendText(sendMessage, normalized.channelCustomerId, confirmationText);
         return {

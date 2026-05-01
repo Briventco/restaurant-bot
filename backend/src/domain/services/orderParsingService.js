@@ -16,24 +16,77 @@ function toSafeQuantity(value) {
   return Math.max(1, Math.round(parsed));
 }
 
+const NUMBER_WORDS = Object.freeze({
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+});
+
+function toValidQuantityOrNull(value) {
+  if (typeof value === "string") {
+    const normalizedWord = normalizeText(value);
+    if (NUMBER_WORDS[normalizedWord]) {
+      return NUMBER_WORDS[normalizedWord];
+    }
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return Math.max(1, Math.round(parsed));
+}
+
 function sumQuantities(items) {
-  return (items || []).reduce((sum, item) => sum + toSafeQuantity(item.quantity), 0);
+  return (items || []).reduce((sum, item) => {
+    const quantity = toValidQuantityOrNull(item && item.quantity);
+    return sum + (quantity || 0);
+  }, 0);
 }
 
 function parseWithRegex(messageText, menuItems) {
   const lower = normalizeText(messageText);
   const items = [];
+  const quantityTokenPattern = `(?:\\d+|${Object.keys(NUMBER_WORDS).join("|")})`;
+  const sortedMenuItems = [...(menuItems || [])].sort(
+    (left, right) => String(right && right.name ? right.name : "").length - String(left && left.name ? left.name : "").length
+  );
 
-  for (const menuItem of menuItems || []) {
+  for (const menuItem of sortedMenuItems) {
     const escaped = menuItem.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const qtyRegex = new RegExp(`(\\d+)\\s*(x\\s*)?${escaped}(\\b|$)`, "i");
-    const qtyMatch = lower.match(qtyRegex);
+    const qtyRegex = new RegExp(
+      `(?:^|[\\s,;])(${quantityTokenPattern})\\s*(?:x\\s*)?(?:(?:portion|portions|plate|plates|pack|packs|bottle|bottles|cup|cups)\\s*(?:of)?\\s+)?${escaped}(?=\\b|$)`,
+      "gi"
+    );
+    let qtyMatch = qtyRegex.exec(lower);
+    let foundExplicitQuantity = false;
 
-    if (qtyMatch) {
-      items.push({
-        name: menuItem.name,
-        quantity: toSafeQuantity(qtyMatch[1]),
-      });
+    while (qtyMatch) {
+      const quantity = toValidQuantityOrNull(qtyMatch[1]);
+      if (quantity) {
+        items.push({
+          name: menuItem.name,
+          quantity,
+          _position: qtyMatch.index,
+        });
+        foundExplicitQuantity = true;
+      }
+      qtyMatch = qtyRegex.exec(lower);
+    }
+
+    if (foundExplicitQuantity) {
       continue;
     }
 
@@ -41,11 +94,14 @@ function parseWithRegex(messageText, menuItems) {
       items.push({
         name: menuItem.name,
         quantity: 1,
+        _position: lower.indexOf(normalizeText(menuItem.name)),
       });
     }
   }
 
-  return items;
+  return collapseItems(
+    items.sort((left, right) => Number(left._position || 0) - Number(right._position || 0))
+  );
 }
 
 function parseStructuredItems(raw) {
@@ -55,10 +111,18 @@ function parseStructuredItems(raw) {
 
   return raw.items
     .filter((item) => item && typeof item.name === "string")
-    .map((item) => ({
-      name: item.name,
-      quantity: toSafeQuantity(item.quantity),
-    }));
+    .map((item) => {
+      const quantity = toValidQuantityOrNull(item.quantity);
+      if (!quantity) {
+        return null;
+      }
+
+      return {
+        name: item.name,
+        quantity,
+      };
+    })
+    .filter(Boolean);
 }
 
 function collapseItems(items) {
@@ -74,15 +138,20 @@ function collapseItems(items) {
       continue;
     }
 
+    const quantity = toValidQuantityOrNull(item.quantity);
+    if (!quantity) {
+      continue;
+    }
+
     const existing = collapsed.get(normalizedName);
     if (existing) {
-      existing.quantity += toSafeQuantity(item.quantity);
+      existing.quantity += quantity;
       continue;
     }
 
     collapsed.set(normalizedName, {
       name: item.name,
-      quantity: toSafeQuantity(item.quantity),
+      quantity,
     });
   }
 
@@ -117,7 +186,7 @@ function sanitizeItemsToMenu(items, menuItems) {
 
     matched.push({
       name: found.name,
-      quantity: toSafeQuantity(item.quantity),
+      quantity: toValidQuantityOrNull(item.quantity),
     });
   }
 
@@ -426,6 +495,7 @@ function buildInterpretationPrompt(messageText, menuItems) {
     'Set paymentIntent to a short machine-friendly label such as "not_specified", "payment_sent", "wants_to_pay", or "cash_on_delivery".',
     'Set intent to a short machine-friendly label such as "place_order", "menu_request", "payment_update", "payment_intent", "delivery_question", "greeting", "support", or "unknown".',
     "quantity must be the sum of all quantities in items.",
+    "Never use top-level quantity as the quantity of each item.",
     `Menu: ${menuText}`,
     `Customer message: ${messageText}`,
   ].join("\n");

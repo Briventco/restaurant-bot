@@ -18,6 +18,25 @@ test("parseWithRegex extracts quantities and default quantity", () => {
   ]);
 });
 
+test("parseWithRegex preserves mixed per-item quantities", () => {
+  const items = parseWithRegex(
+    "Yes, 2 portions of jollof rice, 1 chicken, two water and one Chapman",
+    [
+      { name: "Jollof Rice", price: 1500, available: true },
+      { name: "Chicken", price: 1000, available: true },
+      { name: "Water", price: 500, available: true },
+      { name: "Chapman", price: 1200, available: true },
+    ]
+  );
+
+  assert.deepEqual(items, [
+    { name: "Jollof Rice", quantity: 2 },
+    { name: "Chicken", quantity: 1 },
+    { name: "Water", quantity: 2 },
+    { name: "Chapman", quantity: 1 },
+  ]);
+});
+
 test("interpretCustomerMessage returns Servra-style structured order details", async () => {
   const service = createOrderParsingService({
     logger: {
@@ -44,6 +63,39 @@ test("interpretCustomerMessage returns Servra-style structured order details", a
     address: "12 Allen Avenue",
     paymentIntent: "not_specified",
     clarificationNeeded: false,
+  });
+});
+
+test("interpretCustomerMessage keeps per-item quantities and only sums top-level quantity", async () => {
+  const service = createOrderParsingService({
+    logger: {
+      warn: () => {},
+    },
+  });
+
+  const interpretation = await service.interpretCustomerMessage(
+    "Yes, 2 portions of Jollof Rice, 1 Chicken, two Water and one Chapman",
+    [
+      { name: "Jollof Rice", price: 1500, available: true },
+      { name: "Chicken", price: 1000, available: true },
+      { name: "Water", price: 500, available: true },
+      { name: "Chapman", price: 1200, available: true },
+    ]
+  );
+
+  assert.deepEqual(interpretation, {
+    intent: "place_order",
+    items: [
+      { name: "Jollof Rice", quantity: 2 },
+      { name: "Chicken", quantity: 1 },
+      { name: "Water", quantity: 2 },
+      { name: "Chapman", quantity: 1 },
+    ],
+    quantity: 6,
+    deliveryOrPickup: "",
+    address: "",
+    paymentIntent: "not_specified",
+    clarificationNeeded: true,
   });
 });
 

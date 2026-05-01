@@ -36,6 +36,15 @@ function toSafeQuantity(value) {
   return Math.max(1, Math.round(parsed));
 }
 
+function toValidQuantityOrNull(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return Math.max(1, Math.round(parsed));
+}
+
 function matchMenuItems(orderItems, menuItems) {
   const normalizedMenu = new Map(
     (menuItems || []).map((item) => [normalizeText(item.name), item])
@@ -43,6 +52,7 @@ function matchMenuItems(orderItems, menuItems) {
 
   const matched = [];
   const unavailable = [];
+  const invalidQuantities = [];
 
   for (const orderItem of orderItems || []) {
     const found = normalizedMenu.get(normalizeText(orderItem.name));
@@ -57,7 +67,12 @@ function matchMenuItems(orderItems, menuItems) {
       continue;
     }
 
-    const quantity = toSafeQuantity(orderItem.quantity);
+    const quantity = toValidQuantityOrNull(orderItem.quantity);
+    if (!quantity) {
+      invalidQuantities.push(found.name);
+      continue;
+    }
+
     matched.push({
       menuItemId: found.id,
       name: found.name,
@@ -70,7 +85,29 @@ function matchMenuItems(orderItems, menuItems) {
   return {
     matched,
     unavailable,
+    invalidQuantities,
   };
+}
+
+function normalizeMatchedItemsForPricing(matched) {
+  return (Array.isArray(matched) ? matched : []).map((item) => {
+    const quantity = toValidQuantityOrNull(item && item.quantity);
+    if (!quantity) {
+      throw createHttpError(
+        400,
+        `Invalid quantity for ${String((item && item.name) || "item").trim() || "item"}`
+      );
+    }
+
+    const price = Number(item && item.price) || 0;
+
+    return {
+      ...item,
+      quantity,
+      price,
+      subtotal: price * quantity,
+    };
+  });
 }
 
 function buildTimestampPatchForStatus(toStatus) {
@@ -478,13 +515,18 @@ function createOrderService({
   }) {
     const menuItems = await menuRepo.listMenuItems(restaurantId);
     const parsedItems = await orderParsingService.parseOrder(messageText, menuItems);
-    const { matched, unavailable } = matchMenuItems(parsedItems, menuItems);
+    const {
+      matched,
+      unavailable,
+      invalidQuantities,
+    } = matchMenuItems(parsedItems, menuItems);
 
-    if (!matched.length) {
+    if (!matched.length || invalidQuantities.length) {
       return null;
     }
 
-    const total = calculateTotal(matched);
+    const normalizedMatched = normalizeMatchedItemsForPricing(matched);
+    const total = calculateTotal(normalizedMatched);
 
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
@@ -495,7 +537,7 @@ function createOrderService({
       source: channel,
       rawMessage: messageText,
       latestProviderMessageId: providerMessageId || "",
-      matched,
+      matched: normalizedMatched,
       unavailable,
       unavailableItems: [],
       issueType: "",
@@ -540,7 +582,11 @@ function createOrderService({
     fulfillmentType,
     deliveryAddress,
   }) {
-    const safeQuantity = toSafeQuantity(quantity);
+    const safeQuantity = toValidQuantityOrNull(quantity);
+    if (!safeQuantity) {
+      throw createHttpError(400, "Quantity must be at least 1");
+    }
+
     const matched = [
       {
         menuItemId: menuItem.id,
@@ -608,7 +654,9 @@ function createOrderService({
     deliveryAddress,
     rawMessage = "",
   }) {
-    const safeMatched = Array.isArray(matched) ? matched.filter(Boolean) : [];
+    const safeMatched = normalizeMatchedItemsForPricing(
+      Array.isArray(matched) ? matched.filter(Boolean) : []
+    );
     if (!safeMatched.length) {
       throw createHttpError(400, "At least one matched item is required");
     }
@@ -672,7 +720,9 @@ function createOrderService({
     reason = "customer_updated_pending_order",
   }) {
     const order = await getOrderOrThrow(restaurantId, orderId);
-    const safeMatched = Array.isArray(matched) ? matched.filter(Boolean) : order.matched || [];
+    const safeMatched = normalizeMatchedItemsForPricing(
+      Array.isArray(matched) ? matched.filter(Boolean) : order.matched || []
+    );
     if (!safeMatched.length) {
       throw createHttpError(400, "At least one matched item is required");
     }
@@ -813,7 +863,15 @@ function createOrderService({
   }) {
     const menuItems = await menuRepo.listMenuItems(restaurantId);
     const parsedItems = await orderParsingService.parseOrder(incomingMessage, menuItems);
-    const { matched, unavailable } = matchMenuItems(parsedItems, menuItems);
+    const { matched, unavailable, invalidQuantities } = matchMenuItems(parsedItems, menuItems);
+
+    if (invalidQuantities.length) {
+      return {
+        handled: true,
+        order: activeOrder,
+        reply: `Please use a quantity of at least 1 for: ${invalidQuantities.join(", ")}.`,
+      };
+    }
 
     if (!matched.length) {
       return {
@@ -824,10 +882,11 @@ function createOrderService({
       };
     }
 
-    const total = calculateTotal(matched);
+    const normalizedMatched = normalizeMatchedItemsForPricing(matched);
+    const total = calculateTotal(normalizedMatched);
     const updatedOrder = await orderRepo.updateOrder(restaurantId, activeOrder.id, {
       rawMessage: incomingMessage,
-      matched,
+      matched: normalizedMatched,
       unavailable,
       total,
       status: ORDER_STATUSES.PENDING_CONFIRMATION,
@@ -847,7 +906,7 @@ function createOrderService({
     return {
       handled: true,
       order: updatedOrder,
-      reply: buildOrderUpdatedMessage({ matched, total, unavailable }),
+      reply: buildOrderUpdatedMessage({ matched: normalizedMatched, total, unavailable }),
     };
   }
 
