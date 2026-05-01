@@ -6,7 +6,9 @@
   "main": "src/server.js",
   "scripts": {
     "postinstall": "node scripts/installChromium.js",
+    "prestart": "node scripts/cleanChromiumLocks.js",
     "start": "node src/server.js",
+    "predev": "node scripts/cleanChromiumLocks.js",
     "dev": "node --watch src/server.js",
     "worker:outbox": "node src/workers/outboxWorker.js",
     "pilot:smoke": "node src/scripts/pilotSmokeTest.js",
