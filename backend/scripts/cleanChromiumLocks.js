@@ -36,8 +36,12 @@ function cleanLocksInDirectory(dir) {
 function main() {
   console.log('[lock-cleanup] Starting Chromium lock file cleanup...');
 
+  const authDir = path.join(__dirname, '..', '.wwebjs_auth');
   const cacheDir = path.join(__dirname, '..', '.wwebjs_cache');
-  const totalCleaned = cleanLocksInDirectory(cacheDir);
+  
+  const authCleaned = cleanLocksInDirectory(authDir);
+  const cacheCleaned = cleanLocksInDirectory(cacheDir);
+  const totalCleaned = authCleaned + cacheCleaned;
 
   console.log(`[lock-cleanup] Cleanup complete. Removed ${totalCleaned} lock file(s).`);
 }
