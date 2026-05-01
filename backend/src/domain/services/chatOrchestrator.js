@@ -300,7 +300,7 @@ function createChatOrchestrator({
                 confidence: decision.confidence,
                 reason: "llm_suggested_answer",
                 entities,
-                metrics: { llm_ms },
+                metrics: { llm_ms: llmMs },
               },
             };
           }
@@ -319,7 +319,7 @@ function createChatOrchestrator({
                 confidence: decision.confidence,
                 reason: "llm_suggested_greeting",
                 entities,
-                metrics: { llm_ms },
+                metrics: { llm_ms: llmMs },
               },
             };
           }

@@ -5,7 +5,7 @@ const LOCK_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
 
 function cleanLocksInDirectory(dir) {
   if (!fs.existsSync(dir)) {
-    return;
+    return 0;
   }
 
   let cleaned = 0;
