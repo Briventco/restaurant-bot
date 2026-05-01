@@ -56,6 +56,24 @@ function createGuidedSessionRouter({
     }
 
     if (session.state === flowStates.AWAITING_ITEM) {
+      // AI-first: Let LLM decide if this is a question, recommendation request, or item selection
+      const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+      const llmResult = await chatOrchestrator.maybeHandleWithLlm({
+        restaurantId,
+        normalized,
+        restaurant,
+        menuItems,
+        sendMessage,
+        allowGuidedFlow: false,
+        activeOrder: null,
+        sessionState: session,
+      });
+
+      if (llmResult && llmResult.handled !== false) {
+        return llmResult;
+      }
+
+      // Fallback: Try to resolve as item selection if LLM didn't handle it
       const {
         matched: requestedMatched,
         unavailable: requestedUnavailable,
@@ -198,22 +216,7 @@ function createGuidedSessionRouter({
 
       const selectedItem = resolveMenuSelection(menuItems, normalized.text);
       if (!selectedItem) {
-        if (looksLikeQuestion(lower, normalized.text)) {
-          const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
-          const llmResult = await chatOrchestrator.maybeHandleWithLlm({
-            restaurantId,
-            normalized,
-            restaurant,
-            menuItems,
-            sendMessage,
-            allowGuidedFlow: false,
-          });
-
-          if (llmResult) {
-            return llmResult;
-          }
-        }
-
+        // LLM was already called at the start, so just show menu again as fallback
         const replyText = buildMenuWelcome(
           menuItems,
           String(session.restaurantName || "").trim()
