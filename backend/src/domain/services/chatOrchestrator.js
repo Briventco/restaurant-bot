@@ -259,6 +259,13 @@ function createChatOrchestrator({
     const llmMs = Date.now() - llmStartedAt;
     let parsedMatchedLoaded = false;
     let parsedMatchedCache = [];
+    const transactionalIntents = new Set([
+      "place_order",
+      "add_item",
+      "remove_item",
+      "confirm",
+      "cancel",
+    ]);
 
     async function getParsedMatchedItems() {
       if (parsedMatchedLoaded) {
@@ -392,10 +399,19 @@ function createChatOrchestrator({
         prematched = matchLlmEntitiesToMenu(menuItems, entities);
       }
 
-      const confirmationText = buildEntityOrderConfirmation(
-        prematched,
-        entities.fulfillmentType
-      );
+      if (allowGuidedFlow && prematched.length) {
+        return beginGuidedOrderingFlowWithItems({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+          matched: prematched,
+          fulfillmentType: entities.fulfillmentType || "",
+        });
+      }
+
+      const confirmationText = buildEntityOrderConfirmation(prematched, entities.fulfillmentType);
       if (confirmationText) {
         await sendText(sendMessage, normalized.channelCustomerId, confirmationText);
         return {
@@ -422,6 +438,24 @@ function createChatOrchestrator({
           sendMessage,
         });
       }
+    }
+
+    if (transactionalIntents.has(String(decision.intent || "").trim().toLowerCase())) {
+      return {
+        handled: false,
+        shouldReply: false,
+        type: "llm_transactional_intent_deferred",
+        decision: {
+          handler: "llm_transactional_intent_deferred",
+          intent: String(decision.intent || "unknown"),
+          confidence: Number(decision.confidence || 0),
+          reason: "transactional_intents_require_deterministic_flow",
+          entities,
+          metrics: {
+            llm_ms: llmMs,
+          },
+        },
+      };
     }
 
     if (
