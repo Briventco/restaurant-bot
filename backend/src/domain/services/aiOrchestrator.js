@@ -32,15 +32,15 @@ function buildDraftFromDecision(decision) {
     : 0;
 
   let action = "ask_clarify";
-  if (intent === "menu_request") {
+  if (intent === "menu_request" && confidence >= 0.7) {
     action = "start_guided";
-  } else if (intent === "place_order" && entities.items.length) {
+  } else if (intent === "place_order" && entities.items.length && confidence >= 0.75) {
     action = "create_order_draft";
-  } else if (decision.shouldHandleDirectly && confidence >= 0.45) {
+  } else if (decision.shouldHandleDirectly && confidence >= 0.7) {
     action = "reply_only";
-  } else if (confidence < 0.45) {
+  } else if (confidence < 0.6) {
     action = "ask_clarify";
-  } else if (intent === "support") {
+  } else if (intent === "support" && confidence >= 0.7) {
     action = "handoff";
   }
 
