@@ -801,12 +801,9 @@ function createGuidedSessionRouter({
       };
     }
 
-    await conversationSessionRepo.clearSession(
-      restaurantId,
-      normalized.channel,
-      normalized.channelCustomerId
-    );
-
+    // Session exists but state not handled - DON'T clear it
+    // Let upstream (AI router or fallback) try to handle
+    // This prevents losing order context when customer says something unexpected
     return null;
   }
 

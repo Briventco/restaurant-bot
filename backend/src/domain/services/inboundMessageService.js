@@ -1565,6 +1565,41 @@ function createInboundMessageService({
         if (guidedResult && guidedResult.handled !== false) {
           return guidedResult;
         }
+
+        // Guided session exists but couldn't handle - check if we should preserve context
+        // Prevent falling through to AI which would show welcome message and lose order
+        if (existingSession.state === FLOW_STATES.AWAITING_CONFIRMATION) {
+          const replyText = `You have an order waiting for confirmation. Please reply YES to confirm or NO to cancel.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_confirmation_reminder",
+            replyText,
+          };
+        }
+
+        if (existingSession.state === FLOW_STATES.AWAITING_ADDRESS) {
+          const replyText = `Please share your delivery address, or reply PICKUP if you want to pick up the order.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_address_reminder",
+            replyText,
+          };
+        }
+
+        if (existingSession.state === FLOW_STATES.AWAITING_FULFILLMENT_TYPE) {
+          const replyText = `Please reply D for delivery or P for pickup.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_fulfillment_reminder",
+            replyText,
+          };
+        }
       }
     }
 
