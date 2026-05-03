@@ -34,6 +34,14 @@ const FLOW_STATES = {
   AWAITING_STAFF_ORDER_ACTION: "awaiting_staff_order_action",
 };
 
+const ORDER_INTAKE_SESSION_STATES = new Set([
+  FLOW_STATES.AWAITING_ITEM,
+  FLOW_STATES.AWAITING_QUANTITY,
+  FLOW_STATES.AWAITING_FULFILLMENT_TYPE,
+  FLOW_STATES.AWAITING_ADDRESS,
+  FLOW_STATES.AWAITING_CONFIRMATION,
+]);
+
 const CUSTOMER_BLOCKING_ORDER_STATUSES = [
   ORDER_STATUSES.PENDING_CONFIRMATION,
   ORDER_STATUSES.CONFIRMED,
@@ -1398,6 +1406,28 @@ function createInboundMessageService({
     ]);
     const hasBlockingActiveOrder =
       activeOrder && CUSTOMER_BLOCKING_ORDER_STATUSES.includes(activeOrder.status);
+
+    if (
+      activeOrder &&
+      existingSession &&
+      ORDER_INTAKE_SESSION_STATES.has(String(existingSession.state || "").trim())
+    ) {
+      await timedDb("clearStaleIntakeSessionWithActiveOrder", () =>
+        conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        )
+      );
+      logger.info("Cleared stale intake session because active order exists", {
+        restaurantId,
+        channel: normalized.channel,
+        channelCustomerId: normalized.channelCustomerId,
+        staleSessionState: existingSession.state || "",
+        activeOrderId: activeOrder.id || "",
+        activeOrderStatus: activeOrder.status || "",
+      });
+    }
     const earlyMatchedResult = !hasBlockingActiveOrder && shouldRunEarlyResolve
       ? await timedDb("resolveRequestedItems_early", async () => {
           try {
