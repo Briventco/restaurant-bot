@@ -1655,6 +1655,7 @@ function createInboundMessageService({
       normalized,
       lower,
       incomingMessage,
+      hasActiveOrder: Boolean(activeOrder),
       hasBlockingActiveOrder,
       seemsLikeStructuredOrder,
       sendMessage,

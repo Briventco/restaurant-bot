@@ -22,12 +22,18 @@ function createRuleBasedRouter({
     normalized,
     lower,
     incomingMessage,
+    hasActiveOrder,
     hasBlockingActiveOrder,
     seemsLikeStructuredOrder,
     sendMessage,
   }) {
     // Let downstream explicit structured order or transactional logic handle these cases
-    if (hasBlockingActiveOrder || looksLikeNewOrderAttempt(lower) || seemsLikeStructuredOrder) {
+    if (
+      hasActiveOrder ||
+      hasBlockingActiveOrder ||
+      looksLikeNewOrderAttempt(lower) ||
+      seemsLikeStructuredOrder
+    ) {
       return null;
     }
 

@@ -27,6 +27,63 @@ function createGuidedSessionRouter({
   removeMatchedItems,
   buildGuidedOrderConfirmedMessage,
 }) {
+  function extractQuantityEditIntent(rawText) {
+    const text = String(rawText || "").trim();
+    if (!text) {
+      return null;
+    }
+
+    const patterns = [
+      /\bmake(?:\s+\w+){0,3}\s+(\d+)\s*(?:x|portion|portions|plate|plates)?\b/i,
+      /\b(?:to|be)\s+(\d+)\s*(?:x|portion|portions|plate|plates)\b/i,
+      /\b(\d+)\s*(?:x|portion|portions|plate|plates)\b/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (!match || !match[1]) {
+        continue;
+      }
+      const quantity = Number(match[1]);
+      if (Number.isFinite(quantity) && quantity > 0) {
+        return Math.max(1, Math.round(quantity));
+      }
+    }
+
+    return null;
+  }
+
+  function applyQuantityToSessionMatched(sessionMatched, session, quantity) {
+    if (Array.isArray(sessionMatched) && sessionMatched.length) {
+      if (sessionMatched.length === 1) {
+        const single = sessionMatched[0];
+        const price = Number(single.price || 0);
+        const updated = [{
+          ...single,
+          quantity,
+          subtotal: price * quantity,
+        }];
+        return updated;
+      }
+      return null;
+    }
+
+    if (session && session.itemId) {
+      const price = Number(session.itemPrice || 0);
+      return [
+        {
+          menuItemId: session.itemId,
+          name: String(session.itemName || "").trim(),
+          price,
+          quantity,
+          subtotal: price * quantity,
+        },
+      ];
+    }
+
+    return null;
+  }
+
   async function handleGuidedSession({
     restaurantId,
     normalized,
@@ -429,10 +486,13 @@ function createGuidedSessionRouter({
 
     if (session.state === flowStates.AWAITING_FULFILLMENT_TYPE) {
       let fulfillmentType = "";
+      const inlineFulfillmentType = extractInlineFulfillmentType(normalized.text);
+      const quantityEdit = extractQuantityEditIntent(normalized.text);
+      const sessionMatched = buildMatchedFromSession(session);
 
-      if (lower === "d" || lower === "delivery") {
+      if (lower === "d" || lower === "delivery" || inlineFulfillmentType === "delivery") {
         fulfillmentType = "delivery";
-      } else if (lower === "p" || lower === "pickup") {
+      } else if (lower === "p" || lower === "pickup" || inlineFulfillmentType === "pickup") {
         fulfillmentType = "pickup";
       }
 
@@ -445,6 +505,25 @@ function createGuidedSessionRouter({
           type: "guided_invalid_fulfillment",
           replyText,
         };
+      }
+
+      if (quantityEdit) {
+        const updatedMatched = applyQuantityToSessionMatched(sessionMatched, session, quantityEdit);
+        if (updatedMatched && updatedMatched.length) {
+          await conversationSessionRepo.upsertSession(
+            restaurantId,
+            normalized.channel,
+            normalized.channelCustomerId,
+            {
+              matched: updatedMatched,
+              total: calculateMatchedTotal(updatedMatched),
+              itemId: "",
+              itemName: "",
+              itemPrice: 0,
+              quantity: 0,
+            }
+          );
+        }
       }
 
       if (fulfillmentType === "delivery") {
@@ -479,11 +558,20 @@ function createGuidedSessionRouter({
         }
       );
 
+      const nextMatched =
+        quantityEdit && sessionMatched.length <= 1
+          ? applyQuantityToSessionMatched(sessionMatched, session, quantityEdit) || sessionMatched
+          : sessionMatched;
+      const nextTotal = nextMatched.length
+        ? calculateMatchedTotal(nextMatched)
+        : quantityEdit
+          ? Number(session.itemPrice || 0) * quantityEdit
+          : Number(session.total || 0);
       const replyText = buildGuidedConfirmPrompt({
-        matched: Array.isArray(session.matched) ? session.matched : null,
+        matched: nextMatched.length ? nextMatched : null,
         itemName: session.itemName,
-        quantity: Number(session.quantity || 0),
-        total: Number(session.total || 0),
+        quantity: quantityEdit || Number(session.quantity || 0),
+        total: Number(nextTotal || 0),
         fulfillmentType,
         address: "",
       });
