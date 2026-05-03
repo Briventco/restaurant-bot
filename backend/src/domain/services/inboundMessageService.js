@@ -718,14 +718,18 @@ function createInboundMessageService({
     });
   }
 
-  async function getConversationSessionWithAliases(restaurantId, channel, normalized) {
-    const candidates = Array.from(
+  function buildInboundIdentityCandidates(normalized) {
+    return Array.from(
       new Set([
         String(normalized.channelCustomerId || "").trim(),
         ...buildPhoneCandidates(normalized.channelCustomerId),
         ...buildPhoneCandidates(normalized.customerPhone),
       ])
     ).filter(Boolean);
+  }
+
+  async function getConversationSessionWithAliases(restaurantId, channel, normalized) {
+    const candidates = buildInboundIdentityCandidates(normalized);
 
     for (const candidate of candidates) {
       const session = await conversationSessionRepo.getSession(
@@ -738,6 +742,21 @@ function createInboundMessageService({
       }
     }
 
+    return null;
+  }
+
+  async function findActiveOrderWithAliases(restaurantId, channel, normalized) {
+    const candidates = buildInboundIdentityCandidates(normalized);
+    for (const candidate of candidates) {
+      const order = await orderService.findActiveOrderByCustomer({
+        restaurantId,
+        channel,
+        channelCustomerId: candidate,
+      });
+      if (order) {
+        return order;
+      }
+    }
     return null;
   }
 
@@ -1355,11 +1374,7 @@ function createInboundMessageService({
         })
       ),
       timedDb("findActiveOrderByCustomer", () =>
-        orderService.findActiveOrderByCustomer({
-          restaurantId,
-          channel: normalized.channel,
-          channelCustomerId: normalized.channelCustomerId,
-        })
+        findActiveOrderWithAliases(restaurantId, normalized.channel, normalized)
       ),
     ]);
     const hasBlockingActiveOrder =
@@ -1394,6 +1409,18 @@ function createInboundMessageService({
         type: "empty_message",
       };
     }
+
+    logger.info("Inbound context lookup", {
+      restaurantId,
+      channel: normalized.channel,
+      channelCustomerId: normalized.channelCustomerId,
+      customerPhone: normalized.customerPhone,
+      identityCandidates: buildInboundIdentityCandidates(normalized).slice(0, 8),
+      hasSession: Boolean(existingSession),
+      sessionState: existingSession ? existingSession.state : "",
+      hasActiveOrder: Boolean(activeOrder),
+      activeOrderStatus: activeOrder ? activeOrder.status : "",
+    });
 
     let preResolvedRequest = null;
     try {
@@ -1603,29 +1630,7 @@ function createInboundMessageService({
       }
     }
 
-    // AI-first: Call LLM directly with rich context before rule-based routing
-    const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm", () =>
-      listAvailableMenuItemsCached(restaurantId)
-    );
-    const restaurantForLlm = await timedDb("getRestaurantById_llm", () =>
-      restaurantRepo.getRestaurantById(restaurantId)
-    );
-    
-    const llmResult = await timedRouter(() => chatOrchestrator.maybeHandleWithLlm({
-      restaurantId,
-      normalized,
-      restaurant: restaurantForLlm,
-      menuItems: menuItemsForLlm,
-      sendMessage,
-      activeOrder,
-      sessionState: existingSession,
-    }));
-    
-    if (llmResult && llmResult.handled !== false) {
-      return llmResult;
-    }
-
-    // Fallback to rule-based router if LLM fails
+    // Rules-first: keep transactional flow deterministic.
     const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
       restaurantId,
       normalized,
@@ -2187,6 +2192,30 @@ function createInboundMessageService({
     }
 
     {
+      // Use LLM only for non-transactional chat once deterministic order logic has had first pass.
+      if (isObviousNonOrderMessage) {
+        const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm", () =>
+          listAvailableMenuItemsCached(restaurantId)
+        );
+        const restaurantForLlm = await timedDb("getRestaurantById_llm", () =>
+          restaurantRepo.getRestaurantById(restaurantId)
+        );
+
+        const llmResult = await timedRouter(() => chatOrchestrator.maybeHandleWithLlm({
+          restaurantId,
+          normalized,
+          restaurant: restaurantForLlm,
+          menuItems: menuItemsForLlm,
+          sendMessage,
+          activeOrder,
+          sessionState: existingSession,
+        }));
+
+        if (llmResult && llmResult.handled !== false) {
+          return llmResult;
+        }
+      }
+
       if (looksLikeQuestion(lower, incomingMessage)) {
         const menuItems = await timedDb("listAvailableMenuItemsCached_question_fallback", () =>
           listAvailableMenuItemsCached(restaurantId)
