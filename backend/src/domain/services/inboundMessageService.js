@@ -760,6 +760,25 @@ function createInboundMessageService({
     return null;
   }
 
+  async function findRecentPayableOrderWithAliases(restaurantId, channel, normalized) {
+    const candidates = new Set(buildInboundIdentityCandidates(normalized));
+    const recentOrders = await orderService.listCurrentOrders({
+      restaurantId,
+      limit: 200,
+    });
+
+    const payable = (recentOrders || [])
+      .filter((order) => String(order.channel || "").trim() === String(channel || "").trim())
+      .filter((order) => candidates.has(String(order.channelCustomerId || "").trim()))
+      .filter(
+        (order) =>
+          order.status === ORDER_STATUSES.AWAITING_PAYMENT ||
+          order.status === ORDER_STATUSES.PAYMENT_REVIEW
+      );
+
+    return payable.length ? payable[0] : null;
+  }
+
   async function resolveOrderIdentifier(restaurantId, rawIdentifier) {
     const identifier = String(rawIdentifier || "").trim();
     if (!identifier) {
@@ -1698,19 +1717,26 @@ function createInboundMessageService({
       }
     }
 
+    let paymentOrder = activeOrder;
+    if (!paymentOrder && looksLikePaymentReported(lower)) {
+      paymentOrder = await timedDb("findRecentPayableOrderWithAliases", () =>
+        findRecentPayableOrderWithAliases(restaurantId, normalized.channel, normalized)
+      );
+    }
+
     if (
-      activeOrder &&
-      (activeOrder.status === ORDER_STATUSES.AWAITING_PAYMENT ||
-        activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW) &&
+      paymentOrder &&
+      (paymentOrder.status === ORDER_STATUSES.AWAITING_PAYMENT ||
+        paymentOrder.status === ORDER_STATUSES.PAYMENT_REVIEW) &&
       looksLikePaymentReported(lower)
     ) {
-      if (activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW) {
+      if (paymentOrder.status === ORDER_STATUSES.PAYMENT_REVIEW) {
         const replyText = buildPaymentStillUnderReviewMessage();
         if (sendMessage) {
-          await orderService.sendMessageToOrderCustomer(activeOrder, replyText, {
+          await orderService.sendMessageToOrderCustomer(paymentOrder, replyText, {
             type: "payment_review_reminder",
             sourceAction: "customerPaymentReviewReminder",
-            sourceRef: activeOrder.id,
+            sourceRef: paymentOrder.id,
             providerMessageId,
           });
         }
@@ -1720,13 +1746,13 @@ function createInboundMessageService({
           shouldReply: true,
           type: "payment_already_under_review",
           replyText,
-          orderId: activeOrder.id,
+          orderId: paymentOrder.id,
         };
       }
 
       const updatedOrder = await paymentService.markCustomerPaymentReported({
         restaurantId,
-        orderId: activeOrder.id,
+        orderId: paymentOrder.id,
         actorId: normalized.channelCustomerId,
         note: incomingMessage,
         providerMessageId,
