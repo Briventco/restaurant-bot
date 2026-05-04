@@ -623,6 +623,7 @@ function createInboundMessageService({
       channelCustomerId: normalized.channelCustomerId,
       providerMessageId: buildProviderMessageId(normalized),
       type: withDecision.type,
+      handlerTrace: String(withDecision.handlerTrace || withDecision.type || "unknown"),
       shouldReply: withDecision.shouldReply,
       decision: withDecision.decision,
       perf: {
@@ -1680,18 +1681,20 @@ function createInboundMessageService({
     }
 
     // Rules-first: keep transactional flow deterministic.
-    const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
-      restaurantId,
-      normalized,
-      lower,
-      incomingMessage,
-      hasActiveOrder: Boolean(activeOrder),
-      hasBlockingActiveOrder,
-      seemsLikeStructuredOrder,
-      sendMessage,
-    }));
-    if (routedResult && routedResult.handled !== false) {
-      return routedResult;
+    if (!activeOrder && !existingSession) {
+      const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
+        restaurantId,
+        normalized,
+        lower,
+        incomingMessage,
+        hasActiveOrder: Boolean(activeOrder),
+        hasBlockingActiveOrder,
+        seemsLikeStructuredOrder,
+        sendMessage,
+      }));
+      if (routedResult && routedResult.handled !== false) {
+        return routedResult;
+      }
     }
 
     if (activeOrder && activeOrder.status === ORDER_STATUSES.AWAITING_CUSTOMER_UPDATE) {
@@ -1845,6 +1848,25 @@ function createInboundMessageService({
         type: "payment_reported",
         replyText,
         orderId: updatedOrder.id,
+      };
+    }
+
+    if (
+      activeOrder &&
+      (activeOrder.status === ORDER_STATUSES.AWAITING_PAYMENT ||
+        activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW)
+    ) {
+      const replyText =
+        activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW
+          ? buildPaymentStillUnderReviewMessage()
+          : "To continue this order, please complete payment and reply with: I HAVE PAID. Then share your transfer name/number or order reference.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "payment_flow_reminder",
+        replyText,
+        orderId: activeOrder.id,
       };
     }
 
@@ -2245,6 +2267,18 @@ function createInboundMessageService({
         shouldReply: true,
         type: "guided_fulfillment_prompt_late_parse",
         replyText,
+      };
+    }
+
+    if (activeOrder) {
+      const replyText = buildActiveOrderExistsMessage(activeOrder);
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "active_order_state_preserved",
+        replyText,
+        orderId: activeOrder.id,
       };
     }
 

@@ -113,24 +113,26 @@ function createGuidedSessionRouter({
     }
 
     if (session.state === flowStates.AWAITING_ITEM) {
-      // AI-first: Let LLM decide if this is a question, recommendation request, or item selection
-      const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
-      const llmResult = await chatOrchestrator.maybeHandleWithLlm({
-        restaurantId,
-        normalized,
-        restaurant,
-        menuItems,
-        sendMessage,
-        allowGuidedFlow: false,
-        activeOrder: null,
-        sessionState: session,
-      });
+      // In guided ordering, keep parsing deterministic; use LLM only for clear question-style chat.
+      if (looksLikeQuestion(lower, normalized.text)) {
+        const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+        const llmResult = await chatOrchestrator.maybeHandleWithLlm({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+          allowGuidedFlow: false,
+          activeOrder: null,
+          sessionState: session,
+        });
 
-      if (llmResult && llmResult.handled !== false) {
-        return llmResult;
+        if (llmResult && llmResult.handled !== false) {
+          return llmResult;
+        }
       }
 
-      // Fallback: Try to resolve as item selection if LLM didn't handle it
+      // Primary path: resolve requested items deterministically.
       const {
         matched: requestedMatched,
         unavailable: requestedUnavailable,
@@ -273,16 +275,13 @@ function createGuidedSessionRouter({
 
       const selectedItem = resolveMenuSelection(menuItems, normalized.text);
       if (!selectedItem) {
-        // LLM was already called at the start, so just show menu again as fallback
-        const replyText = buildMenuWelcome(
-          menuItems,
-          String(session.restaurantName || "").trim()
-        );
+        const replyText =
+          "I didn't catch a valid item from your message. Please send item names from the menu, for example: 1 chapman and 2 fried rice.";
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
           handled: true,
           shouldReply: true,
-          type: "guided_invalid_item",
+          type: "guided_item_clarification",
           replyText,
         };
       }
