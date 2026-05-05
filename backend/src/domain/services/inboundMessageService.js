@@ -535,6 +535,35 @@ function looksLikeFulfillmentChange(lower) {
   );
 }
 
+function looksLikeOrderRestart(lower, rawText) {
+  const text = String(rawText || "").trim().toLowerCase();
+  // Detect phrases like "i meant", "i mean", "change to", "actually", "sorry", "i want" followed by item names
+  const restartPhrases = [
+    "i meant",
+    "i mean",
+    "actually i want",
+    "sorry i want",
+    "sorry",
+    "change it to",
+    "change to",
+    "make it",
+    "can you change",
+    "i want",
+    "restart",
+    "start over",
+    "cancel this",
+    "forget this",
+    "clear order",
+    "new order",
+    "reset",
+    "edit",
+    "modify",
+    "instead of",
+    "not this",
+  ];
+  return restartPhrases.some((phrase) => text.includes(phrase));
+}
+
 function createInboundMessageService({
   inboundEventRepo,
   menuService,
@@ -912,6 +941,7 @@ function createInboundMessageService({
     looksLikeAddIntent,
     looksLikeRemoveIntent,
     looksLikeFulfillmentChange,
+    looksLikeOrderRestart,
     mergeMatchedItems,
     removeMatchedItems,
     buildGuidedOrderConfirmedMessage,
@@ -2437,4 +2467,5 @@ function createInboundMessageService({
 module.exports = {
   createInboundMessageService,
   looksLikeRecommendationRequest,
+  looksLikeOrderRestart,
 };

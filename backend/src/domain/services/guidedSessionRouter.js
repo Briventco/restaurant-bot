@@ -23,6 +23,7 @@ function createGuidedSessionRouter({
   looksLikeAddIntent,
   looksLikeRemoveIntent,
   looksLikeFulfillmentChange,
+  looksLikeOrderRestart,
   mergeMatchedItems,
   removeMatchedItems,
   buildGuidedOrderConfirmedMessage,
@@ -444,6 +445,24 @@ function createGuidedSessionRouter({
     }
 
     if (session.state === flowStates.AWAITING_QUANTITY) {
+      // Check if user wants to restart/change their order
+      if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+        const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_order_restart",
+          replyText,
+        };
+      }
+
       const quantity = toPositiveInteger(normalized.text);
       if (!quantity) {
         const replyText = "Please reply with a valid quantity, for example: 2";
@@ -488,6 +507,25 @@ function createGuidedSessionRouter({
       const inlineFulfillmentType = extractInlineFulfillmentType(normalized.text);
       const quantityEdit = extractQuantityEditIntent(normalized.text);
       const sessionMatched = buildMatchedFromSession(session);
+
+      // Check if user wants to restart/change their order
+      if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
+        // Clear session and let them start fresh
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+        const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_order_restart",
+          replyText,
+        };
+      }
 
       if (lower === "d" || lower === "delivery" || inlineFulfillmentType === "delivery") {
         fulfillmentType = "delivery";
@@ -585,6 +623,24 @@ function createGuidedSessionRouter({
     }
 
     if (session.state === flowStates.AWAITING_ADDRESS) {
+      // Check if user wants to restart/change their order
+      if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+        const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_order_restart",
+          replyText,
+        };
+      }
+
       const address = String(normalized.text || "").trim();
       const lowerAddress = normalizeText(address);
       const isNonAddress =
@@ -644,6 +700,24 @@ function createGuidedSessionRouter({
           ? extractInlineAddress(normalized.text)
           : "";
       const lowerText = normalizeText(normalized.text);
+
+      // Check if user wants to restart/change their order
+      if (looksLikeOrderRestart && looksLikeOrderRestart(lowerText, normalized.text)) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+        const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_order_restart",
+          replyText,
+        };
+      }
 
       if (looksLikeAddIntent(lowerText) || looksLikeRemoveIntent(lowerText) || looksLikeFulfillmentChange(lowerText)) {
         const { matched: requestedMatched } = await orderService.resolveRequestedItems({
