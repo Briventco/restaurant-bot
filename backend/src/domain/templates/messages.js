@@ -58,7 +58,9 @@ function buildCartSummaryText({ matched, itemName, quantity, total }) {
     return buildOrderSummaryLineItems(matched);
   }
 
-  return `${quantity} x ${itemName} = N${total}`;
+  const safeName = String(itemName || "").trim() || "your item";
+  const safeQty = Number(quantity) || 0;
+  return `${safeQty} x ${safeName} = N${Number(total) || 0}`;
 }
 
 function buildOrderReceivedMessage({ matched, total, unavailable }) {

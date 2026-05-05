@@ -100,7 +100,7 @@ function createRuleBasedRouter({
       };
     }
 
-    const replyText = buildConversationalFallbackReply(restaurant.name);
+    const replyText = buildConversationalFallbackReply(restaurant && restaurant.name ? restaurant.name : "");
     await sendText(sendMessage, normalized.channelCustomerId, replyText);
     return {
       handled: true,

@@ -1456,9 +1456,13 @@ function createInboundMessageService({
       !looksLikeQuestion(lower, incomingMessage);
 
     if (activeOrder && incomingMessage.trim()) {
-      await orderService.logInboundMessage(activeOrder, incomingMessage, {
-        providerMessageId,
-      });
+      try {
+        await orderService.logInboundMessage(activeOrder, incomingMessage, {
+          providerMessageId,
+        });
+      } catch (logErr) {
+        logger.error("[inbound] logInboundMessage failed — non-fatal:", { error: String(logErr && logErr.message || logErr) });
+      }
     }
 
     if (!incomingMessage.trim()) {
@@ -1537,7 +1541,7 @@ function createInboundMessageService({
       }
     }
 
-    if (lower === "cancel") {
+    if (lower === "cancel" || lower.startsWith("cancel ")) {
       if (activeOrder) {
         const updatedOrder = await orderService.transitionOrderStatus({
           restaurantId,
@@ -1582,6 +1586,25 @@ function createInboundMessageService({
         handled: true,
         shouldReply: true,
         type: "cancel_noop",
+        replyText,
+      };
+    }
+
+    if (looksLikeRecommendationRequest(lower) && !existingSession) {
+      const menuItems = await timedDb("listAvailableMenuItemsCached_recommendation", () =>
+        listAvailableMenuItemsCached(restaurantId)
+      );
+      const availableItems = (menuItems || []).filter((item) => item.available);
+      const sorted = [...availableItems].sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+      const availableText = availableItems.map((item) => `${item.name} (N${item.price})`).join(", ");
+      const replyText = sorted.length
+        ? `I'd recommend ${sorted[0].name} at N${sorted[0].price}. We also have ${availableText}.`
+        : "I don't have any available items listed right now.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "recommendation_direct",
         replyText,
       };
     }
@@ -2297,14 +2320,11 @@ function createInboundMessageService({
         const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm", () =>
           listAvailableMenuItemsCached(restaurantId)
         );
-        const restaurantForLlm = await timedDb("getRestaurantById_llm", () =>
-          restaurantRepo.getRestaurantById(restaurantId)
-        );
 
         const llmResult = await timedRouter(() => chatOrchestrator.maybeHandleWithLlm({
           restaurantId,
           normalized,
-          restaurant: restaurantForLlm,
+          restaurant,
           menuItems: menuItemsForLlm,
           sendMessage,
           activeOrder,

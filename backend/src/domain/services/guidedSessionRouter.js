@@ -586,7 +586,17 @@ function createGuidedSessionRouter({
 
     if (session.state === flowStates.AWAITING_ADDRESS) {
       const address = String(normalized.text || "").trim();
-      if (!address) {
+      const lowerAddress = normalizeText(address);
+      const isNonAddress =
+        !address ||
+        address.length < 4 ||
+        new Set([
+          "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+          "thanks", "thank you", "thank u", "ok", "okay", "okk", "alright", "alr",
+          "yes", "no", "y", "n", "sure", "nice", "great", "good",
+        ]).has(lowerAddress);
+
+      if (isNonAddress) {
         const replyText = buildAddressPrompt();
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
