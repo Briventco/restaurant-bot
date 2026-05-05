@@ -9,6 +9,7 @@ function createRuleBasedRouter({
   isAcknowledgementText,
   looksLikeNewOrderAttempt,
   looksLikeQuestion,
+  looksLikeRecommendationRequest,
   buildGreetingMessage,
   buildStockAvailabilityMessage,
   buildQuestionFallbackReply,
@@ -27,6 +28,33 @@ function createRuleBasedRouter({
     seemsLikeStructuredOrder,
     sendMessage,
   }) {
+    // Handle recommendation requests early before they get misclassified by LLM
+    if (looksLikeRecommendationRequest && looksLikeRecommendationRequest(lower)) {
+      const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+      const availableItems = menuItems.filter((item) => item.available);
+      const sorted = [...availableItems].sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+      const availableText = availableItems.map((item) => `${item.name} (N${item.price})`).join(", ");
+      let replyText;
+      if (!sorted.length) {
+        replyText = "I don't have any available items listed right now.";
+      } else {
+        replyText = `I'd recommend ${sorted[0].name} at N${sorted[0].price}. We also have ${availableText}.`;
+      }
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "recommendation_direct",
+        replyText,
+        decision: {
+          handler: "rule_recommendation_direct",
+          intent: "recommendation",
+          confidence: 1,
+          reason: "detected_recommendation_keyword",
+        },
+      };
+    }
+
     // Let downstream explicit structured order or transactional logic handle these cases
     if (
       hasActiveOrder ||

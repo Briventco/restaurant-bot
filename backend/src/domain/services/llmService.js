@@ -120,6 +120,8 @@ function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationC
     "'Rice' (single word) → intent: place_order (assuming they want to order rice), ask for confirmation",
     "'I'm hungry' → intent: greeting + offer menu, confidence: 0.8",
     "'What's good?' → intent: recommendation, confidence: 0.85",
+    "'Can I get recommendations', 'Give me recomendations', 'I want recomendation', 'Any recommendations?' → intent: recommendation, confidence: 0.95",
+    "'Can I get rice', 'Give me amala', 'I want jollof' → intent: place_order (these are direct ordering phrases, NOT recommendations)",
     "'How much is rice' → intent: price_question, confidence: 0.9",
     "'Do you have amala' → intent: availability_question, confidence: 0.9",
     "'Do you deliver to Yaba' → intent: delivery_question, confidence: 0.9",

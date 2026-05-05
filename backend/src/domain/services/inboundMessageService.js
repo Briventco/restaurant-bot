@@ -187,6 +187,14 @@ function isMenuOrStockQuestion(lower) {
   );
 }
 
+function looksLikeRecommendationRequest(lower) {
+  return (
+    lower.includes("recommend") ||
+    lower.includes("recomend") ||
+    lower.includes("suggest")
+  );
+}
+
 function looksLikeNewOrderAttempt(lower) {
   return (
     lower.includes("i want") ||
@@ -407,7 +415,7 @@ function buildQuestionFallbackReply(lower, rawText, menuItems) {
       : "I don't have any available items listed right now.";
   }
 
-  if (lower.includes("recommend")) {
+  if (looksLikeRecommendationRequest(lower)) {
     const sorted = [...availableItems].sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
     if (!sorted.length) {
       return "I don't have any available items listed right now.";
@@ -874,6 +882,7 @@ function createInboundMessageService({
     isAcknowledgementText,
     looksLikeNewOrderAttempt,
     looksLikeQuestion,
+    looksLikeRecommendationRequest,
     buildGreetingMessage,
     buildStockAvailabilityMessage,
     buildQuestionFallbackReply,
@@ -2407,4 +2416,5 @@ function createInboundMessageService({
 
 module.exports = {
   createInboundMessageService,
+  looksLikeRecommendationRequest,
 };
