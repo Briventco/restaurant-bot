@@ -1609,7 +1609,11 @@ function createInboundMessageService({
       }
     }
 
-    if (String(llmDecision.intent || "").trim().toLowerCase() === "cancel") {
+    const isExplicitCancelCommand =
+      lower === "cancel" ||
+      lower.startsWith("cancel ") ||
+      lower === "cancel order";
+    if (isExplicitCancelCommand) {
       if (activeOrder) {
         const updatedOrder = await orderService.transitionOrderStatus({
           restaurantId,

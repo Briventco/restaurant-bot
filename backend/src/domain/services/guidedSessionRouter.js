@@ -35,7 +35,10 @@ function createGuidedSessionRouter({
     }
 
     const patterns = [
+      /\bx\s*(\d+)\b/i,
       /\bmake(?:\s+\w+){0,3}\s+(\d+)\s*(?:x|portion|portions|plate|plates)?\b/i,
+      /\bmake(?:\s+\w+){0,3}\s+x\s*(\d+)\b/i,
+      /\bmake it\s+(\d+)\b/i,
       /\b(?:to|be)\s+(\d+)\s*(?:x|portion|portions|plate|plates)\b/i,
       /\b(\d+)\s*(?:x|portion|portions|plate|plates)\b/i,
     ];
@@ -951,6 +954,46 @@ function createGuidedSessionRouter({
           type: "guided_cancelled",
           replyText,
         };
+      }
+
+      const quantityEditAtConfirm = extractQuantityEditIntent(normalized.text);
+      if (quantityEditAtConfirm) {
+        const updatedMatched =
+          applyTargetedQuantityEdit(sessionMatched, normalized.text, quantityEditAtConfirm, normalizeText) ||
+          applyQuantityToSessionMatched(sessionMatched, session, quantityEditAtConfirm);
+        if (updatedMatched && updatedMatched.length) {
+          const nextTotal = calculateMatchedTotal(updatedMatched);
+          const nextFulfillmentType = String(session.fulfillmentType || "").trim().toLowerCase() || "pickup";
+          const nextAddress =
+            nextFulfillmentType === "delivery" ? String(session.deliveryAddress || "").trim() : "";
+          await conversationSessionRepo.upsertSession(
+            restaurantId,
+            normalized.channel,
+            normalized.channelCustomerId,
+            {
+              matched: updatedMatched,
+              total: nextTotal,
+              itemId: "",
+              itemName: "",
+              itemPrice: 0,
+              quantity: 0,
+            }
+          );
+          const replyText = buildGuidedConfirmPrompt({
+            matched: updatedMatched,
+            total: nextTotal,
+            fulfillmentType: nextFulfillmentType,
+            address: nextAddress,
+            prefix: "Got it, I have updated your order.",
+          });
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_confirmation_updated",
+            replyText,
+          };
+        }
       }
 
       if (lower !== "yes" && lower !== "y") {
