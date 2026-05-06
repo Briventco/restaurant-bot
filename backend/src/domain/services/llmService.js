@@ -72,6 +72,36 @@ function normalizeDecision(raw) {
   };
 }
 
+function buildSessionMemoryContext(sessionState) {
+  const state = sessionState && typeof sessionState === "object" ? sessionState : {};
+  const sessionStateLabel = String(state.state || "none").trim() || "none";
+  const summary = String(state.conversationSummary || "").trim();
+  const lastIntent = String(state.llmLastIntent || "").trim().toLowerCase();
+  const lastEntities =
+    state.llmLastEntities && typeof state.llmLastEntities === "object"
+      ? state.llmLastEntities
+      : null;
+
+  const parts = [`Session state: ${sessionStateLabel}`];
+  if (summary) {
+    parts.push(`Session memory summary: ${summary}`);
+  }
+  if (lastIntent) {
+    parts.push(`Last LLM intent: ${lastIntent}`);
+  }
+  if (lastEntities) {
+    const items = Array.isArray(lastEntities.items) ? lastEntities.items.join(", ") : "";
+    const fulfillmentType = String(lastEntities.fulfillmentType || "").trim();
+    const location = String(lastEntities.location || "").trim();
+    const budget = Number(lastEntities.budget || 0);
+    parts.push(
+      `Last entities: items=${items || "none"}; fulfillmentType=${fulfillmentType || "none"}; location=${location || "none"}; budget=${budget > 0 ? budget : 0}`
+    );
+  }
+
+  return parts.join(" | ");
+}
+
 function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }) {
   const restaurantName = String((restaurant && restaurant.name) || "the restaurant").trim();
   const menuText = (menuItems || [])
@@ -84,7 +114,7 @@ function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationC
     : "No active order";
   
   const sessionContext = sessionState
-    ? `Session state: ${sessionState.state || "none"}`
+    ? buildSessionMemoryContext(sessionState)
     : "No active session";
 
   return [
@@ -107,6 +137,8 @@ function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationC
     "If the customer asks for an item that is not on the available menu, politely say it is not currently available and mention what is available instead.",
     "If the customer asks for a recommendation, base it only on the available menu.",
     "If the customer asks something you do not know, do not guess. Briefly say what you do know, offer helpful alternatives, and keep the conversation focused on the restaurant.",
+    "Grounding rule: only use facts present in Available menu, Active order, Session context, or Recent conversation.",
+    "If a fact is missing, ask a short clarification instead of inventing details.",
     "Only redirect to the menu when the customer clearly wants to order or explicitly asks for the menu.",
     "For completely off-topic questions, politely stay focused on the restaurant and offer help with the menu, ordering, availability, or delivery.",
     "",

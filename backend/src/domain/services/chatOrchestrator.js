@@ -66,6 +66,83 @@ function normalizeEntities(entities) {
   };
 }
 
+function isMeaningfulText(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.length <= 2) {
+    return false;
+  }
+  const trivial = new Set([
+    "hi",
+    "hey",
+    "hello",
+    "yo",
+    "ok",
+    "okay",
+    "kk",
+    "thanks",
+    "thank you",
+    "nice",
+    "great",
+  ]);
+  return !trivial.has(normalized);
+}
+
+function updateSessionMemory({ previousTurns, previousSummary, userText, assistantText }) {
+  const turns = Array.isArray(previousTurns)
+    ? previousTurns.filter((item) => item && typeof item === "object")
+    : [];
+  const nextUser = String(userText || "").trim();
+  const nextAssistant = String(assistantText || "").trim();
+  const nextTurns = [...turns];
+
+  if (isMeaningfulText(nextUser) && isMeaningfulText(nextAssistant)) {
+    nextTurns.push({ user: nextUser, assistant: nextAssistant });
+  }
+
+  const compressedTurns = nextTurns.slice(-4);
+  const fromTurns = compressedTurns
+    .map((turn) => `User: ${String(turn.user || "").trim()} | Assistant: ${String(turn.assistant || "").trim()}`)
+    .join(" || ");
+  const summary = String(fromTurns || previousSummary || "").slice(-600);
+
+  return {
+    turns: compressedTurns,
+    summary,
+  };
+}
+
+function enforceGroundedReply({ replyText, intent, menuItems }) {
+  const safeReply = String(replyText || "").trim();
+  if (!safeReply) {
+    return "";
+  }
+
+  const paymentOutcomeClaims = /(payment|transfer).*(confirmed|received|approved|verified)/i;
+  if (paymentOutcomeClaims.test(safeReply)) {
+    return "I cannot confirm payment status here yet. If you have paid, please share your payment reference and the team will verify shortly.";
+  }
+
+  const forbiddenOutcomeClaims = /(order\s+confirmed|order\s+accepted|payment\s+confirmed|paid\s+and\s+confirmed|finalized)/i;
+  if (forbiddenOutcomeClaims.test(safeReply)) {
+    return "";
+  }
+
+  if (["recommendation", "availability_question", "price_question", "stock_request"].includes(String(intent || "").trim())) {
+    const available = (menuItems || [])
+      .filter((item) => item.available)
+      .map((item) => String(item.name || "").trim())
+      .filter(Boolean);
+    if (!available.length) {
+      return "I do not have current stock details right now. Please try again shortly.";
+    }
+  }
+
+  return safeReply;
+}
+
 function buildEntityOrderConfirmation(matchedItems, fulfillmentType) {
   if (!Array.isArray(matchedItems) || !matchedItems.length) {
     return "";
@@ -115,6 +192,7 @@ function createChatOrchestrator({
   flowStates,
   sendText,
   llmTimeoutMs = 15000,
+  logger = null,
 }) {
   async function beginGuidedOrderingFlow({
     restaurantId,
@@ -267,6 +345,47 @@ function createChatOrchestrator({
       "cancel",
     ]);
 
+    async function persistLlmMemory(lastReplyText) {
+      if (!conversationSessionRepo) {
+        return;
+      }
+      const safeEntities = {
+        ...entities,
+        items: matchLlmEntitiesToMenu(menuItems, entities).map((item) => item.name),
+      };
+      const memory = updateSessionMemory({
+        previousTurns: sessionState && sessionState.llmMemoryTurns,
+        previousSummary: sessionState && sessionState.conversationSummary,
+        userText: normalized.text,
+        assistantText: lastReplyText,
+      });
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          llmLastIntent: String(decision.intent || "unknown"),
+          llmLastConfidence: Number(decision.confidence || 0),
+          llmLastEntities: safeEntities,
+          llmMemoryTurns: memory.turns,
+          conversationSummary: memory.summary,
+        }
+      );
+    }
+
+    if (logger && typeof logger.info === "function") {
+      const turnsCount = Array.isArray(sessionState && sessionState.llmMemoryTurns)
+        ? sessionState.llmMemoryTurns.length
+        : 0;
+      logger.info("[LLM_CONTEXT]", {
+        session: `${restaurantId}:${normalized.channel}:${normalized.channelCustomerId}`,
+        summary: String((sessionState && sessionState.conversationSummary) || ""),
+        intent: String((sessionState && sessionState.llmLastIntent) || ""),
+        entities: sessionState && sessionState.llmLastEntities ? sessionState.llmLastEntities : {},
+        turns: turnsCount,
+      });
+    }
+
     async function getParsedMatchedItems() {
       if (parsedMatchedLoaded) {
         return parsedMatchedCache;
@@ -310,12 +429,21 @@ function createChatOrchestrator({
           break;
         case "answer_question":
           if (decision.replyText) {
-            await sendText(sendMessage, normalized.channelCustomerId, decision.replyText);
+            const groundedReply = enforceGroundedReply({
+              replyText: decision.replyText,
+              intent: decision.intent,
+              menuItems,
+            });
+            if (!groundedReply) {
+              break;
+            }
+            await sendText(sendMessage, normalized.channelCustomerId, groundedReply);
+            await persistLlmMemory(groundedReply);
             return {
               handled: true,
               shouldReply: true,
               type: "llm_answer_question",
-              replyText: decision.replyText,
+              replyText: groundedReply,
               decision: {
                 handler: "llm_answer_question",
                 intent: decision.intent,
@@ -329,12 +457,21 @@ function createChatOrchestrator({
           break;
         case "handle_greeting":
           if (decision.replyText) {
-            await sendText(sendMessage, normalized.channelCustomerId, decision.replyText);
+            const groundedReply = enforceGroundedReply({
+              replyText: decision.replyText,
+              intent: decision.intent,
+              menuItems,
+            });
+            if (!groundedReply) {
+              break;
+            }
+            await sendText(sendMessage, normalized.channelCustomerId, groundedReply);
+            await persistLlmMemory(groundedReply);
             return {
               handled: true,
               shouldReply: true,
               type: "llm_greeting",
-              replyText: decision.replyText,
+              replyText: groundedReply,
               decision: {
                 handler: "llm_greeting",
                 intent: decision.intent,
@@ -414,6 +551,7 @@ function createChatOrchestrator({
       const confirmationText = buildEntityOrderConfirmation(prematched, entities.fulfillmentType);
       if (confirmationText) {
         await sendText(sendMessage, normalized.channelCustomerId, confirmationText);
+        await persistLlmMemory(confirmationText);
         return {
           handled: true,
           shouldReply: true,
@@ -474,12 +612,21 @@ function createChatOrchestrator({
         "off_topic",
       ].includes(decision.intent)
     ) {
-      await sendText(sendMessage, normalized.channelCustomerId, decision.replyText);
+      const groundedReply = enforceGroundedReply({
+        replyText: decision.replyText,
+        intent: decision.intent,
+        menuItems,
+      });
+      if (!groundedReply) {
+        return null;
+      }
+      await sendText(sendMessage, normalized.channelCustomerId, groundedReply);
+      await persistLlmMemory(groundedReply);
       return {
         handled: true,
         shouldReply: true,
         type: `llm_${decision.intent}`,
-        replyText: decision.replyText,
+        replyText: groundedReply,
         decision: {
           handler: "llm_direct",
           intent: String(decision.intent || "unknown"),
@@ -513,6 +660,7 @@ function createChatOrchestrator({
         replyText = `Thanks. For delivery to ${entities.location}, do you want to order now or check available items first?`;
       }
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      await persistLlmMemory(replyText);
       return {
         handled: true,
         shouldReply: true,
@@ -535,12 +683,18 @@ function createChatOrchestrator({
       decision.replyText ||
       buildClarificationReply(decision.intent, menuItems) ||
       buildAssistantFallbackReply(menuItems);
-    await sendText(sendMessage, normalized.channelCustomerId, fallbackReply);
+    const groundedFallback = enforceGroundedReply({
+      replyText: fallbackReply,
+      intent: decision.intent,
+      menuItems,
+    }) || buildClarificationReply(decision.intent, menuItems);
+    await sendText(sendMessage, normalized.channelCustomerId, groundedFallback);
+    await persistLlmMemory(groundedFallback);
     return {
       handled: true,
       shouldReply: true,
       type: `llm_fallback_${decision.intent || "unknown"}`,
-      replyText: fallbackReply,
+      replyText: groundedFallback,
       decision: {
         handler: "llm_fallback",
         intent: String(decision.intent || "unknown"),

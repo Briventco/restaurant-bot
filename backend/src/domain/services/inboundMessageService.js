@@ -892,6 +892,7 @@ function createInboundMessageService({
     flowStates: FLOW_STATES,
     sendText,
     llmTimeoutMs: 15000,
+    logger,
   });
   const aiOrchestrator = createAiOrchestrator({
     llmService,
