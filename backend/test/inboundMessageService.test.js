@@ -260,6 +260,36 @@ test("acknowledgement message keeps active order context", async () => {
   assert.match(result.replyText, /CANCEL/i);
 });
 
+test("generic order intent starts guided menu instead of invalid order", async () => {
+  const service = buildService({
+    menuService: {
+      listAvailableMenuItems: async () => [
+        { id: "m1", name: "Jollof Rice", price: 700, available: true },
+        { id: "m2", name: "Chicken", price: 2000, available: true },
+      ],
+    },
+    orderService: {
+      resolveRequestedItems: async () => ({ matched: [] }),
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000099@c.us",
+      customerPhone: "+234000000099",
+      text: "I want to order food",
+      providerMessageId: "msg-generic-order-1",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.shouldReply, true);
+  assert.equal(result.type, "guided_menu");
+  assert.equal(result.decision.handler, "guided_flow_start");
+});
+
 test("decision metadata is attached for guided menu flow", async () => {
   const service = buildService();
 

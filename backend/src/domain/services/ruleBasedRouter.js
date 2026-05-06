@@ -4,14 +4,7 @@ function createRuleBasedRouter({
   shouldThrottleMenuReply,
   chatOrchestrator,
   sendText,
-  isGreetingText,
-  isMenuOrStockQuestion,
-  isAcknowledgementText,
-  looksLikeNewOrderAttempt,
-  looksLikeQuestion,
-  looksLikeRecommendationRequest,
-  buildGreetingMessage,
-  buildStockAvailabilityMessage,
+  llmDirectIntentThreshold = 0.45,
   buildQuestionFallbackReply,
 }) {
   function buildConversationalFallbackReply(restaurantName) {
@@ -21,15 +14,18 @@ function createRuleBasedRouter({
   async function tryHandleConversation({
     restaurantId,
     normalized,
-    lower,
-    incomingMessage,
+    llmDecision,
     hasActiveOrder,
     hasBlockingActiveOrder,
     seemsLikeStructuredOrder,
     sendMessage,
   }) {
-    // Handle recommendation requests early before they get misclassified by LLM
-    if (looksLikeRecommendationRequest && looksLikeRecommendationRequest(lower)) {
+    const decision = llmDecision && typeof llmDecision === "object" ? llmDecision : {};
+    const intent = String(decision.intent || "unknown").trim().toLowerCase();
+    const confidence = Number.isFinite(Number(decision.confidence)) ? Number(decision.confidence) : 0;
+
+    // Use structured LLM intent for recommendation handling.
+    if (intent === "recommendation" && confidence >= llmDirectIntentThreshold) {
       const menuItems = await menuService.listAvailableMenuItems(restaurantId);
       const availableItems = menuItems.filter((item) => item.available);
       const sorted = [...availableItems].sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
@@ -49,17 +45,17 @@ function createRuleBasedRouter({
         decision: {
           handler: "rule_recommendation_direct",
           intent: "recommendation",
-          confidence: 1,
-          reason: "detected_recommendation_keyword",
+          confidence: confidence || 1,
+          reason: "llm_intent_recommendation",
         },
       };
     }
 
-    // Let downstream explicit structured order or transactional logic handle these cases
+    // Let downstream deterministic transaction flow handle high-risk intents.
     if (
       hasActiveOrder ||
       hasBlockingActiveOrder ||
-      looksLikeNewOrderAttempt(lower) ||
+      ["place_order", "add_item", "remove_item", "confirm", "cancel"].includes(intent) ||
       seemsLikeStructuredOrder
     ) {
       return null;
@@ -82,9 +78,12 @@ function createRuleBasedRouter({
       return llmResult;
     }
 
-    // Fallback if LLM times out or fails
-    if (looksLikeQuestion(lower, incomingMessage)) {
-      const replyText = buildQuestionFallbackReply(lower, incomingMessage, menuItems);
+    // Fallback based on LLM "question-like" intents.
+    if (
+      ["question", "support", "delivery_question", "price_question", "availability_question", "stock_request"].includes(intent)
+    ) {
+      const fallbackLower = String(normalized && normalized.text ? normalized.text : "").toLowerCase();
+      const replyText = buildQuestionFallbackReply(fallbackLower, normalized.text, menuItems);
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,
@@ -94,8 +93,8 @@ function createRuleBasedRouter({
         decision: {
           handler: "rule_question_fallback",
           intent: "question",
-          confidence: 0.4,
-          reason: "llm_fallback_question",
+          confidence: Math.max(0.35, confidence),
+          reason: "llm_intent_question_fallback",
         },
       };
     }

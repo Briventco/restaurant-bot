@@ -296,42 +296,45 @@ function createChatOrchestrator({
     allowGuidedFlow = true,
     activeOrder = null,
     sessionState = null,
+    precomputedDecision = null,
   }) {
     if (!llmService) {
       return null;
     }
 
     const llmStartedAt = Date.now();
-    let decision;
-    try {
-      decision = await Promise.race([
-        llmService.classifyRestaurantMessage({
-          restaurant,
-          menuItems,
-          messageText: normalized.text,
-          conversationContext: String(normalized.conversationContext || ""),
-          activeOrder,
-          sessionState,
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("llm_timeout")), llmTimeoutMs)
-        ),
-      ]);
-    } catch (_error) {
-      return {
-        handled: false,
-        shouldReply: false,
-        type: "llm_timeout_fallback",
-        decision: {
-          handler: "llm_timeout_fallback",
-          intent: "unknown",
-          confidence: 0,
-          reason: "llm_timeout",
-          metrics: {
-            llm_ms: Date.now() - llmStartedAt,
+    let decision = precomputedDecision;
+    if (!decision) {
+      try {
+        decision = await Promise.race([
+          llmService.classifyRestaurantMessage({
+            restaurant,
+            menuItems,
+            messageText: normalized.text,
+            conversationContext: String(normalized.conversationContext || ""),
+            activeOrder,
+            sessionState,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("llm_timeout")), llmTimeoutMs)
+          ),
+        ]);
+      } catch (_error) {
+        return {
+          handled: false,
+          shouldReply: false,
+          type: "llm_timeout_fallback",
+          decision: {
+            handler: "llm_timeout_fallback",
+            intent: "unknown",
+            confidence: 0,
+            reason: "llm_timeout",
+            metrics: {
+              llm_ms: Date.now() - llmStartedAt,
+            },
           },
-        },
-      };
+        };
+      }
     }
     const entities = normalizeEntities(decision.entities);
     const llmMs = Date.now() - llmStartedAt;

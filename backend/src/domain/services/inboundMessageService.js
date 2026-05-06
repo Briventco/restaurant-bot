@@ -1022,6 +1022,21 @@ function createInboundMessageService({
 
     const incomingMessage = normalized.text || "";
     const lower = normalizeText(incomingMessage);
+    const emptyDecision = {
+      intent: "unknown",
+      confidence: 0,
+      replyText: "",
+      shouldStartGuidedFlow: false,
+      shouldHandleDirectly: false,
+      suggestedAction: "",
+      entities: {
+        items: [],
+        quantity: 0,
+        fulfillmentType: "",
+        location: "",
+        budget: 0,
+      },
+    };
     const [restaurant, existingSession] = await Promise.all([
       timedDb("getRestaurantById", () => restaurantRepo.getRestaurantById(restaurantId)),
       timedDb("getSession", () =>
@@ -1448,6 +1463,30 @@ function createInboundMessageService({
     const hasBlockingActiveOrder =
       activeOrder && CUSTOMER_BLOCKING_ORDER_STATUSES.includes(activeOrder.status);
 
+    let llmDecision = emptyDecision;
+    if (llmService && incomingMessage.trim()) {
+      try {
+        const menuItemsForDecision = await timedDb("listAvailableMenuItemsCached_llm_decision", () =>
+          listAvailableMenuItemsCached(restaurantId)
+        );
+        llmDecision = await timedRouter(() =>
+          Promise.race([
+            llmService.classifyRestaurantMessage({
+              restaurant,
+              menuItems: menuItemsForDecision,
+              messageText: incomingMessage,
+              conversationContext: String(normalized.conversationContext || ""),
+              activeOrder,
+              sessionState: existingSession,
+            }),
+            new Promise((resolve) => setTimeout(() => resolve(emptyDecision), 15000)),
+          ])
+        );
+      } catch (_error) {
+        llmDecision = emptyDecision;
+      }
+    }
+
     if (
       activeOrder &&
       existingSession &&
@@ -1572,7 +1611,7 @@ function createInboundMessageService({
       }
     }
 
-    if (lower === "cancel" || lower.startsWith("cancel ")) {
+    if (String(llmDecision.intent || "").trim().toLowerCase() === "cancel") {
       if (activeOrder) {
         const updatedOrder = await orderService.transitionOrderStatus({
           restaurantId,
@@ -1621,7 +1660,34 @@ function createInboundMessageService({
       };
     }
 
-    if (looksLikeRecommendationRequest(lower) && !existingSession) {
+    // LLM-first routing: classify every normal customer message early.
+    // If LLM can safely handle conversationally, return immediately.
+    // Transactional/high-risk intents are deferred by chatOrchestrator and
+    // continue into deterministic rule/order flows below.
+    if (!isStaffAlertSender && !existingSession) {
+      const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm_first", () =>
+        listAvailableMenuItemsCached(restaurantId)
+      );
+      const llmFirstResult = await timedRouter(() => chatOrchestrator.maybeHandleWithLlm({
+        restaurantId,
+        normalized,
+        restaurant,
+        menuItems: menuItemsForLlm,
+        sendMessage,
+        activeOrder,
+        sessionState: existingSession,
+        precomputedDecision: llmDecision,
+      }));
+      if (llmFirstResult && llmFirstResult.handled !== false) {
+        return llmFirstResult;
+      }
+    }
+
+    if (
+      String(llmDecision.intent || "").trim().toLowerCase() === "recommendation" &&
+      Number(llmDecision.confidence || 0) >= 0.45 &&
+      !existingSession
+    ) {
       const menuItems = await timedDb("listAvailableMenuItemsCached_recommendation", () =>
         listAvailableMenuItemsCached(restaurantId)
       );
@@ -1748,8 +1814,7 @@ function createInboundMessageService({
       const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
         restaurantId,
         normalized,
-        lower,
-        incomingMessage,
+        llmDecision,
         hasActiveOrder: Boolean(activeOrder),
         hasBlockingActiveOrder,
         seemsLikeStructuredOrder,
@@ -2197,6 +2262,19 @@ function createInboundMessageService({
           replyText,
         };
       }
+
+      // Generic intent like "I want to order food" should open guided flow,
+      // not return invalid_order.
+      if (looksLikeNewOrderAttempt(lower) && !matched.length && !selectedItem) {
+        const result = await chatOrchestrator.beginGuidedOrderingFlow({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+        });
+        return result;
+      }
     }
 
     let lateResolvedRequest = null;
@@ -2346,27 +2424,6 @@ function createInboundMessageService({
     }
 
     {
-      // Use LLM only for non-transactional chat once deterministic order logic has had first pass.
-      if (isObviousNonOrderMessage) {
-        const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm", () =>
-          listAvailableMenuItemsCached(restaurantId)
-        );
-
-        const llmResult = await timedRouter(() => chatOrchestrator.maybeHandleWithLlm({
-          restaurantId,
-          normalized,
-          restaurant,
-          menuItems: menuItemsForLlm,
-          sendMessage,
-          activeOrder,
-          sessionState: existingSession,
-        }));
-
-        if (llmResult && llmResult.handled !== false) {
-          return llmResult;
-        }
-      }
-
       if (looksLikeQuestion(lower, incomingMessage)) {
         const menuItems = await timedDb("listAvailableMenuItemsCached_question_fallback", () =>
           listAvailableMenuItemsCached(restaurantId)
