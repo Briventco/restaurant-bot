@@ -85,6 +85,44 @@ function createGuidedSessionRouter({
     return null;
   }
 
+  function applyTargetedQuantityEdit(sessionMatched, rawText, quantity, normalizeTextFn) {
+    if (!Array.isArray(sessionMatched) || !sessionMatched.length) {
+      return null;
+    }
+
+    const text = String(rawText || "").trim();
+    if (!text || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+      return null;
+    }
+    const lower = normalizeTextFn(text);
+
+    const targetIndex = sessionMatched.findIndex((item) => {
+      const name = String(item && item.name ? item.name : "").trim();
+      if (!name) {
+        return false;
+      }
+      const normalizedName = normalizeTextFn(name);
+      if (normalizedName && lower.includes(normalizedName)) {
+        return true;
+      }
+
+      const tokens = normalizedName.split(/\s+/).filter((token) => token.length >= 4);
+      return tokens.some((token) => lower.includes(token));
+    });
+
+    if (targetIndex < 0) {
+      return null;
+    }
+
+    const updated = sessionMatched.map((item) => ({ ...item }));
+    const target = updated[targetIndex];
+    const safeQuantity = Math.max(1, Math.round(Number(quantity)));
+    const price = Number(target.price || 0);
+    target.quantity = safeQuantity;
+    target.subtotal = price * safeQuantity;
+    return updated;
+  }
+
   async function handleGuidedSession({
     restaurantId,
     normalized,
@@ -534,6 +572,41 @@ function createGuidedSessionRouter({
       }
 
       if (!fulfillmentType) {
+        if (quantityEdit) {
+          const updatedMatched =
+            applyTargetedQuantityEdit(sessionMatched, normalized.text, quantityEdit, normalizeText) ||
+            applyQuantityToSessionMatched(sessionMatched, session, quantityEdit);
+
+          if (updatedMatched && updatedMatched.length) {
+            const updatedTotal = calculateMatchedTotal(updatedMatched);
+            await conversationSessionRepo.upsertSession(
+              restaurantId,
+              normalized.channel,
+              normalized.channelCustomerId,
+              {
+                matched: updatedMatched,
+                total: updatedTotal,
+                itemId: "",
+                itemName: "",
+                itemPrice: 0,
+                quantity: 0,
+              }
+            );
+            const replyText = buildDeliveryOrPickupPrompt({
+              matched: updatedMatched,
+              total: updatedTotal,
+              prefix: "Got it, I have updated your order.",
+            });
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return {
+              handled: true,
+              shouldReply: true,
+              type: "guided_quantity_updated_awaiting_fulfillment",
+              replyText,
+            };
+          }
+        }
+
         const replyText = "Reply D for delivery or P for pickup.";
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
