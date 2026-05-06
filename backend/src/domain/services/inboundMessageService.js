@@ -537,18 +537,16 @@ function looksLikeFulfillmentChange(lower) {
 
 function looksLikeOrderRestart(lower, rawText) {
   const text = String(rawText || "").trim().toLowerCase();
-  // Detect phrases like "i meant", "i mean", "change to", "actually", "sorry", "i want" followed by item names
+  // Detect explicit reset intents only. Keep this conservative so normal edits
+  // like "make it 3" do not accidentally reset the flow.
   const restartPhrases = [
     "i meant",
     "i mean",
     "actually i want",
     "sorry i want",
-    "sorry",
     "change it to",
     "change to",
-    "make it",
     "can you change",
-    "i want",
     "restart",
     "start over",
     "cancel this",

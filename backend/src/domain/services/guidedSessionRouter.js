@@ -314,6 +314,23 @@ function createGuidedSessionRouter({
 
       const selectedItem = resolveMenuSelection(menuItems, normalized.text);
       if (!selectedItem) {
+        // If user is not providing an item, allow conversational LLM handling
+        // instead of repeatedly forcing item clarification.
+        const restaurant = await restaurantRepo.getRestaurantById(restaurantId);
+        const llmResult = await chatOrchestrator.maybeHandleWithLlm({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+          allowGuidedFlow: false,
+          activeOrder: null,
+          sessionState: session,
+        });
+        if (llmResult && llmResult.handled !== false) {
+          return llmResult;
+        }
+
         const replyText =
           "I didn't catch a valid item from your message. Please send item names from the menu, for example: 1 chapman and 2 fried rice.";
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
@@ -546,25 +563,6 @@ function createGuidedSessionRouter({
       const quantityEdit = extractQuantityEditIntent(normalized.text);
       const sessionMatched = buildMatchedFromSession(session);
 
-      // Check if user wants to restart/change their order
-      if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
-        // Clear session and let them start fresh
-        await conversationSessionRepo.clearSession(
-          restaurantId,
-          normalized.channel,
-          normalized.channelCustomerId
-        );
-        const menuItems = await menuService.listAvailableMenuItems(restaurantId);
-        const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(menuItems);
-        await sendText(sendMessage, normalized.channelCustomerId, replyText);
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "guided_order_restart",
-          replyText,
-        };
-      }
-
       if (lower === "d" || lower === "delivery" || inlineFulfillmentType === "delivery") {
         fulfillmentType = "delivery";
       } else if (lower === "p" || lower === "pickup" || inlineFulfillmentType === "pickup") {
@@ -605,6 +603,25 @@ function createGuidedSessionRouter({
               replyText,
             };
           }
+        }
+
+        // Check if user wants to restart/change their order only after
+        // quantity edits were given a chance.
+        if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
+          await conversationSessionRepo.clearSession(
+            restaurantId,
+            normalized.channel,
+            normalized.channelCustomerId
+          );
+          const menuItems = await menuService.listAvailableMenuItems(restaurantId);
+          const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(menuItems);
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_order_restart",
+            replyText,
+          };
         }
 
         const replyText = "Reply D for delivery or P for pickup.";
