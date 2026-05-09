@@ -1613,7 +1613,7 @@ function createInboundMessageService({
       lower === "cancel" ||
       lower.startsWith("cancel ") ||
       lower === "cancel order";
-    if (isExplicitCancelCommand) {
+    if (isExplicitCancelCommand && !existingSession) {
       if (activeOrder) {
         const updatedOrder = await orderService.transitionOrderStatus({
           restaurantId,
@@ -1766,6 +1766,7 @@ function createInboundMessageService({
         normalized,
         session: existingSession,
         customer,
+        llmDecision,
         providerMessageId,
         sendMessage,
       }));

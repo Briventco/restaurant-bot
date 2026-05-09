@@ -28,6 +28,41 @@ function createGuidedSessionRouter({
   removeMatchedItems,
   buildGuidedOrderConfirmedMessage,
 }) {
+  function isMenuIntent(lower) {
+    const text = String(lower || "").trim();
+    return (
+      text === "menu" ||
+      text === "menuu" ||
+      text === "start" ||
+      text.includes("order again") ||
+      text.includes("start again")
+    );
+  }
+
+  function isStopOrCancelIntent(lower) {
+    const text = String(lower || "").trim();
+    return (
+      text === "cancel" ||
+      text === "cancel order" ||
+      text.startsWith("cancel ") ||
+      text === "stop" ||
+      text === "stope" ||
+      text.includes("stop nah") ||
+      text.includes("never mind") ||
+      text.includes("nevermind")
+    );
+  }
+
+  function isAffirmativeIntent(lower) {
+    const text = String(lower || "").trim();
+    return ["yes", "y", "yeah", "yep", "confirm", "go ahead"].includes(text);
+  }
+
+  function isNegativeIntent(lower) {
+    const text = String(lower || "").trim();
+    return ["no", "n", "nope", "nah", "cancel", "stop"].includes(text);
+  }
+
   function extractQuantityEditIntent(rawText) {
     const text = String(rawText || "").trim();
     if (!text) {
@@ -131,10 +166,51 @@ function createGuidedSessionRouter({
     normalized,
     session,
     customer,
+    llmDecision = null,
     providerMessageId,
     sendMessage,
   }) {
+    function resolveAiRescueAction() {
+      const decision = llmDecision && typeof llmDecision === "object" ? llmDecision : null;
+      if (!decision) {
+        return "";
+      }
+
+      const intent = String(decision.intent || "").trim().toLowerCase();
+      const suggestedAction = String(decision.suggestedAction || "").trim().toLowerCase();
+      const confidence = Number(decision.confidence || 0);
+      const entities = decision.entities && typeof decision.entities === "object" ? decision.entities : {};
+      const fulfillmentType = String(entities.fulfillmentType || "").trim().toLowerCase();
+
+      if (fulfillmentType === "delivery") {
+        return "delivery";
+      }
+      if (fulfillmentType === "pickup") {
+        return "pickup";
+      }
+
+      if (confidence < 0.6) {
+        return "";
+      }
+
+      if (intent === "confirm") {
+        return "confirm";
+      }
+      if (intent === "cancel") {
+        return "cancel";
+      }
+      if (intent === "menu_request" || suggestedAction === "show_menu" || suggestedAction === "start_guided_flow") {
+        return "menu";
+      }
+      if (intent === "add_item" || intent === "remove_item" || suggestedAction === "update_order") {
+        return "edit";
+      }
+
+      return "";
+    }
+
     const lower = normalizeText(normalized.text);
+    const aiRescueAction = resolveAiRescueAction();
     const menuItems = await menuService.listAvailableMenuItems(restaurantId);
 
     if (!menuItems.length) {
@@ -150,6 +226,38 @@ function createGuidedSessionRouter({
         handled: true,
         shouldReply: true,
         type: "guided_menu_unavailable",
+        replyText,
+      };
+    }
+
+    if (isMenuIntent(lower) || aiRescueAction === "menu") {
+      await conversationSessionRepo.clearSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId
+      );
+      const replyText = "Sure, let's start again.\n\n" + buildMenuWelcome(menuItems);
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_restart_from_menu_intent",
+        replyText,
+      };
+    }
+
+    if ((isStopOrCancelIntent(lower) || aiRescueAction === "cancel") && session.state !== flowStates.AWAITING_ITEM) {
+      await conversationSessionRepo.clearSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId
+      );
+      const replyText = "No problem, I have cancelled this draft order. Reply MENU whenever you want to order again.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_cancelled_by_stop_intent",
         replyText,
       };
     }
@@ -566,13 +674,35 @@ function createGuidedSessionRouter({
       const quantityEdit = extractQuantityEditIntent(normalized.text);
       const sessionMatched = buildMatchedFromSession(session);
 
-      if (lower === "d" || lower === "delivery" || inlineFulfillmentType === "delivery") {
+      if (
+        lower === "d" ||
+        lower === "delivery" ||
+        inlineFulfillmentType === "delivery" ||
+        aiRescueAction === "delivery"
+      ) {
         fulfillmentType = "delivery";
-      } else if (lower === "p" || lower === "pickup" || inlineFulfillmentType === "pickup") {
+      } else if (
+        lower === "p" ||
+        lower === "pickup" ||
+        inlineFulfillmentType === "pickup" ||
+        aiRescueAction === "pickup"
+      ) {
         fulfillmentType = "pickup";
       }
 
       if (!fulfillmentType) {
+        if (aiRescueAction === "edit") {
+          const replyText =
+            "Sure, what would you like to change in your order?\nYou can say things like:\n- add 1 chapman\n- remove fried rice\n- make shawarma 2";
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_edit_prompt_awaiting_fulfillment",
+            replyText,
+          };
+        }
+
         if (quantityEdit) {
           const updatedMatched =
             applyTargetedQuantityEdit(sessionMatched, normalized.text, quantityEdit, normalizeText) ||
@@ -627,7 +757,17 @@ function createGuidedSessionRouter({
           };
         }
 
-        const replyText = "Reply D for delivery or P for pickup.";
+        const invalidAttempts = Number(session.invalidFulfillmentAttempts || 0) + 1;
+        await conversationSessionRepo.upsertSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId,
+          { invalidFulfillmentAttempts: invalidAttempts }
+        );
+        const replyText =
+          invalidAttempts >= 2
+            ? "I can do either one. Reply DELIVERY or PICKUP.\nIf you want to edit items, say EDIT ORDER.\nIf you want to restart, say MENU."
+            : "Reply D for delivery or P for pickup.";
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
           handled: true,
@@ -664,6 +804,7 @@ function createGuidedSessionRouter({
           {
             state: flowStates.AWAITING_ADDRESS,
             fulfillmentType,
+            invalidFulfillmentAttempts: 0,
           }
         );
 
@@ -685,6 +826,7 @@ function createGuidedSessionRouter({
           state: flowStates.AWAITING_CONFIRMATION,
           fulfillmentType,
           deliveryAddress: "",
+          invalidFulfillmentAttempts: 0,
         }
       );
 
@@ -730,6 +872,34 @@ function createGuidedSessionRouter({
           handled: true,
           shouldReply: true,
           type: "guided_order_restart",
+          replyText,
+        };
+      }
+
+      if (lower === "p" || lower === "pickup" || lower.includes("pick up")) {
+        await conversationSessionRepo.upsertSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId,
+          {
+            state: flowStates.AWAITING_CONFIRMATION,
+            fulfillmentType: "pickup",
+            deliveryAddress: "",
+          }
+        );
+        const replyText = buildGuidedConfirmPrompt({
+          matched: Array.isArray(session.matched) ? session.matched : null,
+          itemName: session.itemName,
+          quantity: Number(session.quantity || 0),
+          total: Number(session.total || 0),
+          fulfillmentType: "pickup",
+          address: "",
+        });
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_switched_to_pickup",
           replyText,
         };
       }
@@ -940,7 +1110,7 @@ function createGuidedSessionRouter({
         };
       }
 
-      if (lower === "no" || lower === "n") {
+      if (isNegativeIntent(lowerText) || aiRescueAction === "cancel") {
         await conversationSessionRepo.clearSession(
           restaurantId,
           normalized.channel,
@@ -952,6 +1122,18 @@ function createGuidedSessionRouter({
           handled: true,
           shouldReply: true,
           type: "guided_cancelled",
+          replyText,
+        };
+      }
+
+      if (aiRescueAction === "edit") {
+        const replyText =
+          "No problem. Tell me exactly what to change.\nExamples:\n- add 1 chapman\n- remove jollof rice\n- change to delivery";
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_edit_prompt_confirmation",
           replyText,
         };
       }
@@ -996,8 +1178,18 @@ function createGuidedSessionRouter({
         }
       }
 
-      if (lower !== "yes" && lower !== "y") {
-        const replyText = "Please reply YES to confirm or NO to cancel.";
+      if (!isAffirmativeIntent(lowerText) && aiRescueAction !== "confirm") {
+        const invalidAttempts = Number(session.invalidConfirmationAttempts || 0) + 1;
+        await conversationSessionRepo.upsertSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId,
+          { invalidConfirmationAttempts: invalidAttempts }
+        );
+        const replyText =
+          invalidAttempts >= 2
+            ? "Quick options:\nYES - confirm order\nNO - cancel order\nEDIT ORDER - change items\nMENU - start over"
+            : "Please reply YES to confirm or NO to cancel.";
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
           handled: true,
