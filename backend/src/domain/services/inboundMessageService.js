@@ -562,6 +562,127 @@ function looksLikeOrderRestart(lower, rawText) {
   return restartPhrases.some((phrase) => text.includes(phrase));
 }
 
+function parseTimeToMinutes(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
+    return null;
+  }
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function getLocalTimeParts(timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: String(timeZone || "Africa/Lagos"),
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(new Date());
+  const get = (type) => {
+    const found = parts.find((part) => part.type === type);
+    return found ? String(found.value || "").trim() : "";
+  };
+  return {
+    weekday: get("weekday").toLowerCase(),
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+  };
+}
+
+function resolveOperatingDays(restaurant) {
+  const safeRestaurant = restaurant && typeof restaurant === "object" ? restaurant : {};
+  const candidates = [
+    safeRestaurant.operatingDays,
+    safeRestaurant.businessDays,
+    safeRestaurant.openDays,
+    safeRestaurant.availableDays,
+    safeRestaurant.scheduleDays,
+    safeRestaurant.availability && safeRestaurant.availability.days,
+  ];
+
+  const source = candidates.find((value) => Array.isArray(value));
+  const all = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  if (!Array.isArray(source) || !source.length) {
+    return all;
+  }
+
+  const normalized = source
+    .map((value) => String(value || "").trim().toLowerCase())
+    .map((value) => value.slice(0, 3))
+    .filter((value) => all.includes(value));
+
+  return normalized.length ? Array.from(new Set(normalized)) : all;
+}
+
+function isRestaurantOpenNow(restaurant) {
+  const timeZone = String((restaurant && restaurant.timezone) || "Africa/Lagos").trim() || "Africa/Lagos";
+  const openingHours = String((restaurant && restaurant.openingHours) || "").trim();
+  const closingHours = String((restaurant && restaurant.closingHours) || "").trim();
+  const openMinutes = parseTimeToMinutes(openingHours);
+  const closeMinutes = parseTimeToMinutes(closingHours);
+  const days = resolveOperatingDays(restaurant);
+  const local = getLocalTimeParts(timeZone);
+
+  if (!Number.isFinite(local.hour) || !Number.isFinite(local.minute)) {
+    return { isOpen: true, reason: "time_parse_failed", openingHours, closingHours, days, timeZone };
+  }
+
+  const nowMinutes = local.hour * 60 + local.minute;
+  const isOpenDay = days.includes(local.weekday);
+  if (openMinutes === null || closeMinutes === null || openMinutes === closeMinutes) {
+    return { isOpen: true, reason: "invalid_hours_config", openingHours, closingHours, days, timeZone };
+  }
+
+  const inTimeWindow =
+    openMinutes < closeMinutes
+      ? nowMinutes >= openMinutes && nowMinutes < closeMinutes
+      : nowMinutes >= openMinutes || nowMinutes < closeMinutes;
+
+  return {
+    isOpen: isOpenDay && inTimeWindow,
+    openingHours,
+    closingHours,
+    days,
+    timeZone,
+  };
+}
+
+function formatOperatingDays(days) {
+  const safeDays = Array.isArray(days) ? days : [];
+  if (!safeDays.length) {
+    return "Mon-Sun";
+  }
+  const map = {
+    mon: "Mon",
+    tue: "Tue",
+    wed: "Wed",
+    thu: "Thu",
+    fri: "Fri",
+    sat: "Sat",
+    sun: "Sun",
+  };
+  return safeDays.map((day) => map[String(day || "").trim().toLowerCase()] || day).join(", ");
+}
+
+function buildClosedHoursReply(restaurant) {
+  const status = isRestaurantOpenNow(restaurant);
+  const daysText = formatOperatingDays(status.days);
+  const openText = status.openingHours || "08:00";
+  const closeText = status.closingHours || "22:00";
+  return `We're currently unavailable right now.\n\nAvailable days: ${daysText}\nAvailable time: ${openText} - ${closeText}\nTimezone: ${status.timeZone}\n\nPlease message us again during open hours.`;
+}
+
 function createInboundMessageService({
   inboundEventRepo,
   menuService,
@@ -1539,6 +1660,37 @@ function createInboundMessageService({
         shouldReply: false,
         type: "empty_message",
       };
+    }
+
+    const acceptsOrders =
+      !restaurant ||
+      !restaurant.bot ||
+      typeof restaurant.bot !== "object" ||
+      restaurant.bot.enabled !== false;
+    if (!isStaffAlertSender && !acceptsOrders) {
+      const replyText =
+        "We're not accepting new orders at the moment. Please check back later. You can still ask for menu or availability updates.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "orders_paused",
+        replyText,
+      };
+    }
+
+    if (!isStaffAlertSender && !hasBlockingActiveOrder) {
+      const openStatus = isRestaurantOpenNow(restaurant);
+      if (!openStatus.isOpen) {
+        const replyText = buildClosedHoursReply(restaurant);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "restaurant_closed",
+          replyText,
+        };
+      }
     }
 
     logger.info("Inbound context lookup", {

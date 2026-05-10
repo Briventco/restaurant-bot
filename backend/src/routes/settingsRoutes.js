@@ -11,6 +11,7 @@ function serializeSettings(restaurant) {
     email: String(safeRestaurant.email || "").trim(),
     phone: String(safeRestaurant.phone || "").trim(),
     address: String(safeRestaurant.address || "").trim(),
+    timezone: String(safeRestaurant.timezone || "Africa/Lagos").trim(),
     openingHours: String(safeRestaurant.openingHours || "08:00").trim(),
     closingHours: String(safeRestaurant.closingHours || "22:00").trim(),
     acceptOrders: bot.enabled !== false,
@@ -59,6 +60,7 @@ function createSettingsRoutes({
       email: { type: "string", required: false },
       phone: { type: "string", required: false },
       address: { type: "string", required: false },
+      timezone: { type: "string", required: false },
       openingHours: { type: "string", required: false },
       closingHours: { type: "string", required: false },
       acceptOrders: { type: "boolean", required: false },
@@ -96,6 +98,10 @@ function createSettingsRoutes({
           email: typeof req.body.email === "string" ? req.body.email.trim() : "",
           phone: typeof req.body.phone === "string" ? req.body.phone.trim() : "",
           address: typeof req.body.address === "string" ? req.body.address.trim() : "",
+          timezone:
+            typeof req.body.timezone === "string" && req.body.timezone.trim()
+              ? req.body.timezone.trim()
+              : String(currentRestaurant.timezone || "Africa/Lagos"),
           openingHours:
             typeof req.body.openingHours === "string" && req.body.openingHours.trim()
               ? req.body.openingHours.trim()
