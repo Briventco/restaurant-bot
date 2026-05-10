@@ -680,7 +680,7 @@ function buildClosedHoursReply(restaurant) {
   const daysText = formatOperatingDays(status.days);
   const openText = status.openingHours || "08:00";
   const closeText = status.closingHours || "22:00";
-  return `We're currently unavailable right now.\n\nAvailable days: ${daysText}\nAvailable time: ${openText} - ${closeText}\nTimezone: ${status.timeZone}\n\nPlease message us again during open hours.`;
+  return `We're currently closed, but we'll be happy to serve you when we're open.\n\nOpen days: ${daysText}\nOpen time: ${openText} - ${closeText}\nTimezone: ${status.timeZone}\n\nSend us a message during open hours and we'll respond right away.`;
 }
 
 function createInboundMessageService({
@@ -1628,16 +1628,7 @@ function createInboundMessageService({
       });
     }
     const earlyMatchedResult = !hasBlockingActiveOrder && shouldRunEarlyResolve
-      ? await timedDb("resolveRequestedItems_early", async () => {
-          try {
-            return await orderService.resolveRequestedItems({
-              restaurantId,
-              messageText: incomingMessage,
-            });
-          } catch (_error) {
-            return { matched: [] };
-          }
-        })
+      ? (await getResolvedRequestedItemsCached()) || { matched: [] }
       : { matched: [] };
     const seemsLikeStructuredOrder =
       !hasBlockingActiveOrder &&
@@ -1669,7 +1660,7 @@ function createInboundMessageService({
       restaurant.bot.enabled !== false;
     if (!isStaffAlertSender && !acceptsOrders) {
       const replyText =
-        "We're not accepting new orders at the moment. Please check back later. You can still ask for menu or availability updates.";
+        "Hi, we're not taking new orders right now.\n\nYou can still check the menu and availability, and once ordering is back on, I'll help you place your order quickly.";
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,
@@ -1693,6 +1684,21 @@ function createInboundMessageService({
       }
     }
 
+    let resolvedRequestedItemsPromise = null;
+    async function getResolvedRequestedItemsCached() {
+      if (!resolvedRequestedItemsPromise) {
+        resolvedRequestedItemsPromise = timedDb("resolveRequestedItems_cached", () =>
+          orderService.resolveRequestedItems({
+            restaurantId,
+            messageText: incomingMessage,
+          })
+        )
+          .then((result) => result || { matched: [] })
+          .catch(() => null);
+      }
+      return resolvedRequestedItemsPromise;
+    }
+
     logger.info("Inbound context lookup", {
       restaurantId,
       channel: normalized.channel,
@@ -1707,12 +1713,7 @@ function createInboundMessageService({
 
     let preResolvedRequest = null;
     try {
-      preResolvedRequest = await timedDb("resolveRequestedItems_precheck", () =>
-        orderService.resolveRequestedItems({
-          restaurantId,
-          messageText: incomingMessage,
-        })
-      );
+      preResolvedRequest = await getResolvedRequestedItemsCached();
     } catch (_error) {
       preResolvedRequest = null;
     }
@@ -2158,10 +2159,10 @@ function createInboundMessageService({
       activeOrder.status === ORDER_STATUSES.PENDING_CONFIRMATION &&
       (looksLikeAddIntent(lower) || looksLikeRemoveIntent(lower) || looksLikeFulfillmentChange(lower))
     ) {
-      const { matched: requestedMatched } = await orderService.resolveRequestedItems({
-        restaurantId,
-        messageText: incomingMessage,
-      });
+      const resolvedForPendingEdit = (await getResolvedRequestedItemsCached()) || { matched: [] };
+      const requestedMatched = Array.isArray(resolvedForPendingEdit.matched)
+        ? resolvedForPendingEdit.matched
+        : [];
 
       let nextMatched = Array.isArray(activeOrder.matched) ? activeOrder.matched : [];
       if (looksLikeAddIntent(lower) && requestedMatched.length) {
@@ -2435,12 +2436,7 @@ function createInboundMessageService({
     let lateResolvedRequest = null;
     if (!hasBlockingActiveOrder) {
       try {
-        lateResolvedRequest = await timedDb("resolveRequestedItems_late", () =>
-          orderService.resolveRequestedItems({
-            restaurantId,
-            messageText: incomingMessage,
-          })
-        );
+        lateResolvedRequest = await getResolvedRequestedItemsCached();
       } catch (_error) {
         lateResolvedRequest = null;
       }
