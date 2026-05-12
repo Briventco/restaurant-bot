@@ -148,9 +148,12 @@ function buildEntityOrderConfirmation(matchedItems, fulfillmentType) {
     return "";
   }
 
-  const itemText = matchedItems
-    .map((item) => `${Number(item.quantity || 0)}x ${item.name}`)
-    .join(", ");
+  const itemText =
+    matchedItems.length === 1
+      ? `${Number(matchedItems[0].quantity || 0)} ${matchedItems[0].name}`
+      : matchedItems
+          .map((item) => `${Number(item.quantity || 0)}x ${item.name}`)
+          .join(", ");
 
   if (fulfillmentType === "delivery") {
     return `Great, I got ${itemText} for delivery. Should I continue with this order?`;
@@ -537,18 +540,14 @@ function createChatOrchestrator({
       let prematched = await getParsedMatchedItems();
       if (!prematched.length) {
         prematched = matchLlmEntitiesToMenu(menuItems, entities);
-      }
-
-      if (allowGuidedFlow && prematched.length) {
-        return beginGuidedOrderingFlowWithItems({
-          restaurantId,
-          normalized,
-          restaurant,
-          menuItems,
-          sendMessage,
-          matched: prematched,
-          fulfillmentType: entities.fulfillmentType || "",
-        });
+        if (prematched.length === 1 && Number(entities.quantity || 0) > 1) {
+          const quantity = Math.max(1, Math.round(Number(entities.quantity || 0)));
+          prematched = prematched.map((item) => ({
+            ...item,
+            quantity,
+            subtotal: Number(item.price || 0) * quantity,
+          }));
+        }
       }
 
       const confirmationText = buildEntityOrderConfirmation(prematched, entities.fulfillmentType);
@@ -568,6 +567,18 @@ function createChatOrchestrator({
             entities,
           },
         };
+      }
+
+      if (allowGuidedFlow && prematched.length) {
+        return beginGuidedOrderingFlowWithItems({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+          matched: prematched,
+          fulfillmentType: entities.fulfillmentType || "",
+        });
       }
 
       if (allowGuidedFlow && decision.confidence >= 0.35) {

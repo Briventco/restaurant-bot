@@ -1822,11 +1822,60 @@ function createInboundMessageService({
       };
     }
 
+    if (!existingSession && isAcknowledgementText(lower)) {
+      const replyText = activeOrder
+        ? "You're welcome. Your order is still in progress. Reply CANCEL if you need to stop it."
+        : "You're welcome. Reply MENU whenever you're ready to order.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "acknowledgement",
+        replyText,
+        orderId: activeOrder ? activeOrder.id : undefined,
+      };
+    }
+
+    if (!existingSession && isMenuOrStockQuestion(lower)) {
+      if (
+        shouldThrottleMenuReply({
+          restaurantId,
+          channelCustomerId: normalized.channelCustomerId,
+        })
+      ) {
+        return {
+          handled: true,
+          shouldReply: false,
+          type: "menu_cooldown",
+        };
+      }
+
+      const menuItems = await timedDb("listAvailableMenuItemsCached_menu_intent", () =>
+        listAvailableMenuItemsCached(restaurantId)
+      );
+      return chatOrchestrator.beginGuidedOrderingFlow({
+        restaurantId,
+        normalized,
+        restaurant,
+        menuItems,
+        sendMessage,
+      });
+    }
+
     // LLM-first routing: classify every normal customer message early.
     // If LLM can safely handle conversationally, return immediately.
     // Transactional/high-risk intents are deferred by chatOrchestrator and
     // continue into deterministic rule/order flows below.
-    if (!isStaffAlertSender && !existingSession) {
+    const skipLlmFirst =
+      isGreetingText(lower) ||
+      isAcknowledgementText(lower) ||
+      isMenuOrStockQuestion(lower) ||
+      looksLikeNewOrderAttempt(lower) ||
+      seemsLikeStructuredOrder ||
+      (Array.isArray(preResolvedRequest && preResolvedRequest.matched) &&
+        preResolvedRequest.matched.length > 0);
+
+    if (!isStaffAlertSender && !existingSession && !skipLlmFirst) {
       const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm_first", () =>
         listAvailableMenuItemsCached(restaurantId)
       );
@@ -1974,17 +2023,19 @@ function createInboundMessageService({
 
     // Rules-first: keep transactional flow deterministic.
     if (!activeOrder && !existingSession) {
-      const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
-        restaurantId,
-        normalized,
-        llmDecision,
-        hasActiveOrder: Boolean(activeOrder),
-        hasBlockingActiveOrder,
-        seemsLikeStructuredOrder,
-        sendMessage,
-      }));
-      if (routedResult && routedResult.handled !== false) {
-        return routedResult;
+      if (!looksLikeNewOrderAttempt(lower)) {
+        const routedResult = await timedRouter(() => ruleBasedRouter.tryHandleConversation({
+          restaurantId,
+          normalized,
+          llmDecision,
+          hasActiveOrder: Boolean(activeOrder),
+          hasBlockingActiveOrder,
+          seemsLikeStructuredOrder,
+          sendMessage,
+        }));
+        if (routedResult && routedResult.handled !== false) {
+          return routedResult;
+        }
       }
     }
 
