@@ -329,6 +329,13 @@ function buildPhoneCandidates(value) {
 
 function looksLikeQuestion(lower, rawText) {
   const text = String(rawText || "").trim();
+  const orderEditLike =
+    /\b(add|remove|without|make|change|update)\b/i.test(text) &&
+    (/\b\d+\b/.test(text) || /\bto\s+(pickup|delivery)\b/i.test(text));
+  if (orderEditLike) {
+    return false;
+  }
+
   return (
     text.includes("?") ||
     lower.startsWith("do you") ||
@@ -1627,6 +1634,21 @@ function createInboundMessageService({
         activeOrderStatus: activeOrder.status || "",
       });
     }
+    let resolvedRequestedItemsPromise = null;
+    async function getResolvedRequestedItemsCached() {
+      if (!resolvedRequestedItemsPromise) {
+        resolvedRequestedItemsPromise = timedDb("resolveRequestedItems_cached", () =>
+          orderService.resolveRequestedItems({
+            restaurantId,
+            messageText: incomingMessage,
+          })
+        )
+          .then((result) => result || { matched: [] })
+          .catch(() => null);
+      }
+      return resolvedRequestedItemsPromise;
+    }
+
     const earlyMatchedResult = !hasBlockingActiveOrder && shouldRunEarlyResolve
       ? (await getResolvedRequestedItemsCached()) || { matched: [] }
       : { matched: [] };
@@ -1682,21 +1704,6 @@ function createInboundMessageService({
           replyText,
         };
       }
-    }
-
-    let resolvedRequestedItemsPromise = null;
-    async function getResolvedRequestedItemsCached() {
-      if (!resolvedRequestedItemsPromise) {
-        resolvedRequestedItemsPromise = timedDb("resolveRequestedItems_cached", () =>
-          orderService.resolveRequestedItems({
-            restaurantId,
-            messageText: incomingMessage,
-          })
-        )
-          .then((result) => result || { matched: [] })
-          .catch(() => null);
-      }
-      return resolvedRequestedItemsPromise;
     }
 
     logger.info("Inbound context lookup", {

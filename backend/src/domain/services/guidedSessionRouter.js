@@ -691,14 +691,55 @@ function createGuidedSessionRouter({
       }
 
       if (!fulfillmentType) {
-        if (aiRescueAction === "edit") {
-          const replyText =
-            "Sure, what would you like to change in your order?\nYou can say things like:\n- add 1 chapman\n- remove fried rice\n- make shawarma 2";
+        if (looksLikeAddIntent(lower) || looksLikeRemoveIntent(lower)) {
+          const { matched: requestedMatched } = await orderService.resolveRequestedItems({
+            restaurantId,
+            messageText: normalized.text,
+          });
+
+          let nextMatched = sessionMatched;
+          if (looksLikeAddIntent(lower) && requestedMatched.length) {
+            nextMatched = mergeMatchedItems(sessionMatched, requestedMatched);
+          } else if (looksLikeRemoveIntent(lower) && requestedMatched.length) {
+            nextMatched = removeMatchedItems(sessionMatched, requestedMatched);
+          }
+
+          if (!nextMatched.length) {
+            const replyText =
+              "Your draft order would become empty after that change. Reply MENU to start again.";
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return {
+              handled: true,
+              shouldReply: true,
+              type: "guided_order_edit_would_empty",
+              replyText,
+            };
+          }
+
+          const updatedTotal = calculateMatchedTotal(nextMatched);
+          await conversationSessionRepo.upsertSession(
+            restaurantId,
+            normalized.channel,
+            normalized.channelCustomerId,
+            {
+              matched: nextMatched,
+              total: updatedTotal,
+              itemId: "",
+              itemName: "",
+              itemPrice: 0,
+              quantity: 0,
+            }
+          );
+          const replyText = buildDeliveryOrPickupPrompt({
+            matched: nextMatched,
+            total: updatedTotal,
+            prefix: "Okay, I've updated your order.",
+          });
           await sendText(sendMessage, normalized.channelCustomerId, replyText);
           return {
             handled: true,
             shouldReply: true,
-            type: "guided_edit_prompt_awaiting_fulfillment",
+            type: "guided_fulfillment_edit_updated",
             replyText,
           };
         }
@@ -736,6 +777,18 @@ function createGuidedSessionRouter({
               replyText,
             };
           }
+        }
+
+        if (aiRescueAction === "edit") {
+          const replyText =
+            "Sure, what would you like to change in your order?\nYou can say things like:\n- add 1 chapman\n- remove fried rice\n- make shawarma 2";
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_edit_prompt_awaiting_fulfillment",
+            replyText,
+          };
         }
 
         // Check if user wants to restart/change their order only after
