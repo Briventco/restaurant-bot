@@ -99,6 +99,7 @@ const { createLegacyCompatRoutes } = require("./routes/legacyCompatRoutes");
 const { createMessageRoutes } = require("./routes/messageRoutes");
 const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
 const { createRuntimeRegistryRoutes } = require("./routes/runtimeRegistryRoutes");
+const { createWaitlistRoutes } = require("./routes/waitlistRoutes");
 
 const API_VERSION = "v1";
 const API_BASE = `/api/${API_VERSION}`;
@@ -463,6 +464,7 @@ function createApp() {
 
   // Keep router-based health routes mounted as a compatibility fallback.
   app.use(API_BASE, createHealthRoutes());
+  app.use(API_BASE, createWaitlistRoutes());
   app.use(
     API_BASE,
     createAuthRoutes({
