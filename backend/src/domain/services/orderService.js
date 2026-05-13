@@ -19,6 +19,7 @@ const {
   buildOrderCancelledMessage,
   buildOrderReadyMessage,
   buildRestaurantOrderAlertMessage,
+  buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
 } = require("../templates/messages");
 const { buildShortOrderCode } = require("../utils/orderReference");
@@ -448,6 +449,52 @@ function createOrderService({
       restaurantId,
       results,
     };
+  }
+
+  async function notifyRestaurantPaymentAlert(order, options = {}) {
+    const restaurant = await restaurantRepo.getRestaurantById(order.restaurantId);
+    if (!restaurant) {
+      return;
+    }
+
+    const bot =
+      restaurant && restaurant.bot && typeof restaurant.bot === "object"
+        ? restaurant.bot
+        : {};
+
+    if (bot.notifyOnOrder === false) {
+      return;
+    }
+
+    const recipients = getOrderAlertRecipients(restaurant);
+    if (!recipients.length) {
+      return;
+    }
+
+    const alertText = buildRestaurantPaymentAlertMessage(
+      {
+        ...order,
+        shortCode: buildShortOrderCode(order && order.id),
+      },
+      {
+        note: options.note || "",
+      }
+    );
+
+    await Promise.all(
+      recipients.map(async (recipient) => {
+        await sendRestaurantAlertMessage({
+          order,
+          recipient,
+          text: alertText,
+          metadata: {
+            type: "restaurant_payment_alert",
+            sourceAction: "paymentReportedAlert",
+            sourceRef: order.id,
+          },
+        });
+      })
+    );
   }
 
   async function logInboundMessage(order, text, metadata = {}) {
@@ -1300,6 +1347,7 @@ function createOrderService({
     cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,
     sendRestaurantAlertMessage,
+    notifyRestaurantPaymentAlert,
     sendRestaurantTestAlert,
     logInboundMessage,
   };

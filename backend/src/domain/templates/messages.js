@@ -283,6 +283,24 @@ function buildRestaurantOrderAlertHandledMessage(order = {}, statusText = "") {
   return `Order #${order.id || "-"} updated.${statusText ? ` ${statusText}` : ""}`;
 }
 
+function buildRestaurantPaymentAlertMessage(order = {}, options = {}) {
+  const lines = [];
+  lines.push(`Payment reported for Order #${order.id || "-"}`);
+  if (order.shortCode) {
+    lines.push(`Staff Ref: ${order.shortCode}`);
+  }
+
+  const note = String(options.note || order.paymentReportNote || "").trim();
+  if (note) {
+    lines.push("");
+    lines.push(`Customer note: ${note}`);
+  }
+
+  lines.push("");
+  lines.push("Action required: Confirm or reject payment from the dashboard.");
+  return lines.join("\n");
+}
+
 function buildRestaurantTestAlertMessage(restaurant = {}) {
   const restaurantName = String(restaurant.name || "").trim() || "Your restaurant";
   return `Test alert from ${restaurantName}.\n\nIf you received this, the restaurant WhatsApp order alert setup is working for this number.`;
@@ -320,5 +338,6 @@ module.exports = {
   buildPaymentReferenceSavedMessage,
   buildRestaurantOrderAlertMessage,
   buildRestaurantOrderAlertHandledMessage,
+  buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
 };

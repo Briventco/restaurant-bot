@@ -2144,6 +2144,20 @@ function createInboundMessageService({
           providerMessageId,
         });
 
+        if (typeof orderService.notifyRestaurantPaymentAlert === "function") {
+          try {
+            await orderService.notifyRestaurantPaymentAlert(orderWithReference, {
+              note: paymentReference,
+            });
+          } catch (error) {
+            logger.warn("Failed to notify restaurant payment alert", {
+              restaurantId,
+              orderId: orderWithReference.id,
+              error: String((error && error.message) || "unknown_error"),
+            });
+          }
+        }
+
         const replyText =
           "Thanks, I have noted your payment message and added your transfer details for the restaurant team. They will confirm your payment shortly.";
         if (sendMessage) {
@@ -2173,6 +2187,20 @@ function createInboundMessageService({
           orderId: updatedOrder.id,
         }
       );
+
+      if (typeof orderService.notifyRestaurantPaymentAlert === "function") {
+        try {
+          await orderService.notifyRestaurantPaymentAlert(updatedOrder, {
+            note: incomingMessage,
+          });
+        } catch (error) {
+          logger.warn("Failed to notify restaurant payment alert", {
+            restaurantId,
+            orderId: updatedOrder.id,
+            error: String((error && error.message) || "unknown_error"),
+          });
+        }
+      }
 
       const replyText = buildPaymentReviewAcknowledgedMessage();
       if (sendMessage) {
