@@ -445,7 +445,7 @@ function buildQuestionFallbackReply(lower, rawText, menuItems) {
   }
 
   if (hasAvailableItems) {
-    return `I can help with menu, delivery, or placing an order. Right now we have:\n${numberedAvailableText}\n\nReply with the number or item name to order.`;
+    return `I can help with menu, delivery, or placing an order. Right now we have:\n${numberedAvailableText}\n\nReply with the item name to order.`;
   }
 
   return "I can help with menu, ordering, delivery, and item availability. Do you want to place an order now?";
@@ -2201,7 +2201,7 @@ function createInboundMessageService({
       const replyText =
         activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW
           ? buildPaymentStillUnderReviewMessage()
-          : "To continue this order, please complete payment and reply with: I HAVE PAID. Then share your transfer name/number or order reference.";
+          : "To continue this order, please complete payment and reply with: I HAVE PAID.";
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,

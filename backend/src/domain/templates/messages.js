@@ -20,7 +20,7 @@ function buildMenuWelcome(menuItems, restaurantName = "") {
 
   return `${heading}\n\nHere's our menu:\n${buildGuidedMenuList(
     menuItems
-  )}\n\nReply with the number or item name.`;
+  )}\n\nReply with the item name.`;
 }
 
 function buildGreetingMessage(restaurantName = "") {
@@ -111,8 +111,6 @@ function buildManualPaymentInstructionsMessage({
 
   text +=
     "\n\nAfter payment, reply with: I HAVE PAID";
-  text +=
-    "\nThen send your order number or the name/number used for the transfer so we can confirm your payment.";
   return text;
 }
 
@@ -241,11 +239,11 @@ function buildPaymentRejectedMessage(note = "") {
 }
 
 function buildPaymentReviewAcknowledgedMessage() {
-  return "Thanks, I have noted your payment message. Please share your order number or the name/number used for the transfer so the restaurant can confirm it. Your payment is not confirmed yet.";
+  return "Thanks, I have noted your payment message. The restaurant team will confirm it shortly. Your payment is not confirmed yet.";
 }
 
 function buildPaymentStillUnderReviewMessage() {
-  return "Your payment is already under review. If you have not shared it yet, please send your order number or the name/number used for the transfer. We will update you once the restaurant confirms payment.";
+  return "Your payment is already under review. We will update you once the restaurant confirms payment.";
 }
 
 function buildPaymentReferenceSavedMessage() {
