@@ -208,6 +208,36 @@ test("interpretCustomerMessage requires clarification when menu is missing", asy
   });
 });
 
+test("interpretCustomerMessage extracts slang itemized order correctly", async () => {
+  const service = createOrderParsingService({
+    logger: {
+      warn: () => {},
+      info: () => {},
+    },
+  });
+
+  const interpretation = await service.interpretCustomerMessage(
+    "I wan 2 jollof rice and 1 chicken pickup",
+    [
+      { name: "jollof rice", price: 1500, available: true },
+      { name: "chicken", price: 1000, available: true },
+    ]
+  );
+
+  assert.deepEqual(interpretation, {
+    intent: "place_order",
+    items: [
+      { name: "jollof rice", quantity: 2 },
+      { name: "chicken", quantity: 1 },
+    ],
+    quantity: 3,
+    deliveryOrPickup: "pickup",
+    address: "",
+    paymentIntent: "not_specified",
+    clarificationNeeded: false,
+  });
+});
+
 test("interpretCustomerMessage falls back when LLM schema is malformed", async () => {
   const originalOpenAI = global.OpenAI;
   const originalFetch = global.fetch;

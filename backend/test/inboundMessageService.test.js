@@ -679,7 +679,7 @@ test("parser-only mode bypasses LLM direct-reply path", async () => {
   assert.notEqual(result.type, "llm_delivery_question");
 });
 
-test("parser-only mode asks rephrase when order parse fails", async () => {
+test("parser-only mode asks rephrase when itemized parse fails", async () => {
   const service = buildService({
     orderService: {
       resolveRequestedItems: async () => ({ matched: [], unavailable: [] }),
@@ -695,7 +695,7 @@ test("parser-only mode asks rephrase when order parse fails", async () => {
       channel: "whatsapp-web",
       channelCustomerId: "234000000013@c.us",
       customerPhone: "+234000000013",
-      text: "i want something nice",
+      text: "i want 2 sushi",
       providerMessageId: "msg-parser-only-2",
       timestamp: Date.now(),
     },
@@ -703,4 +703,161 @@ test("parser-only mode asks rephrase when order parse fails", async () => {
 
   assert.equal(result.type, "order_rephrase_prompt");
   assert.match(String(result.replyText || ""), /rephrase/i);
+});
+
+test("parser-only mode routes generic order intent to guided menu", async () => {
+  const service = buildService({
+    config: {
+      llmParserOnlyMode: true,
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000014@c.us",
+      customerPhone: "+234000000014",
+      text: "I would like to order food",
+      providerMessageId: "msg-parser-only-3",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "guided_menu");
+  assert.match(String(result.replyText || ""), /Here's our menu/i);
+});
+
+test("smalltalk hello gets friendly greeting response", async () => {
+  const service = buildService({
+    config: {
+      llmParserOnlyMode: true,
+    },
+    restaurantRepo: {
+      getRestaurantById: async () => ({ id: "rest-1", name: "Mama Tee", bot: {} }),
+    },
+    menuService: {
+      listAvailableMenuItems: async () => [
+        { id: "m1", name: "Chapman", price: 1000, available: true },
+        { id: "m2", name: "Fried Rice", price: 1000, available: true },
+      ],
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000015@c.us",
+      customerPhone: "+234000000015",
+      text: "Hello",
+      providerMessageId: "msg-smalltalk-1",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "greeting");
+  assert.match(String(result.replyText || ""), /Mama Tee|menu/i);
+});
+
+test("smalltalk how-are-you gets non-loop response", async () => {
+  const service = buildService({
+    config: {
+      llmParserOnlyMode: true,
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000016@c.us",
+      customerPhone: "+234000000016",
+      text: "How are you",
+      providerMessageId: "msg-smalltalk-2",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "smalltalk_how_are_you");
+  assert.match(String(result.replyText || ""), /doing great|menu/i);
+});
+
+test("smalltalk hungry gets helpful ordering prompt", async () => {
+  const service = buildService({
+    config: {
+      llmParserOnlyMode: true,
+    },
+    menuService: {
+      listAvailableMenuItems: async () => [
+        { id: "m1", name: "Chapman", price: 1000, available: true },
+        { id: "m2", name: "Fried Rice", price: 1000, available: true },
+      ],
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000017@c.us",
+      customerPhone: "+234000000017",
+      text: "I'm hungry what can I get",
+      providerMessageId: "msg-smalltalk-3",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "smalltalk_hungry");
+  assert.match(String(result.replyText || ""), /Reply with item names and quantity/i);
+});
+
+test("parser-only slang classification routes menu request deterministically", async () => {
+  const service = buildService({
+    llmService: {
+      classifyIntent: async () => ({ intent: "menu_request" }),
+    },
+    config: {
+      llmParserOnlyMode: true,
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000018@c.us",
+      customerPhone: "+234000000018",
+      text: "abeg wetin una get",
+      providerMessageId: "msg-slang-intent-1",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "guided_menu");
+});
+
+test("parser-only slang classification routes smalltalk deterministically", async () => {
+  const service = buildService({
+    llmService: {
+      classifyIntent: async () => ({ intent: "smalltalk" }),
+    },
+    config: {
+      llmParserOnlyMode: true,
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000019@c.us",
+      customerPhone: "+234000000019",
+      text: "how far",
+      providerMessageId: "msg-slang-intent-2",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "smalltalk_how_are_you");
 });

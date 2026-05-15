@@ -333,6 +333,192 @@ function createLlmService({
   const openai =
     openAIApiKey && OpenAI ? new OpenAI({ apiKey: openAIApiKey }) : null;
 
+  function fallbackIntentHeuristic(text) {
+    const lower = String(text || "").trim().toLowerCase();
+    if (!lower) {
+      return "unknown";
+    }
+    if (
+      lower === "hi" ||
+      lower === "hello" ||
+      lower === "hey" ||
+      lower.includes("good morning") ||
+      lower.includes("good afternoon") ||
+      lower.includes("good evening")
+    ) {
+      return "greeting";
+    }
+    if (
+      lower.includes("menu") ||
+      lower.includes("what do you have") ||
+      lower.includes("what is available") ||
+      lower.includes("wetin una get")
+    ) {
+      return "menu_request";
+    }
+    if (
+      lower.includes("i want") ||
+      lower.includes("i would like") ||
+      lower.includes("order food") ||
+      lower.includes("i wan") ||
+      /\b\d+\b/.test(lower)
+    ) {
+      return "order_intent";
+    }
+    if (
+      lower.includes("how are you") ||
+      lower.includes("how far") ||
+      lower.includes("i'm hungry") ||
+      lower.includes("im hungry") ||
+      lower.includes("what can i get")
+    ) {
+      return "smalltalk";
+    }
+    return "unknown";
+  }
+
+  async function classifyIntentWithOpenAI(messageText) {
+    const response = await openai.responses.create({
+      model: openAIModel,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "Classify restaurant chat intent. Return JSON only with one field intent. " +
+                'Allowed intents: greeting, smalltalk, menu_request, order_intent, unknown.',
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `Message: ${String(messageText || "").trim()}`,
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "intent_classifier",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["intent"],
+            properties: {
+              intent: {
+                type: "string",
+                enum: ["greeting", "smalltalk", "menu_request", "order_intent", "unknown"],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!response.output_text) {
+      return null;
+    }
+    const parsed = JSON.parse(response.output_text);
+    return String(parsed.intent || "").trim().toLowerCase() || "unknown";
+  }
+
+  async function classifyIntentWithGemini(messageText) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          geminiModel
+        )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text: [
+                      "Classify restaurant chat intent.",
+                      'Return JSON only: {"intent":"greeting|smalltalk|menu_request|order_intent|unknown"}',
+                      `Message: ${String(messageText || "").trim()}`,
+                    ].join("\n"),
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              responseMimeType: "application/json",
+            },
+          }),
+          signal: controller.signal,
+        }
+      );
+
+      const payload = await response.json();
+      if (!response.ok) {
+        const message =
+          payload &&
+          payload.error &&
+          payload.error.message
+            ? payload.error.message
+            : `Gemini request failed with status ${response.status}`;
+        throw new Error(message);
+      }
+
+      const text =
+        payload &&
+        Array.isArray(payload.candidates) &&
+        payload.candidates[0] &&
+        payload.candidates[0].content &&
+        Array.isArray(payload.candidates[0].content.parts) &&
+        payload.candidates[0].content.parts[0] &&
+        payload.candidates[0].content.parts[0].text
+          ? payload.candidates[0].content.parts[0].text
+          : "";
+
+      const extracted = extractJsonObject(text);
+      return String((extracted && extracted.intent) || "").trim().toLowerCase() || "unknown";
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async function classifyIntent({ messageText }) {
+    const normalizedText = String(messageText || "").trim();
+    if (!normalizedText) {
+      return { intent: "unknown", source: "empty" };
+    }
+
+    try {
+      if (normalizedProvider === "gemini" && geminiApiKey) {
+        const intent = await classifyIntentWithGemini(normalizedText);
+        return { intent, source: "llm_gemini" };
+      }
+      if (normalizedProvider === "openai" && openai) {
+        const intent = await classifyIntentWithOpenAI(normalizedText);
+        return { intent, source: "llm_openai" };
+      }
+    } catch (error) {
+      logger.warn("LLM intent classification failed", {
+        provider: normalizedProvider,
+        message: error.message,
+      });
+    }
+
+    return { intent: fallbackIntentHeuristic(normalizedText), source: "heuristic_fallback" };
+  }
+
   async function classifyRestaurantMessage({ restaurant, menuItems, messageText, conversationContext = "", activeOrder = null, sessionState = null }) {
     const normalizedText = String(messageText || "").trim();
     if (!normalizedText) {
@@ -457,6 +643,7 @@ function createLlmService({
 
   return {
     classifyRestaurantMessage,
+    classifyIntent,
   };
 }
 

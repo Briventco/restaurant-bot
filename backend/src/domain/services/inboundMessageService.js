@@ -207,6 +207,56 @@ function looksLikeNewOrderAttempt(lower) {
   );
 }
 
+function looksLikeOrderIntentWithoutItems(lower) {
+  return (
+    lower.includes("i want to order") ||
+    lower.includes("i would like to order") ||
+    lower.includes("want to order") ||
+    lower.includes("place an order") ||
+    lower.includes("order food")
+  );
+}
+
+function looksLikeItemizedOrderAttempt(rawText) {
+  const text = String(rawText || "").trim().toLowerCase();
+  if (!text) {
+    return false;
+  }
+
+  const hasQuantity = /\b\d+\b/.test(text);
+  const hasConnector =
+    text.includes(" and ") ||
+    text.includes(",") ||
+    text.includes(" with ") ||
+    text.includes(" plus ");
+  const hasOrderVerb =
+    text.includes("i want") ||
+    text.includes("i would like") ||
+    text.includes("give me") ||
+    text.includes("get me") ||
+    text.includes("can i get");
+
+  return hasQuantity || (hasOrderVerb && hasConnector);
+}
+
+function isHowAreYouText(lower) {
+  return (
+    lower === "how are you" ||
+    lower === "how are you?" ||
+    lower.includes("how are you doing") ||
+    lower.includes("how far")
+  );
+}
+
+function isHungryOpenIntentText(lower) {
+  return (
+    lower.includes("i'm hungry") ||
+    lower.includes("im hungry") ||
+    lower.includes("what can i get") ||
+    lower.includes("what can i eat")
+  );
+}
+
 function looksLikePaymentReported(lower) {
   return (
     lower === "paid" ||
@@ -1571,6 +1621,30 @@ function createInboundMessageService({
       isMenuOrStockQuestion(lower) ||
       looksLikeQuestion(lower, incomingMessage);
 
+    let parserIntent = "unknown";
+    if (
+      llmParserOnlyMode &&
+      llmService &&
+      typeof llmService.classifyIntent === "function" &&
+      incomingMessage.trim()
+    ) {
+      try {
+        const intentResult = await timedRouter(() =>
+          Promise.race([
+            llmService.classifyIntent({
+              messageText: incomingMessage,
+            }),
+            new Promise((resolve) => setTimeout(() => resolve({ intent: "unknown" }), 8000)),
+          ])
+        );
+        parserIntent = String((intentResult && intentResult.intent) || "unknown")
+          .trim()
+          .toLowerCase();
+      } catch (_error) {
+        parserIntent = "unknown";
+      }
+    }
+
     const shouldRunEarlyResolve =
       !isObviousNonOrderMessage &&
       (looksLikeNewOrderAttempt(lower) || /\d/.test(incomingMessage));
@@ -1839,7 +1913,57 @@ function createInboundMessageService({
       };
     }
 
-    if (!existingSession && isMenuOrStockQuestion(lower)) {
+    if (!existingSession && (parserIntent === "greeting" || isGreetingText(lower))) {
+      const menuItems = await timedDb("listAvailableMenuItemsCached_greeting", () =>
+        listAvailableMenuItemsCached(restaurantId)
+      );
+      const availableItems = (menuItems || []).filter((item) => item.available);
+      const sample = availableItems.slice(0, 3).map((item) => item.name).join(", ");
+      const replyText = sample
+        ? `Hi there. You're welcome at ${String((restaurant && restaurant.name) || "our restaurant").trim()}.\n\nToday we have ${sample}. Reply MENU to see everything.`
+        : `Hi there. You're welcome at ${String((restaurant && restaurant.name) || "our restaurant").trim()}.\n\nReply MENU to see what is available today.`;
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "greeting",
+        replyText,
+      };
+    }
+
+    if (
+      !existingSession &&
+      (isHowAreYouText(lower) || (parserIntent === "smalltalk" && !isHungryOpenIntentText(lower)))
+    ) {
+      const replyText = "I'm doing great, thank you. I can help you order quickly. Reply MENU to see what's available, or tell me exactly what you'd like.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "smalltalk_how_are_you",
+        replyText,
+      };
+    }
+
+    if (!existingSession && isHungryOpenIntentText(lower)) {
+      const menuItems = await timedDb("listAvailableMenuItemsCached_hungry", () =>
+        listAvailableMenuItemsCached(restaurantId)
+      );
+      const availableItems = (menuItems || []).filter((item) => item.available);
+      const sample = availableItems.slice(0, 4).map((item) => `${item.name} (N${item.price})`).join(", ");
+      const replyText = sample
+        ? `Great, let's get you fed. We currently have: ${sample}.\n\nReply with item names and quantity, for example: 2 jollof rice and 1 chicken.`
+        : "Great, let's get you fed. Reply MENU to see current available items.";
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "smalltalk_hungry",
+        replyText,
+      };
+    }
+
+    if (!existingSession && (parserIntent === "menu_request" || isMenuOrStockQuestion(lower))) {
       if (
         shouldThrottleMenuReply({
           restaurantId,
@@ -2512,8 +2636,12 @@ function createInboundMessageService({
 
       // Generic intent like "I want to order food" should open guided flow,
       // not return invalid_order.
-      if (looksLikeNewOrderAttempt(lower) && !matched.length && !selectedItem) {
-        if (llmParserOnlyMode) {
+      if (
+        (parserIntent === "order_intent" || looksLikeNewOrderAttempt(lower)) &&
+        !matched.length &&
+        !selectedItem
+      ) {
+        if (llmParserOnlyMode && looksLikeItemizedOrderAttempt(incomingMessage)) {
           const replyText = buildRephraseOrderPrompt();
           await sendText(sendMessage, normalized.channelCustomerId, replyText);
           logger.info("Parser-only rephrase fallback used", {
@@ -2714,20 +2842,37 @@ function createInboundMessageService({
       }
 
       if (llmParserOnlyMode && looksLikeNewOrderAttempt(lower)) {
-        const replyText = buildRephraseOrderPrompt();
-        await sendText(sendMessage, normalized.channelCustomerId, replyText);
-        logger.info("Parser-only rephrase fallback used", {
-          restaurantId,
-          channel: normalized.channel,
-          channelCustomerId: normalized.channelCustomerId,
-          providerMessageId,
-        });
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "order_rephrase_prompt",
-          replyText,
-        };
+        if (looksLikeItemizedOrderAttempt(incomingMessage)) {
+          const replyText = buildRephraseOrderPrompt();
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          logger.info("Parser-only rephrase fallback used", {
+            restaurantId,
+            channel: normalized.channel,
+            channelCustomerId: normalized.channelCustomerId,
+            providerMessageId,
+            stage: "final_invalid_order",
+          });
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "order_rephrase_prompt",
+            replyText,
+          };
+        }
+
+        if (looksLikeOrderIntentWithoutItems(lower)) {
+          const menuItems = await timedDb("listAvailableMenuItemsCached_order_intent_no_items", () =>
+            listAvailableMenuItemsCached(restaurantId)
+          );
+          const result = await chatOrchestrator.beginGuidedOrderingFlow({
+            restaurantId,
+            normalized,
+            restaurant,
+            menuItems,
+            sendMessage,
+          });
+          return result;
+        }
       }
 
       const menuItems = await timedDb("listAvailableMenuItemsCached_invalid_order", () =>
