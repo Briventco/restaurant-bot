@@ -373,6 +373,7 @@ function createApp() {
     menuCooldownMs: env.INBOUND_MENU_COOLDOWN_SECONDS * 1000,
     aiShadowMode: env.AI_SHADOW_MODE,
     aiShadowTimeoutMs: env.AI_SHADOW_TIMEOUT_MS,
+    llmParserOnlyMode: env.LLM_PARSER_ONLY_MODE,
   });
   const healthAlertService = createHealthAlertService({
     env,

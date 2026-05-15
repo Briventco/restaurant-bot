@@ -207,3 +207,45 @@ test("interpretCustomerMessage requires clarification when menu is missing", asy
     clarificationNeeded: true,
   });
 });
+
+test("interpretCustomerMessage falls back when LLM schema is malformed", async () => {
+  const originalOpenAI = global.OpenAI;
+  const originalFetch = global.fetch;
+
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      candidates: [
+        {
+          content: {
+            parts: [{ text: '{"intent":"place_order","items":"bad-shape"}' }],
+          },
+        },
+      ],
+    }),
+  });
+
+  const service = createOrderParsingService({
+    llmProvider: "gemini",
+    geminiApiKey: "test-key",
+    logger: { warn: () => {}, info: () => {} },
+  });
+
+  const interpretation = await service.interpretCustomerMessage(
+    "2 jollof rice pickup",
+    [{ name: "jollof rice", price: 1500, available: true }]
+  );
+
+  assert.deepEqual(interpretation, {
+    intent: "place_order",
+    items: [{ name: "jollof rice", quantity: 2 }],
+    quantity: 2,
+    deliveryOrPickup: "pickup",
+    address: "",
+    paymentIntent: "not_specified",
+    clarificationNeeded: false,
+  });
+
+  global.fetch = originalFetch;
+  global.OpenAI = originalOpenAI;
+});

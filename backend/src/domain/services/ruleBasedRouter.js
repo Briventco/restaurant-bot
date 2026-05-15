@@ -15,6 +15,7 @@ function createRuleBasedRouter({
     restaurantId,
     normalized,
     llmDecision,
+    llmParserOnlyMode = false,
     hasActiveOrder,
     hasBlockingActiveOrder,
     seemsLikeStructuredOrder,
@@ -66,16 +67,18 @@ function createRuleBasedRouter({
       restaurantRepo.getRestaurantById(restaurantId),
     ]);
 
-    const llmResult = await chatOrchestrator.maybeHandleWithLlm({
-      restaurantId,
-      normalized,
-      restaurant,
-      menuItems,
-      sendMessage,
-    });
+    if (!llmParserOnlyMode) {
+      const llmResult = await chatOrchestrator.maybeHandleWithLlm({
+        restaurantId,
+        normalized,
+        restaurant,
+        menuItems,
+        sendMessage,
+      });
 
-    if (llmResult && llmResult.handled !== false) {
-      return llmResult;
+      if (llmResult && llmResult.handled !== false) {
+        return llmResult;
+      }
     }
 
     // Fallback based on LLM "question-like" intents.

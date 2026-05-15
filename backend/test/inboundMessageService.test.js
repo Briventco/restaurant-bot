@@ -647,3 +647,60 @@ test("who are you uses conversational fallback not invalid order", async () => {
   assert.equal(result.decision.handler, "llm_fallback");
   assert.doesNotMatch(result.replyText, /couldn't detect a valid order/i);
 });
+
+test("parser-only mode bypasses LLM direct-reply path", async () => {
+  const service = buildService({
+    llmService: {
+      classifyRestaurantMessage: async () => ({
+        intent: "delivery_question",
+        confidence: 0.95,
+        replyText: "Yes, we deliver to your area.",
+        shouldStartGuidedFlow: false,
+        shouldHandleDirectly: true,
+      }),
+    },
+    config: {
+      llmParserOnlyMode: true,
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000012@c.us",
+      customerPhone: "+234000000012",
+      text: "do you deliver to ikeja?",
+      providerMessageId: "msg-parser-only-1",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.notEqual(result.type, "llm_delivery_question");
+});
+
+test("parser-only mode asks rephrase when order parse fails", async () => {
+  const service = buildService({
+    orderService: {
+      resolveRequestedItems: async () => ({ matched: [], unavailable: [] }),
+    },
+    config: {
+      llmParserOnlyMode: true,
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000013@c.us",
+      customerPhone: "+234000000013",
+      text: "i want something nice",
+      providerMessageId: "msg-parser-only-2",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "order_rephrase_prompt");
+  assert.match(String(result.replyText || ""), /rephrase/i);
+});

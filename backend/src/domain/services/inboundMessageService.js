@@ -17,6 +17,7 @@ const {
   buildPaymentReviewAcknowledgedMessage,
   buildPaymentStillUnderReviewMessage,
   buildRestaurantOrderAlertHandledMessage,
+  buildRephraseOrderPrompt,
 } = require("../templates/messages");
 const { createChatOrchestrator } = require("./chatOrchestrator");
 const { createRuleBasedRouter } = require("./ruleBasedRouter");
@@ -704,6 +705,7 @@ function createInboundMessageService({
   menuCooldownMs,
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
+  llmParserOnlyMode = false,
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -798,6 +800,7 @@ function createInboundMessageService({
             ? metrics.db_breakdown
             : {},
       },
+      llmMode: llmParserOnlyMode ? "parser_only" : "hybrid",
     });
     if (normalized._shadowDecision) {
       logger.info("Inbound AI shadow compare", {
@@ -1590,7 +1593,7 @@ function createInboundMessageService({
       activeOrder && CUSTOMER_BLOCKING_ORDER_STATUSES.includes(activeOrder.status);
 
     let llmDecision = emptyDecision;
-    if (llmService && incomingMessage.trim()) {
+    if (!llmParserOnlyMode && llmService && incomingMessage.trim()) {
       try {
         const menuItemsForDecision = await timedDb("listAvailableMenuItemsCached_llm_decision", () =>
           listAvailableMenuItemsCached(restaurantId)
@@ -1875,7 +1878,7 @@ function createInboundMessageService({
       (Array.isArray(preResolvedRequest && preResolvedRequest.matched) &&
         preResolvedRequest.matched.length > 0);
 
-    if (!isStaffAlertSender && !existingSession && !skipLlmFirst) {
+    if (!llmParserOnlyMode && !isStaffAlertSender && !existingSession && !skipLlmFirst) {
       const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm_first", () =>
         listAvailableMenuItemsCached(restaurantId)
       );
@@ -1895,6 +1898,7 @@ function createInboundMessageService({
     }
 
     if (
+      !llmParserOnlyMode &&
       String(llmDecision.intent || "").trim().toLowerCase() === "recommendation" &&
       Number(llmDecision.confidence || 0) >= 0.45 &&
       !existingSession
@@ -2028,6 +2032,7 @@ function createInboundMessageService({
           restaurantId,
           normalized,
           llmDecision,
+          llmParserOnlyMode,
           hasActiveOrder: Boolean(activeOrder),
           hasBlockingActiveOrder,
           seemsLikeStructuredOrder,
@@ -2508,6 +2513,24 @@ function createInboundMessageService({
       // Generic intent like "I want to order food" should open guided flow,
       // not return invalid_order.
       if (looksLikeNewOrderAttempt(lower) && !matched.length && !selectedItem) {
+        if (llmParserOnlyMode) {
+          const replyText = buildRephraseOrderPrompt();
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          logger.info("Parser-only rephrase fallback used", {
+            restaurantId,
+            channel: normalized.channel,
+            channelCustomerId: normalized.channelCustomerId,
+            providerMessageId,
+            stage: "generic_order_without_items",
+          });
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "order_rephrase_prompt",
+            replyText,
+          };
+        }
+
         const result = await chatOrchestrator.beginGuidedOrderingFlow({
           restaurantId,
           normalized,
@@ -2687,6 +2710,23 @@ function createInboundMessageService({
           handled: true,
           shouldReply: false,
           type: "invalid_order_cooldown",
+        };
+      }
+
+      if (llmParserOnlyMode && looksLikeNewOrderAttempt(lower)) {
+        const replyText = buildRephraseOrderPrompt();
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        logger.info("Parser-only rephrase fallback used", {
+          restaurantId,
+          channel: normalized.channel,
+          channelCustomerId: normalized.channelCustomerId,
+          providerMessageId,
+        });
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "order_rephrase_prompt",
+          replyText,
         };
       }
 

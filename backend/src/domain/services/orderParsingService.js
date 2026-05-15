@@ -428,6 +428,68 @@ function normalizeInterpretation(raw, menuItems, fallback) {
   };
 }
 
+function validateInterpretationShape(raw) {
+  const safe = raw && typeof raw === "object" ? raw : null;
+  if (!safe) {
+    return { valid: false, reason: "not_object" };
+  }
+  if (!Array.isArray(safe.items)) {
+    return { valid: false, reason: "items_not_array" };
+  }
+  if (typeof safe.intent !== "string") {
+    return { valid: false, reason: "intent_not_string" };
+  }
+  if (
+    safe.quantity !== undefined &&
+    safe.quantity !== null &&
+    !Number.isFinite(Number(safe.quantity))
+  ) {
+    return { valid: false, reason: "quantity_not_number" };
+  }
+  if (
+    safe.deliveryOrPickup !== undefined &&
+    safe.deliveryOrPickup !== null &&
+    typeof safe.deliveryOrPickup !== "string"
+  ) {
+    return { valid: false, reason: "delivery_or_pickup_not_string" };
+  }
+  if (
+    safe.address !== undefined &&
+    safe.address !== null &&
+    typeof safe.address !== "string"
+  ) {
+    return { valid: false, reason: "address_not_string" };
+  }
+  if (
+    safe.paymentIntent !== undefined &&
+    safe.paymentIntent !== null &&
+    typeof safe.paymentIntent !== "string"
+  ) {
+    return { valid: false, reason: "payment_intent_not_string" };
+  }
+  if (
+    safe.clarificationNeeded !== undefined &&
+    safe.clarificationNeeded !== null &&
+    typeof safe.clarificationNeeded !== "boolean"
+  ) {
+    return { valid: false, reason: "clarification_not_boolean" };
+  }
+
+  for (const item of safe.items) {
+    if (!item || typeof item !== "object") {
+      return { valid: false, reason: "item_not_object" };
+    }
+    if (typeof item.name !== "string") {
+      return { valid: false, reason: "item_name_not_string" };
+    }
+    if (!Number.isFinite(Number(item.quantity))) {
+      return { valid: false, reason: "item_quantity_not_number" };
+    }
+  }
+
+  return { valid: true, reason: "ok" };
+}
+
 function extractJsonObject(text) {
   const raw = String(text || "").trim();
   if (!raw) {
@@ -828,27 +890,58 @@ function createOrderParsingService({
 
   async function interpretCustomerMessage(messageText, menuItems) {
     const fallback = buildFallbackInterpretation(messageText, menuItems);
+    const logContext = {
+      provider: normalizedProvider,
+      parserOnly: true,
+    };
 
     try {
+      let interpreted = null;
+      let source = "fallback";
+
       if (normalizedProvider === "gemini" && geminiApiKey) {
-        const interpreted = await interpretWithGemini({
+        interpreted = await interpretWithGemini({
           apiKey: geminiApiKey,
           model: geminiModel,
           messageText,
           menuItems,
           requestTimeoutMs,
         });
-        return normalizeInterpretation(interpreted, menuItems, fallback);
+        source = "gemini";
       }
 
-      if (normalizedProvider === "openai" && openai) {
-        const interpreted = await interpretWithOpenAI({
+      if (!interpreted && normalizedProvider === "openai" && openai) {
+        interpreted = await interpretWithOpenAI({
           openai,
           model: openAIModel,
           messageText,
           menuItems,
         });
-        return normalizeInterpretation(interpreted, menuItems, fallback);
+        source = "openai";
+      }
+
+      if (interpreted) {
+        const validation = validateInterpretationShape(interpreted);
+        if (validation.valid) {
+          logger.info("LLM interpretation accepted", {
+            ...logContext,
+            source,
+            schemaValid: true,
+          });
+          return normalizeInterpretation(interpreted, menuItems, fallback);
+        }
+
+        logger.warn("LLM interpretation schema validation failed", {
+          ...logContext,
+          source,
+          schemaValid: false,
+          reason: validation.reason,
+        });
+      } else if (source !== "fallback") {
+        logger.warn("LLM interpretation returned empty payload", {
+          ...logContext,
+          source,
+        });
       }
 
       if (normalizedProvider === "gemini" && !geminiApiKey) {
@@ -861,11 +954,16 @@ function createOrderParsingService({
         );
       }
 
+      logger.info("LLM interpretation fallback used", {
+        ...logContext,
+        fallback: "deterministic_rule_parser",
+      });
       return fallback;
     } catch (error) {
       logger.warn("LLM structured parsing failed, using fallback", {
         provider: normalizedProvider,
         message: error.message,
+        fallback: "deterministic_rule_parser",
       });
       return fallback;
     }

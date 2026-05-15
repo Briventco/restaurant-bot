@@ -47,6 +47,10 @@ function buildInvalidOrderMessage(menuItems) {
   return `I couldn't detect a valid order.\n\nHere is our menu:\n${formatMenu(menuItems)}`;
 }
 
+function buildRephraseOrderPrompt() {
+  return "I couldn't clearly read that order yet. Please rephrase using item names and quantities, for example: 2 jollof rice and 1 chicken.";
+}
+
 function buildOrderSummaryLineItems(matched) {
   return (matched || [])
     .map((item) => `${item.quantity} x ${item.name} = N${item.subtotal}`)
@@ -313,6 +317,7 @@ module.exports = {
   buildStockAvailabilityMessage,
   buildMenuWelcome,
   buildInvalidOrderMessage,
+  buildRephraseOrderPrompt,
   buildOrderSummaryLineItems,
   buildOrderReceivedMessage,
   buildOrderUpdatedMessage,

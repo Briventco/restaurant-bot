@@ -69,6 +69,10 @@ const env = {
     process.env.AI_SHADOW_TIMEOUT_MS,
     700
   ),
+  LLM_PARSER_ONLY_MODE: toBoolean(
+    process.env.LLM_PARSER_ONLY_MODE,
+    false
+  ),
   WHATSAPP_VOICE_ORDERING_ENABLED: toBoolean(
     process.env.WHATSAPP_VOICE_ORDERING_ENABLED,
     true
