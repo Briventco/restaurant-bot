@@ -114,7 +114,7 @@ function buildManualPaymentInstructionsMessage({
   }
 
   text +=
-    "\n\nAfter payment, reply with: I HAVE PAID";
+    "\n\nAfter payment, reply with: I HAVE PAID, your full name, and amount paid.";
   return text;
 }
 
@@ -243,7 +243,7 @@ function buildPaymentRejectedMessage(note = "") {
 }
 
 function buildPaymentReviewAcknowledgedMessage() {
-  return "Thanks, I have noted your payment message. The restaurant team will confirm it shortly. Your payment is not confirmed yet.";
+  return "Thanks, I have noted your payment message. The restaurant team will confirm it shortly. Your payment is not confirmed yet.\n\nIf you have not shared it already, please send your full name and amount paid.";
 }
 
 function buildPaymentStillUnderReviewMessage() {

@@ -2358,7 +2358,7 @@ function createInboundMessageService({
       const replyText =
         activeOrder.status === ORDER_STATUSES.PAYMENT_REVIEW
           ? buildPaymentStillUnderReviewMessage()
-          : "To continue this order, please complete payment and reply with: I HAVE PAID.";
+          : "To continue this order, please complete payment and reply with: I HAVE PAID, your full name, and amount paid.";
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,

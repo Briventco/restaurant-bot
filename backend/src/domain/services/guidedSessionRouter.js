@@ -161,6 +161,16 @@ function createGuidedSessionRouter({
     return updated;
   }
 
+  function hasValidDraftOrder(sessionMatched, session) {
+    if (Array.isArray(sessionMatched) && sessionMatched.length > 0) {
+      return true;
+    }
+
+    const hasItemId = String((session && session.itemId) || "").trim().length > 0;
+    const hasItemName = String((session && session.itemName) || "").trim().length > 0;
+    return hasItemId && hasItemName;
+  }
+
   async function handleGuidedSession({
     restaurantId,
     normalized,
@@ -673,6 +683,23 @@ function createGuidedSessionRouter({
       const inlineFulfillmentType = extractInlineFulfillmentType(normalized.text);
       const quantityEdit = extractQuantityEditIntent(normalized.text);
       const sessionMatched = buildMatchedFromSession(session);
+      if (!hasValidDraftOrder(sessionMatched, session)) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const replyText =
+          "I couldn't find items in your current draft order. Let's start again.\n\n" +
+          buildMenuWelcome(menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_missing_draft_items",
+          replyText,
+        };
+      }
 
       if (
         lower === "d" ||
@@ -911,6 +938,25 @@ function createGuidedSessionRouter({
     }
 
     if (session.state === flowStates.AWAITING_ADDRESS) {
+      const sessionMatched = buildMatchedFromSession(session);
+      if (!hasValidDraftOrder(sessionMatched, session)) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const replyText =
+          "I couldn't find items in your current draft order. Let's start again.\n\n" +
+          buildMenuWelcome(menuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_missing_draft_items",
+          replyText,
+        };
+      }
+
       // Check if user wants to restart/change their order
       if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
         await conversationSessionRepo.clearSession(
