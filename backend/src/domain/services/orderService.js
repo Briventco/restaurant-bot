@@ -451,22 +451,32 @@ function createOrderService({
     };
   }
 
+  function getPaymentAlertRecipients(restaurant) {
+    const bot =
+      restaurant && restaurant.bot && typeof restaurant.bot === "object"
+        ? restaurant.bot
+        : {};
+
+    const paymentRecipients = Array.isArray(bot.paymentAlertRecipients)
+      ? bot.paymentAlertRecipients
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : [];
+
+    if (paymentRecipients.length) {
+      return paymentRecipients;
+    }
+
+    return getOrderAlertRecipients(restaurant);
+  }
+
   async function notifyRestaurantPaymentAlert(order, options = {}) {
     const restaurant = await restaurantRepo.getRestaurantById(order.restaurantId);
     if (!restaurant) {
       return;
     }
 
-    const bot =
-      restaurant && restaurant.bot && typeof restaurant.bot === "object"
-        ? restaurant.bot
-        : {};
-
-    if (bot.notifyOnOrder === false) {
-      return;
-    }
-
-    const recipients = getOrderAlertRecipients(restaurant);
+    const recipients = getPaymentAlertRecipients(restaurant);
     if (!recipients.length) {
       return;
     }
