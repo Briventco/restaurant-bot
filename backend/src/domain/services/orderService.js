@@ -46,10 +46,39 @@ function toValidQuantityOrNull(value) {
   return Math.max(1, Math.round(parsed));
 }
 
+function buildItemNameAliases(name) {
+  const raw = String(name || "").trim();
+  if (!raw) {
+    return [];
+  }
+
+  const aliases = new Set();
+  const push = (value) => {
+    const normalized = normalizeText(value);
+    if (normalized) {
+      aliases.add(normalized);
+    }
+  };
+
+  push(raw);
+
+  const withoutParens = raw.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (withoutParens) {
+    push(withoutParens);
+  }
+
+  return Array.from(aliases);
+}
+
 function matchMenuItems(orderItems, menuItems) {
-  const normalizedMenu = new Map(
-    (menuItems || []).map((item) => [normalizeText(item.name), item])
-  );
+  const normalizedMenu = new Map();
+  for (const item of menuItems || []) {
+    for (const alias of buildItemNameAliases(item && item.name)) {
+      if (!normalizedMenu.has(alias)) {
+        normalizedMenu.set(alias, item);
+      }
+    }
+  }
 
   const matched = [];
   const unavailable = [];

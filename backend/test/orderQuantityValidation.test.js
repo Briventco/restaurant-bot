@@ -52,3 +52,21 @@ test("pricing rejects item quantities less than 1 before subtotal calculation", 
   ]);
   assert.equal(calculateTotal(matched), 1000);
 });
+
+test("matches base item name when menu item includes variants in parentheses", () => {
+  const { matched, invalidQuantities } = matchMenuItems(
+    [{ name: "chicken", quantity: 2 }],
+    [{ id: "m2", name: "Chicken (Grilled/Fried)", price: 2000, available: true }]
+  );
+
+  assert.deepEqual(invalidQuantities, []);
+  assert.deepEqual(matched, [
+    {
+      menuItemId: "m2",
+      name: "Chicken (Grilled/Fried)",
+      price: 2000,
+      quantity: 2,
+      subtotal: 4000,
+    },
+  ]);
+});
