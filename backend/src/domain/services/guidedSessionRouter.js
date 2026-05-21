@@ -885,6 +885,9 @@ function createGuidedSessionRouter({
             state: flowStates.AWAITING_ADDRESS,
             fulfillmentType,
             invalidFulfillmentAttempts: 0,
+            ...(sessionMatched.length
+              ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
+              : {}),
           }
         );
 
@@ -907,6 +910,9 @@ function createGuidedSessionRouter({
           fulfillmentType,
           deliveryAddress: "",
           invalidFulfillmentAttempts: 0,
+          ...(sessionMatched.length
+            ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
+            : {}),
         }
       );
 
@@ -1033,6 +1039,9 @@ function createGuidedSessionRouter({
           state: flowStates.AWAITING_CONFIRMATION,
           fulfillmentType: "delivery",
           deliveryAddress: address,
+          ...(sessionMatched.length
+            ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
+            : {}),
         }
       );
 
