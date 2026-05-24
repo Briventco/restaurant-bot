@@ -14,7 +14,9 @@ function createGuidedSessionRouter({
   calculateMatchedTotal,
   buildGuidedConfirmPrompt,
   buildAddressPrompt,
+  buildDeliveryZoneNotFoundMessage,
   buildDeliveryOrPickupPrompt,
+  deliveryZoneRepo,
   buildMenuWelcome,
   extractInlineQuantity,
   buildSelectedItemPrompt,
@@ -28,6 +30,29 @@ function createGuidedSessionRouter({
   removeMatchedItems,
   buildGuidedOrderConfirmedMessage,
 }) {
+  function matchDeliveryZone(addressText, zones) {
+    const normalized = normalizeText(addressText);
+    if (!normalized) return null;
+    for (const zone of zones) {
+      if (zone.enabled === false) continue;
+      const zoneName = normalizeText(zone.name || "");
+      if (zoneName && containsPhrase(normalized, zoneName)) return zone;
+      const keywords = String(zone.keywords || "")
+        .split(",")
+        .map((k) => normalizeText(k.trim()))
+        .filter(Boolean);
+      for (const kw of keywords) {
+        if (containsPhrase(normalized, kw)) return zone;
+      }
+    }
+    return null;
+  }
+
+  function containsPhrase(text, phrase) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`).test(text);
+  }
+
   function isMenuIntent(lower) {
     const text = String(lower || "").trim();
     return (
@@ -1029,6 +1054,21 @@ function createGuidedSessionRouter({
           type: "guided_invalid_address",
           replyText,
         };
+      }
+
+      if (deliveryZoneRepo) {
+        const zones = await deliveryZoneRepo.listDeliveryZones(restaurantId);
+        const activeZones = zones.filter((z) => z.enabled !== false);
+        if (activeZones.length > 0 && !matchDeliveryZone(address, activeZones)) {
+          const replyText = buildDeliveryZoneNotFoundMessage(activeZones);
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "guided_delivery_zone_not_found",
+            replyText,
+          };
+        }
       }
 
       await conversationSessionRepo.upsertSession(

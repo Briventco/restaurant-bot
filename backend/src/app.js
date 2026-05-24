@@ -367,6 +367,7 @@ function createApp() {
     channelGateway,
     conversationSessionRepo,
     restaurantRepo,
+    deliveryZoneRepo,
     paymentService,
     llmService,
     logger,

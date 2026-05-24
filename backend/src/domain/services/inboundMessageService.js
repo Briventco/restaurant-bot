@@ -10,6 +10,7 @@ const {
   buildSelectedItemPrompt,
   buildDeliveryOrPickupPrompt,
   buildAddressPrompt,
+  buildDeliveryZoneNotFoundMessage,
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
   buildActiveOrderExistsMessage,
@@ -749,6 +750,7 @@ function createInboundMessageService({
   channelGateway,
   conversationSessionRepo,
   restaurantRepo,
+  deliveryZoneRepo,
   paymentService,
   llmService,
   logger,
@@ -1112,6 +1114,7 @@ function createInboundMessageService({
     calculateMatchedTotal,
     buildGuidedConfirmPrompt,
     buildAddressPrompt,
+    buildDeliveryZoneNotFoundMessage,
     buildDeliveryOrPickupPrompt,
     buildMenuWelcome,
     extractInlineQuantity,
@@ -1125,6 +1128,7 @@ function createInboundMessageService({
     mergeMatchedItems,
     removeMatchedItems,
     buildGuidedOrderConfirmedMessage,
+    deliveryZoneRepo,
   });
 
   function resolveMenuSelection(menuItems, incomingMessage) {

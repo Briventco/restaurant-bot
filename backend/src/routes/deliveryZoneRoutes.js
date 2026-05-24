@@ -50,6 +50,7 @@ function createDeliveryZoneRoutes({
       },
       enabled: { type: "boolean", required: false },
       notes: { type: "string", required: false },
+      keywords: { type: "string", required: false },
     }),
     async (req, res, next) => {
       try {
@@ -61,6 +62,7 @@ function createDeliveryZoneRoutes({
             : 0,
           enabled: req.body.enabled !== false,
           notes: String(req.body.notes || "").trim(),
+          keywords: String(req.body.keywords || "").trim(),
         });
         if (restaurantOnboardingService) {
           await restaurantOnboardingService.syncRestaurantOnboardingProgress({
@@ -109,6 +111,9 @@ function createDeliveryZoneRoutes({
         }
         if (typeof req.body.notes === "string") {
           patch.notes = req.body.notes.trim();
+        }
+        if (typeof req.body.keywords === "string") {
+          patch.keywords = req.body.keywords.trim();
         }
 
         const zone = await deliveryZoneRepo.updateDeliveryZone(

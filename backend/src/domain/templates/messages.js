@@ -168,6 +168,19 @@ function buildAddressPrompt() {
   return "Please send your delivery address.";
 }
 
+function buildDeliveryZoneNotFoundMessage(zones) {
+  const list = zones
+    .filter((z) => z.enabled !== false)
+    .map((z) => `• ${z.name}`)
+    .join("\n");
+  return (
+    "Sorry, we don't deliver to that area yet.\n\n" +
+    "We currently deliver to:\n" +
+    list +
+    "\n\nPlease send your address again using one of these areas, or reply *PICKUP* to collect in person."
+  );
+}
+
 function buildGuidedConfirmPrompt({
   matched,
   itemName,
@@ -330,6 +343,7 @@ module.exports = {
   buildSelectedItemPrompt,
   buildDeliveryOrPickupPrompt,
   buildAddressPrompt,
+  buildDeliveryZoneNotFoundMessage,
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
   buildActiveOrderExistsMessage,
