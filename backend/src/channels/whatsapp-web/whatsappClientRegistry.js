@@ -207,8 +207,10 @@ function createWhatsappClientRegistry({
   onInboundMessage,
   browserExecutablePath = "",
 }) {
+  const MAX_QR_ATTEMPTS = 5;
   const clients = new Map();
   const qrCache = new Map();
+  const qrAttempts = new Map();
   const startLocks = new Map();
   const resolvedBrowserExecutablePath = resolveBrowserExecutablePath(
     browserExecutablePath
@@ -223,6 +225,7 @@ function createWhatsappClientRegistry({
   const EVENT_SEVERITY_BY_NAME = {
     start_requested: "info",
     qr_generated: "info",
+    qr_timeout: "warning",
     authenticated: "info",
     connected: "info",
     manual_disconnect: "info",
@@ -274,15 +277,38 @@ function createWhatsappClientRegistry({
 
   function bindClientEvents(restaurantId, client) {
     client.on("qr", (qr) => {
-      logger.info("WhatsApp QR generated", { restaurantId });
+      const attempts = (qrAttempts.get(restaurantId) || 0) + 1;
+      qrAttempts.set(restaurantId, attempts);
+
+      if (attempts > MAX_QR_ATTEMPTS) {
+        logger.warn("WhatsApp QR scan timeout — session not scanned, stopping client", {
+          restaurantId,
+          attempts,
+        });
+        qrAttempts.delete(restaurantId);
+        removeClient(restaurantId);
+        clearQrCache(restaurantId);
+        void setSessionState(restaurantId, {
+          status: "qr_timeout",
+          qrAvailable: false,
+          lastError: "QR code was not scanned in time. Restart the session to try again.",
+        });
+        void createSessionEvent(restaurantId, "qr_timeout", { attempts });
+        void client.destroy().catch(() => {});
+        return;
+      }
+
+      logger.info("WhatsApp QR generated", { restaurantId, attempt: attempts, maxAttempts: MAX_QR_ATTEMPTS });
       setQrCache(restaurantId, qr);
       void createSessionEvent(restaurantId, "qr_generated", {
         expiresAt: new Date(Date.now() + qrTtlSeconds * 1000).toISOString(),
+        attempt: attempts,
       });
     });
 
     client.on("authenticated", () => {
       logger.info("WhatsApp authenticated", { restaurantId });
+      qrAttempts.delete(restaurantId);
       clearQrCache(restaurantId);
       void setSessionState(restaurantId, {
         status: "authenticating",
@@ -310,6 +336,7 @@ function createWhatsappClientRegistry({
 
       removeClient(restaurantId);
       clearQrCache(restaurantId);
+      qrAttempts.delete(restaurantId);
       void setSessionState(restaurantId, {
         status: "disconnected",
         qrAvailable: false,
