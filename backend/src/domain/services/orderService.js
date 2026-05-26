@@ -667,6 +667,7 @@ function createOrderService({
     quantity,
     fulfillmentType,
     deliveryAddress,
+    deliveryFee = 0,
   }) {
     const safeQuantity = toValidQuantityOrNull(quantity);
     if (!safeQuantity) {
@@ -682,7 +683,9 @@ function createOrderService({
         subtotal: (Number(menuItem.price) || 0) * safeQuantity,
       },
     ];
-    const total = calculateTotal(matched);
+    const subtotal = calculateTotal(matched);
+    const safeFee = fulfillmentType === "delivery" ? (Number(deliveryFee) || 0) : 0;
+    const total = subtotal + safeFee;
     const rawMessage =
       fulfillmentType === "delivery" && deliveryAddress
         ? `${safeQuantity} ${menuItem.name} delivery ${deliveryAddress}`
@@ -702,6 +705,8 @@ function createOrderService({
       unavailableItems: [],
       issueType: "",
       staffNote: "",
+      subtotal,
+      deliveryFee: safeFee,
       total,
       status: ORDER_STATUSES.PENDING_CONFIRMATION,
       paymentMethod: "manual_bank_transfer",
@@ -738,6 +743,7 @@ function createOrderService({
     matched,
     fulfillmentType,
     deliveryAddress,
+    deliveryFee = 0,
     rawMessage = "",
   }) {
     const safeMatched = normalizeMatchedItemsForPricing(
@@ -747,7 +753,9 @@ function createOrderService({
       throw createHttpError(400, "At least one matched item is required");
     }
 
-    const total = calculateTotal(safeMatched);
+    const subtotal = calculateTotal(safeMatched);
+    const safeFee = fulfillmentType === "delivery" ? (Number(deliveryFee) || 0) : 0;
+    const total = subtotal + safeFee;
 
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
@@ -767,6 +775,8 @@ function createOrderService({
       unavailableItems: [],
       issueType: "",
       staffNote: "",
+      subtotal,
+      deliveryFee: safeFee,
       total,
       status: ORDER_STATUSES.PENDING_CONFIRMATION,
       paymentMethod: "manual_bank_transfer",

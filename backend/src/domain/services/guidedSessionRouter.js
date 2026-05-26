@@ -1056,18 +1056,23 @@ function createGuidedSessionRouter({
         };
       }
 
+      let deliveryFee = 0;
       if (deliveryZoneRepo) {
         const zones = await deliveryZoneRepo.listDeliveryZones(restaurantId);
         const activeZones = zones.filter((z) => z.enabled !== false);
-        if (activeZones.length > 0 && !matchDeliveryZone(address, activeZones)) {
-          const replyText = buildDeliveryZoneNotFoundMessage(activeZones);
-          await sendText(sendMessage, normalized.channelCustomerId, replyText);
-          return {
-            handled: true,
-            shouldReply: true,
-            type: "guided_delivery_zone_not_found",
-            replyText,
-          };
+        if (activeZones.length > 0) {
+          const matchedZone = matchDeliveryZone(address, activeZones);
+          if (!matchedZone) {
+            const replyText = buildDeliveryZoneNotFoundMessage(activeZones);
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return {
+              handled: true,
+              shouldReply: true,
+              type: "guided_delivery_zone_not_found",
+              replyText,
+            };
+          }
+          deliveryFee = Number(matchedZone.fee) || 0;
         }
       }
 
@@ -1079,6 +1084,7 @@ function createGuidedSessionRouter({
           state: flowStates.AWAITING_CONFIRMATION,
           fulfillmentType: "delivery",
           deliveryAddress: address,
+          deliveryFee,
           ...(sessionMatched.length
             ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
             : {}),
@@ -1091,6 +1097,7 @@ function createGuidedSessionRouter({
         quantity: Number(session.quantity || 0),
         total: Number(session.total || 0),
         fulfillmentType: "delivery",
+        deliveryFee,
         address,
       });
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
@@ -1247,6 +1254,7 @@ function createGuidedSessionRouter({
           total: nextTotal,
           fulfillmentType: nextFulfillmentType,
           address: nextAddress,
+          deliveryFee: nextFulfillmentType === "delivery" ? Number(session.deliveryFee || 0) : 0,
           prefix: "Okay, I've updated your order.",
         });
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
@@ -1314,6 +1322,7 @@ function createGuidedSessionRouter({
             total: nextTotal,
             fulfillmentType: nextFulfillmentType,
             address: nextAddress,
+            deliveryFee: nextFulfillmentType === "delivery" ? Number(session.deliveryFee || 0) : 0,
             prefix: "Got it, I have updated your order.",
           });
           await sendText(sendMessage, normalized.channelCustomerId, replyText);
@@ -1403,6 +1412,7 @@ function createGuidedSessionRouter({
               matched: session.matched,
               fulfillmentType: String(session.fulfillmentType || "pickup"),
               deliveryAddress: String(session.deliveryAddress || "").trim(),
+              deliveryFee: Number(session.deliveryFee || 0),
               rawMessage: normalized.text,
             })
           : await orderService.createGuidedOrder({
@@ -1416,6 +1426,7 @@ function createGuidedSessionRouter({
               quantity: Number(session.quantity || 0),
               fulfillmentType: String(session.fulfillmentType || "pickup"),
               deliveryAddress: String(session.deliveryAddress || "").trim(),
+              deliveryFee: Number(session.deliveryFee || 0),
             });
 
       await orderService.logInboundMessage(order, normalized.text, {

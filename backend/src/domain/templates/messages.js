@@ -188,6 +188,7 @@ function buildGuidedConfirmPrompt({
   total,
   fulfillmentType,
   address,
+  deliveryFee = 0,
   prefix = "",
 }) {
   let text = prefix ? `${String(prefix).trim()}\n\nConfirm order?\n\n` : "Confirm order?\n\n";
@@ -197,6 +198,15 @@ function buildGuidedConfirmPrompt({
     quantity,
     total,
   });
+
+  const safeFee = Number(deliveryFee) || 0;
+  const safeSubtotal = Number(total) || 0;
+  if (fulfillmentType === "delivery" && safeFee > 0) {
+    text += `\nSubtotal: N${safeSubtotal}`;
+    text += `\nDelivery fee: N${safeFee}`;
+    text += `\nTotal: N${safeSubtotal + safeFee}`;
+  }
+
   text += `\n${fulfillmentType === "delivery" ? "Delivery" : "Pickup"}`;
 
   if (fulfillmentType === "delivery" && address) {
@@ -275,7 +285,16 @@ function buildRestaurantOrderAlertMessage(order = {}) {
   }
   lines.push("");
   lines.push(buildOrderSummaryLineItems(order.matched || []));
-  lines.push(`Total = N${Number(order.total || order.amount || 0)}`);
+
+  const fee = Number(order.deliveryFee || 0);
+  const total = Number(order.total || order.amount || 0);
+  if (fee > 0) {
+    lines.push(`Subtotal = N${Number(order.subtotal || total - fee)}`);
+    lines.push(`Delivery fee = N${fee}`);
+    lines.push(`Total = N${total}`);
+  } else {
+    lines.push(`Total = N${total}`);
+  }
   lines.push("");
 
   if (String(order.fulfillmentType || "pickup").trim().toLowerCase() === "delivery") {
