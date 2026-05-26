@@ -1312,6 +1312,27 @@ function createInboundMessageService({
 
       if (parsedHashCommand.action === "confirm") {
         try {
+          const targetOrder = await orderService.getOrder({ restaurantId, orderId: resolvedOrderId });
+          const isPaymentReview = targetOrder && targetOrder.status === ORDER_STATUSES.PAYMENT_REVIEW;
+
+          if (isPaymentReview) {
+            const result = await paymentService.confirmPaymentReview({
+              restaurantId,
+              orderId: resolvedOrderId,
+              actorId: normalized.channelCustomerId,
+              note: "Confirmed from staff WhatsApp",
+            });
+            const replyText = `Payment confirmed for order #${result.order.id}. Customer has been updated.`;
+            await sendText(sendMessage, normalized.channelCustomerId, replyText);
+            return {
+              handled: true,
+              shouldReply: true,
+              type: "staff_hash_confirmed_payment",
+              replyText,
+              orderId: result.order.id,
+            };
+          }
+
           const updatedOrder = await orderService.confirmOrder({
             restaurantId,
             orderId: resolvedOrderId,
@@ -1330,7 +1351,7 @@ function createInboundMessageService({
             orderId: updatedOrder.id,
           };
         } catch (error) {
-          const replyText = `Could not confirm order #${resolvedOrderId}. ${String(
+          const replyText = `Could not confirm #${resolvedOrderId}. ${String(
             (error && error.message) || "Please check the order status on dashboard."
           )}`;
           await sendText(sendMessage, normalized.channelCustomerId, replyText);
@@ -1345,6 +1366,27 @@ function createInboundMessageService({
       }
 
       try {
+        const targetOrder = await orderService.getOrder({ restaurantId, orderId: resolvedOrderId });
+        const isPaymentReview = targetOrder && targetOrder.status === ORDER_STATUSES.PAYMENT_REVIEW;
+
+        if (isPaymentReview) {
+          const result = await paymentService.rejectPaymentReview({
+            restaurantId,
+            orderId: resolvedOrderId,
+            actorId: normalized.channelCustomerId,
+            note: parsedHashCommand.reason || "Payment not confirmed",
+          });
+          const replyText = `Payment rejected for order #${result.order.id}. Customer has been updated.`;
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "staff_hash_rejected_payment",
+            replyText,
+            orderId: result.order.id,
+          };
+        }
+
         const updatedOrder = await orderService.rejectOrder({
           restaurantId,
           orderId: resolvedOrderId,
@@ -1364,7 +1406,7 @@ function createInboundMessageService({
           orderId: updatedOrder.id,
         };
       } catch (error) {
-        const replyText = `Could not reject order #${resolvedOrderId}. ${String(
+        const replyText = `Could not reject #${resolvedOrderId}. ${String(
           (error && error.message) || "Please check the order status on dashboard."
         )}`;
         await sendText(sendMessage, normalized.channelCustomerId, replyText);

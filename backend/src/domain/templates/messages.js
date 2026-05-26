@@ -321,19 +321,44 @@ function buildRestaurantOrderAlertHandledMessage(order = {}, statusText = "") {
 
 function buildRestaurantPaymentAlertMessage(order = {}, options = {}) {
   const lines = [];
-  lines.push(`Payment reported for Order #${order.id || "-"}`);
-  if (order.shortCode) {
-    lines.push(`Staff Ref: ${order.shortCode}`);
+  const ref = order.shortCode || order.id || "-";
+
+  lines.push(`Payment reported — Order #${ref}`);
+  lines.push("");
+
+  const phone = String(order.customerPhone || order.channelCustomerId || "").replace("@c.us", "").replace("@lid", "").trim();
+  if (phone) {
+    lines.push(`Customer: ${phone}`);
+  }
+
+  const fee = Number(order.deliveryFee || 0);
+  const total = Number(order.total || order.amount || 0);
+  if (fee > 0) {
+    lines.push(`Subtotal: N${Number(order.subtotal || total - fee)}`);
+    lines.push(`Delivery fee: N${fee}`);
+    lines.push(`Amount due: N${total}`);
+  } else {
+    lines.push(`Amount due: N${total}`);
+  }
+
+  lines.push("");
+  const items = buildOrderSummaryLineItems(order.matched || []);
+  if (items) {
+    lines.push("Items:");
+    lines.push(items);
+    lines.push("");
   }
 
   const note = String(options.note || order.paymentReportNote || "").trim();
   if (note) {
+    lines.push(`Customer note: "${note}"`);
     lines.push("");
-    lines.push(`Customer note: ${note}`);
   }
 
-  lines.push("");
-  lines.push("Action required: Confirm or reject payment from the dashboard.");
+  lines.push("Reply to confirm or reject:");
+  lines.push(`#confirm ${ref}`);
+  lines.push(`#reject ${ref} <reason>`);
+
   return lines.join("\n");
 }
 
