@@ -100,6 +100,7 @@ const { createMessageRoutes } = require("./routes/messageRoutes");
 const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
 const { createRuntimeRegistryRoutes } = require("./routes/runtimeRegistryRoutes");
 const { createWaitlistRoutes } = require("./routes/waitlistRoutes");
+const { createStaffRoutes } = require("./routes/staffRoutes");
 
 const API_VERSION = "v1";
 const API_BASE = `/api/${API_VERSION}`;
@@ -351,6 +352,7 @@ function createApp() {
     orderParsingService,
     outboxService,
     conversationSessionRepo,
+    centralAlertNumbers: env.SERVRA_CENTRAL_ALERT_NUMBERS,
   });
 
   const paymentService = createPaymentService({
@@ -375,6 +377,7 @@ function createApp() {
     aiShadowMode: env.AI_SHADOW_MODE,
     aiShadowTimeoutMs: env.AI_SHADOW_TIMEOUT_MS,
     llmParserOnlyMode: env.LLM_PARSER_ONLY_MODE,
+    centralAlertNumbers: env.SERVRA_CENTRAL_ALERT_NUMBERS,
   });
   const healthAlertService = createHealthAlertService({
     env,
@@ -634,6 +637,17 @@ function createApp() {
       restaurantRepo,
       orderService,
       env,
+      logger,
+    })
+  );
+
+  app.use(
+    restaurantApiBase,
+    createStaffRoutes({
+      requireApiKey: requireApiKeyOrPortalAuth,
+      requireRestaurantAccess,
+      admin,
+      userRepo,
       logger,
     })
   );

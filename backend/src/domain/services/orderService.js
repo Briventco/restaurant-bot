@@ -170,6 +170,7 @@ function createOrderService({
   orderParsingService,
   outboxService,
   conversationSessionRepo,
+  centralAlertNumbers = [],
 }) {
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
@@ -228,11 +229,19 @@ function createOrderService({
         ? restaurant.bot
         : {};
 
-    return Array.isArray(bot.orderAlertRecipients)
+    const perRestaurant = Array.isArray(bot.orderAlertRecipients)
       ? bot.orderAlertRecipients
           .map((value) => String(value || "").trim())
           .filter(Boolean)
       : [];
+
+    // Merge platform-level central numbers — deduplicated, always included.
+    const central = Array.isArray(centralAlertNumbers)
+      ? centralAlertNumbers.map((v) => String(v || "").trim()).filter(Boolean)
+      : [];
+
+    const merged = Array.from(new Set([...central, ...perRestaurant]));
+    return merged;
   }
 
   function hashText(value) {

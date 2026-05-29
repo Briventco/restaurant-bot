@@ -758,6 +758,7 @@ function createInboundMessageService({
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
+  centralAlertNumbers = [],
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -929,7 +930,14 @@ function createInboundMessageService({
       restaurant && restaurant.bot && typeof restaurant.bot === "object"
         ? restaurant.bot
         : {};
-    const recipients = Array.isArray(bot.orderAlertRecipients) ? bot.orderAlertRecipients : [];
+
+    // Combine per-restaurant recipients with the platform-level central numbers.
+    const perRestaurant = Array.isArray(bot.orderAlertRecipients)
+      ? bot.orderAlertRecipients
+      : [];
+    const central = Array.isArray(centralAlertNumbers) ? centralAlertNumbers : [];
+    const recipients = Array.from(new Set([...central, ...perRestaurant]));
+
     const incomingCandidates = new Set([
       ...buildPhoneCandidates(normalized.channelCustomerId),
       ...buildPhoneCandidates(normalized.customerPhone),
