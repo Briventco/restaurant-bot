@@ -146,13 +146,15 @@ function createSettingsRoutes({
                 ? req.body.notifyOnOrder
                 : currentBot.notifyOnOrder !== false,
             notifyOnPayment: true,
+            // orderAlertRecipients is no longer configurable from the portal
+            // (alerts are now handled by SERVRA_CENTRAL_ALERT_NUMBERS platform-wide).
+            // Explicitly clear any previously saved per-restaurant numbers so they
+            // don't keep receiving duplicate alerts alongside the central number.
             orderAlertRecipients: Array.isArray(req.body.orderAlertRecipients)
               ? req.body.orderAlertRecipients
                   .map((value) => String(value || "").trim())
                   .filter(Boolean)
-              : Array.isArray(currentBot.orderAlertRecipients)
-                ? currentBot.orderAlertRecipients
-                : [],
+              : [],
             paymentAlertRecipients: Array.isArray(req.body.paymentAlertRecipients)
               ? req.body.paymentAlertRecipients
                   .map((value) => String(value || "").trim())
