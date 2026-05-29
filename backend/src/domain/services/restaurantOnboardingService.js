@@ -251,6 +251,9 @@ function createRestaurantOnboardingService({
           source,
           actorId,
         }),
+        verificationStatus: "pending",
+        verificationSubmittedAt: new Date().toISOString(),
+        verificationRejectionReason: "",
         activation: {
           state: "draft",
           note: "Restaurant created and waiting for configuration.",

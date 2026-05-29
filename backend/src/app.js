@@ -101,6 +101,7 @@ const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
 const { createRuntimeRegistryRoutes } = require("./routes/runtimeRegistryRoutes");
 const { createWaitlistRoutes } = require("./routes/waitlistRoutes");
 const { createStaffRoutes } = require("./routes/staffRoutes");
+const { createVerificationRoutes } = require("./routes/verificationRoutes");
 
 const API_VERSION = "v1";
 const API_BASE = `/api/${API_VERSION}`;
@@ -648,6 +649,18 @@ function createApp() {
       requireRestaurantAccess,
       admin,
       userRepo,
+      logger,
+    })
+  );
+
+  // Verification routes — mounted outside restaurantApiBase so the resubmit
+  // endpoint can bypass requireRestaurantAccess for rejected restaurants.
+  app.use(
+    restaurantApiBase,
+    createVerificationRoutes({
+      requireApiKey: requireApiKeyOrPortalAuth,
+      requireRole,
+      restaurantRepo,
       logger,
     })
   );

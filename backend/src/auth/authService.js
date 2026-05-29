@@ -144,6 +144,16 @@ function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
       permissionsCount: permissions.length,
     });
 
+    // Verification status — only relevant for restaurant roles.
+    // Existing restaurants that pre-date this feature (no field) default to "approved"
+    // so they are not disrupted. New signups are created with "pending".
+    const verificationStatus =
+      restaurant
+        ? String(restaurant.verificationStatus || "approved")
+        : null;
+    const verificationRejectionReason =
+      restaurant ? String(restaurant.verificationRejectionReason || "") : "";
+
     return {
       uid,
       email: String(profile.email || decodedToken.email || ""),
@@ -155,6 +165,8 @@ function createAuthService({ admin, userRepo, restaurantRepo, logger }) {
       restaurantName: restaurant && restaurant.name ? String(restaurant.name) : "",
       permissions,
       onboarding,
+      verificationStatus,
+      verificationRejectionReason,
       isActive: true,
       createdAt: profile.createdAt || null,
       updatedAt: profile.updatedAt || null,
