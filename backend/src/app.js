@@ -653,10 +653,14 @@ function createApp() {
     })
   );
 
-  // Verification routes — mounted outside restaurantApiBase so the resubmit
-  // endpoint can bypass requireRestaurantAccess for rejected restaurants.
+  // Verification routes — mounted at API_BASE (not restaurantApiBase) because
+  // the routes define their own full sub-paths:
+  //   GET  /admin/verification/pending-count
+  //   GET  /admin/verification/pending
+  //   POST /admin/restaurants/:restaurantId/verify
+  //   POST /restaurants/:restaurantId/verification/resubmit  (bypasses requireRestaurantAccess)
   app.use(
-    restaurantApiBase,
+    API_BASE,
     createVerificationRoutes({
       requireApiKey: requireApiKeyOrPortalAuth,
       requireRole,
