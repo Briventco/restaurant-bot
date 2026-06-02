@@ -12,7 +12,11 @@ function createStaffRoutes({
   const router = Router({ mergeParams: true });
 
   // ── Middleware: all staff routes need auth + restaurant scope ──────────────
-  router.use(requireApiKey);
+  // requireApiKey is a factory — call it with () to get the actual middleware.
+  // Using requireApiKey directly (without parens) would pass the factory to
+  // Express, which would call it with (req, res, next) as args, return a
+  // middleware function without executing it, and hang every request forever.
+  router.use(requireApiKey());
   router.use(requireRestaurantAccess);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
