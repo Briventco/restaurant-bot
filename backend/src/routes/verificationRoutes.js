@@ -40,7 +40,7 @@ function createVerificationRoutes({
   // ── GET /admin/verification/pending-count ──────────────────────────────────
   router.get(
     "/admin/verification/pending-count",
-    requireApiKey,
+    requireApiKey(),
     requireRole([ROLES.SUPER_ADMIN]),
     async (req, res, next) => {
       try {
@@ -61,7 +61,7 @@ function createVerificationRoutes({
   // ── GET /admin/verification/pending ───────────────────────────────────────
   router.get(
     "/admin/verification/pending",
-    requireApiKey,
+    requireApiKey(),
     requireRole([ROLES.SUPER_ADMIN]),
     async (req, res, next) => {
       try {
@@ -93,7 +93,7 @@ function createVerificationRoutes({
   // ── POST /admin/restaurants/:restaurantId/verify ──────────────────────────
   router.post(
     "/admin/restaurants/:restaurantId/verify",
-    requireApiKey,
+    requireApiKey(),
     requireRole([ROLES.SUPER_ADMIN]),
     validateBody({
       action: { type: "string", required: true },
@@ -166,7 +166,7 @@ function createVerificationRoutes({
   // ownership manually using req.user.restaurantId instead.
   router.post(
     "/restaurants/:restaurantId/verification/resubmit",
-    requireApiKey,
+    requireApiKey(),
     async (req, res, next) => {
       try {
         const { restaurantId } = req.params;
