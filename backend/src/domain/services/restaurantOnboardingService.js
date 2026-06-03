@@ -202,6 +202,10 @@ function createRestaurantOnboardingService({
     seedSampleMenu = false,
     createdBy = "",
     source = "self_serve_signup",
+    // Admin-onboarding overrides
+    verificationStatus = "pending",
+    currency = "NGN",
+    alertPhone = "",
   }) {
     const normalizedRestaurantName = String(restaurantName || "").trim();
     const normalizedAdminEmail = String(adminEmail || "").trim().toLowerCase();
@@ -239,6 +243,7 @@ function createRestaurantOnboardingService({
         phone: String(phone || "").trim(),
         address: String(address || "").trim(),
         timezone: String(timezone || "Africa/Lagos").trim(),
+        currency: String(currency || "NGN").trim(),
         plan: null,
         openingHours: String(openingHours || "08:00").trim(),
         closingHours: String(closingHours || "22:00").trim(),
@@ -246,17 +251,20 @@ function createRestaurantOnboardingService({
           enabled: true,
           autoConfirm: false,
           notifyOnOrder: true,
+          orderAlertRecipients: alertPhone ? [String(alertPhone).trim()] : [],
         },
         onboarding: createInitialOnboardingState({
           source,
           actorId,
         }),
-        verificationStatus: "pending",
+        verificationStatus: String(verificationStatus || "pending"),
         verificationSubmittedAt: new Date().toISOString(),
         verificationRejectionReason: "",
         activation: {
           state: "draft",
-          note: "Restaurant created and waiting for configuration.",
+          note: source === "admin_onboarding"
+            ? "Restaurant created by super admin — auto-approved."
+            : "Restaurant created and waiting for configuration.",
           updatedBy: actorId,
           updatedAt: new Date().toISOString(),
         },

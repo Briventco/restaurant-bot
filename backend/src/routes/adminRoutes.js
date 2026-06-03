@@ -1738,6 +1738,122 @@ function createAdminRoutes({
     }
   });
 
+  // ── POST /admin/onboard ─────────────────────────────────────────────────────
+  // Super admin creates a fully configured restaurant on behalf of an owner.
+  // The restaurant is auto-approved; the owner only needs to log in and scan QR.
+  router.post(
+    "/onboard",
+    validateBody({
+      restaurantName:    { type: "string", required: true,  minLength: 2 },
+      adminEmail:        { type: "string", required: true,  minLength: 5 },
+      adminPassword:     { type: "string", required: true,  minLength: 6 },
+      adminDisplayName:  { type: "string", required: true,  minLength: 2 },
+      phone:             { type: "string", required: false },
+      address:           { type: "string", required: false },
+    }),
+    async (req, res, next) => {
+      try {
+        const {
+          restaurantName,
+          adminEmail,
+          adminPassword,
+          adminDisplayName,
+          phone        = "",
+          address      = "",
+          timezone     = "Africa/Lagos",
+          openingHours = "08:00",
+          closingHours = "22:00",
+          currency     = "NGN",
+          alertPhone   = "",
+          menuItems    = [],
+          deliveryZones = [],
+        } = req.body;
+
+        // 1. Create workspace — auto-approved, no verification needed
+        const { restaurant, adminUser } =
+          await restaurantOnboardingService.createRestaurantWorkspace({
+            restaurantName,
+            adminEmail,
+            adminPassword,
+            adminDisplayName,
+            phone,
+            address,
+            timezone,
+            openingHours,
+            closingHours,
+            source:             "admin_onboarding",
+            createdBy:          req.user ? req.user.uid : "super_admin",
+            verificationStatus: "approved",
+            currency,
+            alertPhone,
+          });
+
+        const restaurantId = restaurant.id;
+
+        // 2. Create menu items (best-effort; skip invalid entries)
+        let menuCreated = 0;
+        for (const item of Array.isArray(menuItems) ? menuItems : []) {
+          const name  = String(item.name  || "").trim();
+          const price = Number(item.price);
+          if (!name || isNaN(price)) continue;
+          await menuRepo.createMenuItem(restaurantId, {
+            name,
+            price,
+            category:    String(item.category    || "Main").trim(),
+            description: String(item.description || "").trim(),
+            available: true,
+          });
+          menuCreated += 1;
+        }
+
+        // 3. Create delivery zones (best-effort; skip invalid entries)
+        let zonesCreated = 0;
+        for (const zone of Array.isArray(deliveryZones) ? deliveryZones : []) {
+          const name = String(zone.name || "").trim();
+          if (!name) continue;
+          await deliveryZoneRepo.createDeliveryZone(restaurantId, {
+            name,
+            coverageArea:  String(zone.coverageArea  || "").trim(),
+            fee:           Number(zone.fee)           || 0,
+            estimatedTime: String(zone.estimatedTime  || "").trim(),
+            active: true,
+          });
+          zonesCreated += 1;
+        }
+
+        console.info("[admin/onboard] succeeded", {
+          restaurantId,
+          adminEmail: adminUser.email,
+          menuCreated,
+          zonesCreated,
+          by: req.user && req.user.uid,
+        });
+
+        res.status(201).json({
+          success: true,
+          restaurantId,
+          restaurant: {
+            id:                 restaurantId,
+            name:               restaurant.name,
+            phone:              restaurant.phone  || "",
+            address:            restaurant.address || "",
+            verificationStatus: "approved",
+          },
+          adminUser: {
+            uid:         adminUser.uid,
+            email:       adminUser.email,
+            displayName: adminUser.displayName,
+          },
+          menuItemsCreated:    menuCreated,
+          deliveryZonesCreated: zonesCreated,
+        });
+      } catch (error) {
+        console.error("[admin/onboard] failed", { message: error.message });
+        next(error);
+      }
+    }
+  );
+
   return router;
 }
 
