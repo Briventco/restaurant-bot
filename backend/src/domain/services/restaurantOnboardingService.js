@@ -96,15 +96,15 @@ function isHoursComplete(restaurant = {}) {
   );
 }
 
-function isSettingsComplete(restaurant = {}) {
+function isPaymentComplete(restaurant = {}) {
+  const payment =
+    restaurant.payment && typeof restaurant.payment === "object" ? restaurant.payment : {};
+
   return Boolean(
-    restaurant.acceptOrders === true &&
-    restaurant.notifyOnOrder === true &&
-    restaurant.manualTransferEnabled === true &&
-    String(restaurant.bankName || "").trim() &&
-    String(restaurant.accountName || "").trim() &&
-    String(restaurant.accountNumber || "").trim() &&
-    String(restaurant.orderAlertRecipients || "").trim()
+    payment.manualTransferEnabled === true &&
+      String(payment.bankName || "").trim() &&
+      String(payment.accountName || "").trim() &&
+      String(payment.accountNumber || "").trim()
   );
 }
 
@@ -147,20 +147,14 @@ function buildChecklistProgress({ restaurant, menuItems, deliveryZones, whatsapp
       href: "/whatsapp",
     },
     {
-      id: "settings",
-      label: "Order & Payment Settings",
-      complete: isSettingsComplete(restaurant),
-      href: "/settings",
-    },
-    {
-      id: "subscription",
-      label: "Select subscription plan",
-      complete: Boolean(restaurant?.plan && restaurant.plan !== null),
-      href: "/subscription",
+      id: "payment",
+      label: "Payment & bank details",
+      complete: isPaymentComplete(restaurant),
+      href: "/payments",
     },
   ];
 
-  const requiredStepIds = ["profile", "hours", "menu", "whatsapp", "settings", "subscription"];
+  const requiredStepIds = ["profile", "hours", "menu", "whatsapp", "payment"];
   const requiredComplete = requiredStepIds.every((stepId) =>
     checks.some((item) => item.id === stepId && item.complete)
   );
@@ -394,6 +388,7 @@ module.exports = {
   buildChecklistProgress,
   createRestaurantOnboardingService,
   createSampleMenuItems,
+  isPaymentComplete,
   normalizeOnboardingState,
   slugifyRestaurantId,
 };
