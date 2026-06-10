@@ -83,6 +83,7 @@ function computeRetryDelayMs({ attemptNumber, retryBaseMs, retryMaxMs }) {
 function createOutboxService({
   outboxRepo,
   channelGateway,
+  conversationMessageRepo,
   logger,
   inlineSendEnabled = true,
   defaultMaxAttempts = 5,
@@ -125,6 +126,22 @@ function createOutboxService({
       nowMs,
       maxAttempts,
     });
+
+    if (result.created && conversationMessageRepo) {
+      try {
+        await conversationMessageRepo.logMessage({
+          restaurantId: payload.restaurantId,
+          channel: payload.channel,
+          channelCustomerId: payload.recipient,
+          direction: "out",
+          text: payload.text,
+          messageType: payload.messageType,
+          nowMs,
+        });
+      } catch (_error) {
+        // best-effort conversation log; outbox delivery is unaffected
+      }
+    }
 
     return {
       message: result.message,

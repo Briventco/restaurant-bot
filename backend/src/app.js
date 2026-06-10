@@ -21,6 +21,7 @@ const restaurantHealthRepo = require("./repositories/restaurantHealthRepo");
 const activationJobRepo = require("./repositories/activationJobRepo");
 const outboxRepo = require("./repositories/outboxRepo");
 const conversationSessionRepo = require("./repositories/conversationSessionRepo");
+const conversationMessageRepo = require("./repositories/conversationMessageRepo");
 const subscriptionPlanRepo = require("./repositories/subscriptionPlanRepo");
 const restaurantSubscriptionRepo = require("./repositories/restaurantSubscriptionRepo");
 
@@ -335,6 +336,7 @@ function createApp() {
   const outboxService = createOutboxService({
     outboxRepo,
     channelGateway,
+    conversationMessageRepo,
     logger,
     inlineSendEnabled: env.OUTBOX_INLINE_SEND_ENABLED,
     defaultMaxAttempts: env.OUTBOX_MAX_ATTEMPTS,
@@ -369,6 +371,7 @@ function createApp() {
     orderService,
     channelGateway,
     conversationSessionRepo,
+    conversationMessageRepo,
     restaurantRepo,
     deliveryZoneRepo,
     paymentService,
@@ -498,6 +501,8 @@ function createApp() {
       userRepo,
       menuRepo,
       orderRepo,
+      customerRepo,
+      conversationMessageRepo,
         deliveryZoneRepo,
         providerSessionRepo,
         whatsappSessionEventRepo,

@@ -749,6 +749,7 @@ function createInboundMessageService({
   orderService,
   channelGateway,
   conversationSessionRepo,
+  conversationMessageRepo,
   restaurantRepo,
   deliveryZoneRepo,
   paymentService,
@@ -1212,6 +1213,25 @@ function createInboundMessageService({
     }
 
     const incomingMessage = normalized.text || "";
+
+    if (conversationMessageRepo && incomingMessage.trim()) {
+      try {
+        await conversationMessageRepo.logMessage({
+          restaurantId,
+          channel: normalized.channel,
+          channelCustomerId: normalized.channelCustomerId,
+          direction: "in",
+          text: incomingMessage,
+          providerMessageId,
+          customerPhone: normalized.customerPhone,
+          displayName: normalized.displayName,
+          nowMs: normalized.timestamp || Date.now(),
+        });
+      } catch (_error) {
+        // best-effort conversation log; inbound processing continues
+      }
+    }
+
     const lower = normalizeText(incomingMessage);
     const emptyDecision = {
       intent: "unknown",

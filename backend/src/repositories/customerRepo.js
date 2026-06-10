@@ -71,7 +71,19 @@ async function upsertByChannelIdentity({
   }
 }
 
+async function listCustomers({ restaurantId, limit = 100 }) {
+  const effectiveLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+
+  const snapshot = await customersCollection(restaurantId)
+    .orderBy("updatedAt", "desc")
+    .limit(effectiveLimit)
+    .get();
+
+  return snapshot.docs.map((doc) => serializeDoc(doc));
+}
+
 module.exports = {
   customerDocId,
   upsertByChannelIdentity,
+  listCustomers,
 };

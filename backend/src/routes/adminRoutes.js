@@ -277,46 +277,6 @@ async function buildSessionSnapshot({
   };
 }
 
-async function buildOutboxSnapshot({
-  restaurant,
-  outboxService,
-  providerSessionRepo,
-  env,
-  status,
-  limit,
-}) {
-  const session = await providerSessionRepo.getSession(restaurant.id, "whatsapp-web");
-  const whatsapp = resolveWhatsappChannelStatus({
-    restaurant,
-    restaurantId: restaurant.id,
-    session,
-    env,
-  });
-
-  const messages = await outboxService.listOutboxMessages({
-    restaurantId: restaurant.id,
-    status,
-    limit,
-  });
-
-  return messages.map((message) => ({
-    id: message.id,
-    restaurantId: restaurant.id,
-    restaurant: restaurant.name || "Restaurant",
-    recipient: message.recipient || "",
-    message: message.text || "",
-    provider: whatsapp.provider || "",
-    bindingMode: whatsapp.bindingMode,
-    routingMode: whatsapp.routingMode,
-    routingHint: whatsapp.routingHint,
-    phoneNumberId: whatsapp.phoneNumberId || "",
-    status: mapOutboxStatusForAdmin(message.status),
-    rawStatus: message.status || "",
-    time: message.updatedAt || message.createdAt || null,
-    retries: Number(message.attemptCount || 0),
-  }));
-}
-
 function createAdminRoutes({
   requireAuth,
   requireRole,
@@ -325,6 +285,8 @@ function createAdminRoutes({
   userRepo,
   menuRepo,
   orderRepo,
+  customerRepo,
+  conversationMessageRepo,
   deliveryZoneRepo,
   providerSessionRepo,
   whatsappSessionEventRepo,
@@ -1225,29 +1187,112 @@ function createAdminRoutes({
   router.get("/outbox", async (req, res, next) => {
     try {
       const restaurants = await restaurantRepo.listRestaurants({ limit: 100 });
-      const perRestaurantLimit = Number(req.query.limit) > 0 ? Number(req.query.limit) : 25;
-      const status = String(req.query.status || "").trim();
 
-      const perRestaurantMessages = await Promise.all(
-        restaurants.map((restaurant) =>
-          buildOutboxSnapshot({
-            restaurant,
-            outboxService,
-            providerSessionRepo,
-            env,
-            status,
-            limit: perRestaurantLimit,
-          })
-        )
+      const items = await Promise.all(
+        restaurants.map(async (restaurant) => {
+          const [stats, customers] = await Promise.all([
+            outboxService.getOutboxStats(restaurant.id).catch(() => null),
+            customerRepo.listCustomers({ restaurantId: restaurant.id, limit: 500 }).catch(() => []),
+          ]);
+
+          const counts = (stats && stats.counts) || {};
+
+          return {
+            restaurantId: restaurant.id,
+            restaurant: restaurant.name || "Restaurant",
+            customerCount: customers.length,
+            totalSent: Number(counts.sent || 0),
+            totalFailed: Number(counts.failed || 0),
+            pendingTotal: Number((stats && stats.pendingTotal) || 0),
+          };
+        })
       );
-
-      const items = perRestaurantMessages
-        .flat()
-        .sort((left, right) => new Date(right.time || 0).getTime() - new Date(left.time || 0).getTime())
-        .slice(0, 200);
 
       res.status(200).json({
         success: true,
+        items,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/outbox/:restaurantId/customers", async (req, res, next) => {
+    try {
+      const restaurant = await restaurantRepo.getRestaurantById(req.params.restaurantId);
+      if (!restaurant) {
+        res.status(404).json({ error: "Restaurant not found" });
+        return;
+      }
+
+      const customers = await customerRepo.listCustomers({
+        restaurantId: req.params.restaurantId,
+        limit: 500,
+      });
+
+      const items = customers.map((customer) => ({
+        id: customer.id,
+        channel: customer.channel || "",
+        channelCustomerId: customer.channelCustomerId || "",
+        customerPhone: customer.customerPhone || "",
+        displayName: customer.displayName || "",
+        updatedAt: customer.updatedAt || null,
+        createdAt: customer.createdAt || null,
+      }));
+
+      res.status(200).json({
+        success: true,
+        restaurant: { id: restaurant.id, name: restaurant.name || "Restaurant" },
+        items,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/outbox/:restaurantId/customers/:customerId/messages", async (req, res, next) => {
+    try {
+      const restaurant = await restaurantRepo.getRestaurantById(req.params.restaurantId);
+      if (!restaurant) {
+        res.status(404).json({ error: "Restaurant not found" });
+        return;
+      }
+
+      const customers = await customerRepo.listCustomers({
+        restaurantId: req.params.restaurantId,
+        limit: 500,
+      });
+      const customer = customers.find((item) => item.id === req.params.customerId);
+      if (!customer) {
+        res.status(404).json({ error: "Customer not found" });
+        return;
+      }
+
+      const messages = await conversationMessageRepo.listMessagesByCustomer({
+        restaurantId: req.params.restaurantId,
+        channel: customer.channel,
+        channelCustomerId: customer.channelCustomerId,
+      });
+
+      const items = messages.map((message) => ({
+        id: message.id,
+        direction: message.direction,
+        text: message.text,
+        messageType: message.messageType || "text",
+        createdAtMs: message.createdAtMs || 0,
+        createdAt: message.createdAt || null,
+      }));
+
+      res.status(200).json({
+        success: true,
+        restaurant: { id: restaurant.id, name: restaurant.name || "Restaurant" },
+        customer: {
+          id: customer.id,
+          displayName: customer.displayName || "",
+          customerPhone: customer.customerPhone || "",
+          channel: customer.channel || "",
+          channelCustomerId: customer.channelCustomerId || "",
+        },
         items,
       });
     } catch (error) {
