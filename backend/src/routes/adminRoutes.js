@@ -11,6 +11,10 @@ const {
   getAllowedLifecycleTransition,
   getLifecycleTransitionOptions,
 } = require("../domain/services/restaurantActivationValidationService");
+const {
+  buildCustomerActivityList,
+  buildCustomerMessageTimeline,
+} = require("../domain/services/adminConversationService");
 
 function inferRestaurantStatus(restaurant = {}) {
   return restaurant.status === "suspended" || restaurant.isActive === false
@@ -1225,8 +1229,10 @@ function createAdminRoutes({
         return;
       }
 
-      const customers = await customerRepo.listCustomers({
+      const customers = await buildCustomerActivityList({
         restaurantId: req.params.restaurantId,
+        customerRepo,
+        orderRepo,
         limit: 500,
       });
 
@@ -1238,6 +1244,8 @@ function createAdminRoutes({
         displayName: customer.displayName || "",
         updatedAt: customer.updatedAt || null,
         createdAt: customer.createdAt || null,
+        lastActivityAt: customer.lastActivityAt || customer.updatedAt || customer.createdAt || null,
+        orderCount: Number(customer.orderCount || 0),
       }));
 
       res.status(200).json({
@@ -1267,11 +1275,12 @@ function createAdminRoutes({
         return;
       }
 
-      const messages = await conversationMessageRepo.listMessagesByCustomer({
+      const messages = await buildCustomerMessageTimeline({
         restaurantId: req.params.restaurantId,
-        channel: customer.channel,
-        channelCustomerId: customer.channelCustomerId,
-        customerPhone: customer.customerPhone,
+        customer,
+        conversationMessageRepo,
+        outboxService,
+        routingAuditRepo,
       });
 
       const items = messages.map((message) => ({
@@ -1281,6 +1290,7 @@ function createAdminRoutes({
         messageType: message.messageType || "text",
         createdAtMs: message.createdAtMs || 0,
         createdAt: message.createdAt || null,
+        source: message.source || "conversation",
       }));
 
       res.status(200).json({

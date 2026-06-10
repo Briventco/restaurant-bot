@@ -29,6 +29,23 @@ async function upsertByChannelIdentity({
   const normalizedDisplayName = String(displayName || "").trim();
   const normalizedPhone = String(customerPhone || "").trim();
 
+  if (snapshot.exists) {
+    const current = snapshot.data() || {};
+    const payload = {
+      restaurantId,
+      channel,
+      channelCustomerId,
+      customerPhone: normalizedPhone || String(current.customerPhone || "").trim(),
+      displayName: normalizedDisplayName || String(current.displayName || "").trim(),
+      updatedAt: FieldValue.serverTimestamp(),
+      lastMessageAt: FieldValue.serverTimestamp(),
+    };
+
+    await ref.set(payload, { merge: true });
+    const updated = await ref.get();
+    return serializeDoc(updated);
+  }
+
   const payload = {
     restaurantId,
     channel,
@@ -36,39 +53,13 @@ async function upsertByChannelIdentity({
     customerPhone: normalizedPhone,
     displayName: normalizedDisplayName,
     updatedAt: FieldValue.serverTimestamp(),
+    lastMessageAt: FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   };
 
-  if (snapshot.exists) {
-    const current = snapshot.data() || {};
-    const currentDisplayName = String(current.displayName || "").trim();
-    const currentPhone = String(current.customerPhone || "").trim();
-    const needsUpdate =
-      currentDisplayName !== normalizedDisplayName ||
-      currentPhone !== normalizedPhone;
-
-    if (!needsUpdate) {
-      return serializeDoc(snapshot);
-    }
-
-    await ref.set(payload, { merge: true });
-    return {
-      id: snapshot.id,
-      ...current,
-      ...payload,
-      updatedAt: new Date().toISOString(),
-    };
-  } else {
-    await ref.set({
-      ...payload,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-    return {
-      id: docId,
-      ...payload,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-  }
+  await ref.set(payload);
+  const created = await ref.get();
+  return serializeDoc(created);
 }
 
 async function getCustomerById({ restaurantId, customerId }) {
