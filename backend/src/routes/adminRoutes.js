@@ -1258,11 +1258,10 @@ function createAdminRoutes({
         return;
       }
 
-      const customers = await customerRepo.listCustomers({
+      const customer = await customerRepo.getCustomerById({
         restaurantId: req.params.restaurantId,
-        limit: 500,
+        customerId: req.params.customerId,
       });
-      const customer = customers.find((item) => item.id === req.params.customerId);
       if (!customer) {
         res.status(404).json({ error: "Customer not found" });
         return;
@@ -1272,6 +1271,7 @@ function createAdminRoutes({
         restaurantId: req.params.restaurantId,
         channel: customer.channel,
         channelCustomerId: customer.channelCustomerId,
+        customerPhone: customer.customerPhone,
       });
 
       const items = messages.map((message) => ({

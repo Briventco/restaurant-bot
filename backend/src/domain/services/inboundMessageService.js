@@ -1232,6 +1232,20 @@ function createInboundMessageService({
       }
     }
 
+    if (customerService) {
+      try {
+        await customerService.upsertCustomerFromChannelMessage({
+          restaurantId,
+          channel: normalized.channel,
+          channelCustomerId: normalized.channelCustomerId,
+          customerPhone: normalized.customerPhone,
+          displayName: normalized.displayName || "",
+        });
+      } catch (_error) {
+        // best-effort customer index for admin outbox views
+      }
+    }
+
     const lower = normalizeText(incomingMessage);
     const emptyDecision = {
       intent: "unknown",

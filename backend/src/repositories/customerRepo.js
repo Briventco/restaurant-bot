@@ -71,19 +71,45 @@ async function upsertByChannelIdentity({
   }
 }
 
+async function getCustomerById({ restaurantId, customerId }) {
+  const normalizedId = String(customerId || "").trim();
+  if (!normalizedId) {
+    return null;
+  }
+
+  const snapshot = await customersCollection(restaurantId).doc(normalizedId).get();
+  if (!snapshot.exists) {
+    return null;
+  }
+
+  return serializeDoc(snapshot);
+}
+
 async function listCustomers({ restaurantId, limit = 100 }) {
   const effectiveLimit = Math.max(1, Math.min(500, Number(limit) || 100));
 
-  const snapshot = await customersCollection(restaurantId)
-    .orderBy("updatedAt", "desc")
-    .limit(effectiveLimit)
-    .get();
+  try {
+    const snapshot = await customersCollection(restaurantId)
+      .orderBy("updatedAt", "desc")
+      .limit(effectiveLimit)
+      .get();
 
-  return snapshot.docs.map((doc) => serializeDoc(doc));
+    return snapshot.docs.map((doc) => serializeDoc(doc));
+  } catch (_error) {
+    const snapshot = await customersCollection(restaurantId).limit(effectiveLimit).get();
+    return snapshot.docs
+      .map((doc) => serializeDoc(doc))
+      .sort((left, right) => {
+        const leftTime = new Date(left.updatedAt || left.createdAt || 0).getTime();
+        const rightTime = new Date(right.updatedAt || right.createdAt || 0).getTime();
+        return rightTime - leftTime;
+      });
+  }
 }
 
 module.exports = {
   customerDocId,
   upsertByChannelIdentity,
+  getCustomerById,
   listCustomers,
 };

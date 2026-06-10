@@ -8,6 +8,34 @@ function conversationMessagesCollection(restaurantId) {
     .collection("conversationMessages");
 }
 
+function buildChannelCustomerIdCandidates(channelCustomerId, customerPhone = "") {
+  const candidates = new Set();
+  const raw = String(channelCustomerId || "").trim();
+
+  if (raw) {
+    candidates.add(raw);
+    const base = raw.split("@")[0].replace(/\D/g, "");
+    if (base) {
+      candidates.add(`${base}@c.us`);
+      candidates.add(`${base}@lid`);
+      candidates.add(base);
+    }
+  }
+
+  const phone = String(customerPhone || "").trim();
+  if (phone) {
+    candidates.add(phone);
+    const digits = phone.replace(/\D/g, "");
+    if (digits) {
+      candidates.add(digits);
+      candidates.add(`${digits}@c.us`);
+      candidates.add(`${digits}@lid`);
+    }
+  }
+
+  return Array.from(candidates).filter(Boolean);
+}
+
 async function logMessage({
   restaurantId,
   channel,
@@ -48,21 +76,41 @@ async function listMessagesByCustomer({
   restaurantId,
   channel,
   channelCustomerId,
+  customerPhone = "",
   limit = 200,
 }) {
   const effectiveLimit = Math.max(1, Math.min(500, Number(limit) || 200));
+  const normalizedChannel = String(channel || "").trim();
+  const candidates = buildChannelCustomerIdCandidates(channelCustomerId, customerPhone);
 
-  const snapshot = await conversationMessagesCollection(restaurantId)
-    .where("channel", "==", String(channel || ""))
-    .where("channelCustomerId", "==", String(channelCustomerId || ""))
-    .orderBy("createdAtMs", "asc")
-    .limit(effectiveLimit)
-    .get();
+  if (!candidates.length) {
+    return [];
+  }
 
-  return snapshot.docs.map((doc) => serializeDoc(doc));
+  const byId = new Map();
+
+  for (const candidate of candidates) {
+    const snapshot = await conversationMessagesCollection(restaurantId)
+      .where("channelCustomerId", "==", candidate)
+      .limit(effectiveLimit)
+      .get();
+
+    for (const doc of snapshot.docs) {
+      const message = serializeDoc(doc);
+      if (normalizedChannel && String(message.channel || "").trim() !== normalizedChannel) {
+        continue;
+      }
+      byId.set(message.id, message);
+    }
+  }
+
+  return Array.from(byId.values()).sort(
+    (left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0)
+  );
 }
 
 module.exports = {
+  buildChannelCustomerIdCandidates,
   logMessage,
   listMessagesByCustomer,
 };
