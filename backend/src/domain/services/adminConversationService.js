@@ -150,6 +150,7 @@ async function buildCustomerMessageTimeline({
       ? routingAuditRepo.listRecentRoutingAudits({ restaurantId, limit: effectiveLimit * 2 })
       : Promise.resolve([]),
   ]);
+  const hasConversationMessages = conversationMessages.length > 0;
 
   const items = [];
 
@@ -168,29 +169,31 @@ async function buildCustomerMessageTimeline({
     });
   }
 
-  for (const message of outboxMessages) {
-    if (!matchesChannelCustomerId(message.recipient, candidates)) {
-      continue;
-    }
-    if (!String(message.text || "").trim()) {
-      continue;
-    }
+  if (!hasConversationMessages) {
+    for (const message of outboxMessages) {
+      if (!matchesChannelCustomerId(message.recipient, candidates)) {
+        continue;
+      }
+      if (!String(message.text || "").trim()) {
+        continue;
+      }
 
-    const createdAtMs =
-      message.sentAtMs || message.createdAtMs || message.updatedAtMs || 0;
-    if (effectiveBeforeMs > 0 && Number(createdAtMs || 0) >= effectiveBeforeMs) {
-      continue;
-    }
+      const createdAtMs =
+        message.sentAtMs || message.createdAtMs || message.updatedAtMs || 0;
+      if (effectiveBeforeMs > 0 && Number(createdAtMs || 0) >= effectiveBeforeMs) {
+        continue;
+      }
 
-    items.push({
-      id: `outbox-${message.id || message.messageId}`,
-      direction: "out",
-      text: message.text,
-      messageType: message.messageType || "text",
-      createdAtMs,
-      createdAt: message.updatedAt || message.createdAt || null,
-      source: "outbox",
-    });
+      items.push({
+        id: `outbox-${message.id || message.messageId}`,
+        direction: "out",
+        text: message.text,
+        messageType: message.messageType || "text",
+        createdAtMs,
+        createdAt: message.updatedAt || message.createdAt || null,
+        source: "outbox",
+      });
+    }
   }
 
   for (const audit of routingAudits) {
