@@ -33,6 +33,28 @@ function matchesChannelCustomerId(value, candidates) {
   );
 }
 
+function buildCustomerLabel(customer = {}) {
+  const displayName = String(customer.displayName || "").trim();
+  if (displayName) {
+    return displayName;
+  }
+
+  const phone = String(customer.customerPhone || "").trim();
+  if (phone) {
+    return phone;
+  }
+
+  const customerId = String(customer.id || "").trim();
+  if (!customerId) {
+    return "Customer";
+  }
+
+  const shortNumber = parseInt(customerId.slice(-6), 16);
+  const safeNumber = Number.isFinite(shortNumber) ? Math.abs(shortNumber % 10000) : 0;
+
+  return `Customer #${String(safeNumber).padStart(4, "0")}`;
+}
+
 async function buildCustomerActivityList({
   restaurantId,
   customerRepo,
@@ -193,5 +215,6 @@ async function buildCustomerMessageTimeline({
 module.exports = {
   buildCustomerActivityList,
   buildCustomerMessageTimeline,
+  buildCustomerLabel,
   matchesChannelCustomerId,
 };

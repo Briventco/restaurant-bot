@@ -14,6 +14,7 @@ const {
 const {
   buildCustomerActivityList,
   buildCustomerMessageTimeline,
+  buildCustomerLabel,
 } = require("../domain/services/adminConversationService");
 
 function inferRestaurantStatus(restaurant = {}) {
@@ -1242,6 +1243,7 @@ function createAdminRoutes({
         channelCustomerId: customer.channelCustomerId || "",
         customerPhone: customer.customerPhone || "",
         displayName: customer.displayName || "",
+        label: buildCustomerLabel(customer),
         updatedAt: customer.updatedAt || null,
         createdAt: customer.createdAt || null,
         lastActivityAt: customer.lastActivityAt || customer.updatedAt || customer.createdAt || null,
@@ -1302,6 +1304,7 @@ function createAdminRoutes({
           customerPhone: customer.customerPhone || "",
           channel: customer.channel || "",
           channelCustomerId: customer.channelCustomerId || "",
+          label: buildCustomerLabel(customer),
         },
         items,
       });
