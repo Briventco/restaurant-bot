@@ -78,9 +78,11 @@ async function listMessagesByCustomer({
   channelCustomerId,
   customerPhone = "",
   limit = 200,
+  beforeMs = 0,
 }) {
   const effectiveLimit = Math.max(1, Math.min(500, Number(limit) || 200));
   const normalizedChannel = String(channel || "").trim();
+  const effectiveBeforeMs = Number(beforeMs) > 0 ? Number(beforeMs) : 0;
   const candidates = buildChannelCustomerIdCandidates(channelCustomerId, customerPhone);
 
   if (!candidates.length) {
@@ -90,10 +92,14 @@ async function listMessagesByCustomer({
   const byId = new Map();
 
   for (const candidate of candidates) {
-    const snapshot = await conversationMessagesCollection(restaurantId)
-      .where("channelCustomerId", "==", candidate)
-      .limit(effectiveLimit)
-      .get();
+    let query = conversationMessagesCollection(restaurantId).where("channelCustomerId", "==", candidate);
+    if (effectiveBeforeMs > 0) {
+      query = query.where("createdAtMs", "<", effectiveBeforeMs).orderBy("createdAtMs", "desc");
+    } else {
+      query = query.orderBy("createdAtMs", "desc");
+    }
+
+    const snapshot = await query.limit(effectiveLimit).get();
 
     for (const doc of snapshot.docs) {
       const message = serializeDoc(doc);

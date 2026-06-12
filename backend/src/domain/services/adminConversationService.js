@@ -126,11 +126,15 @@ async function buildCustomerMessageTimeline({
   conversationMessageRepo,
   outboxService,
   routingAuditRepo,
+  limit = 50,
+  beforeMs = 0,
 }) {
   const candidates = buildChannelCustomerIdCandidates(
     customer.channelCustomerId,
     customer.customerPhone
   );
+  const effectiveLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+  const effectiveBeforeMs = Number(beforeMs) > 0 ? Number(beforeMs) : 0;
 
   const [conversationMessages, outboxMessages, routingAudits] = await Promise.all([
     conversationMessageRepo.listMessagesByCustomer({
@@ -138,17 +142,21 @@ async function buildCustomerMessageTimeline({
       channel: customer.channel,
       channelCustomerId: customer.channelCustomerId,
       customerPhone: customer.customerPhone,
-      limit: 300,
+      limit: effectiveLimit * 3,
+      beforeMs: effectiveBeforeMs,
     }),
-    outboxService.listOutboxMessages({ restaurantId, limit: 300 }),
+    outboxService.listOutboxMessages({ restaurantId, limit: effectiveLimit * 4 }),
     routingAuditRepo
-      ? routingAuditRepo.listRecentRoutingAudits({ restaurantId, limit: 300 })
+      ? routingAuditRepo.listRecentRoutingAudits({ restaurantId, limit: effectiveLimit * 2 })
       : Promise.resolve([]),
   ]);
 
   const items = [];
 
   for (const message of conversationMessages) {
+    if (effectiveBeforeMs > 0 && Number(message.createdAtMs || 0) >= effectiveBeforeMs) {
+      continue;
+    }
     items.push({
       id: message.id,
       direction: message.direction,
@@ -168,13 +176,18 @@ async function buildCustomerMessageTimeline({
       continue;
     }
 
+    const createdAtMs =
+      message.sentAtMs || message.createdAtMs || message.updatedAtMs || 0;
+    if (effectiveBeforeMs > 0 && Number(createdAtMs || 0) >= effectiveBeforeMs) {
+      continue;
+    }
+
     items.push({
       id: `outbox-${message.id || message.messageId}`,
       direction: "out",
       text: message.text,
       messageType: message.messageType || "text",
-      createdAtMs:
-        message.sentAtMs || message.createdAtMs || message.updatedAtMs || 0,
+      createdAtMs,
       createdAt: message.updatedAt || message.createdAt || null,
       source: "outbox",
     });
@@ -188,12 +201,17 @@ async function buildCustomerMessageTimeline({
       continue;
     }
 
+    const createdAtMs = toMs(audit.createdAt);
+    if (effectiveBeforeMs > 0 && createdAtMs >= effectiveBeforeMs) {
+      continue;
+    }
+
     items.push({
       id: `audit-${audit.id}`,
       direction: "in",
       text: audit.textPreview,
       messageType: audit.messageType || "text",
-      createdAtMs: toMs(audit.createdAt),
+      createdAtMs,
       createdAt: audit.createdAt || null,
       source: "routing_audit",
     });
@@ -201,15 +219,25 @@ async function buildCustomerMessageTimeline({
 
   const deduped = new Map();
   for (const item of items) {
-    const key = `${item.direction}:${item.createdAtMs}:${item.text}`;
+    const normalizedText = String(item.text || "").trim().toLowerCase();
+    const key = `${item.direction}:${item.createdAtMs}:${normalizedText}`;
     if (!deduped.has(key)) {
       deduped.set(key, item);
     }
   }
 
-  return Array.from(deduped.values()).sort(
+  const ordered = Array.from(deduped.values()).sort(
     (left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0)
   );
+
+  const page = ordered.slice(Math.max(0, ordered.length - effectiveLimit));
+  const oldest = page.length ? Number(page[0].createdAtMs || 0) : 0;
+
+  return {
+    items: page,
+    hasMore: ordered.length > page.length,
+    nextBeforeMs: oldest || 0,
+  };
 }
 
 module.exports = {

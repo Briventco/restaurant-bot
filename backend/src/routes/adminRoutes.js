@@ -1277,15 +1277,19 @@ function createAdminRoutes({
         return;
       }
 
-      const messages = await buildCustomerMessageTimeline({
+      const limit = Number(req.query.limit) > 0 ? Number(req.query.limit) : 50;
+      const beforeMs = Number(req.query.beforeMs) > 0 ? Number(req.query.beforeMs) : 0;
+      const timeline = await buildCustomerMessageTimeline({
         restaurantId: req.params.restaurantId,
         customer,
         conversationMessageRepo,
         outboxService,
         routingAuditRepo,
+        limit,
+        beforeMs,
       });
 
-      const items = messages.map((message) => ({
+      const items = (timeline.items || []).map((message) => ({
         id: message.id,
         direction: message.direction,
         text: message.text,
@@ -1307,6 +1311,8 @@ function createAdminRoutes({
           label: buildCustomerLabel(customer),
         },
         items,
+        hasMore: Boolean(timeline.hasMore),
+        nextBeforeMs: Number(timeline.nextBeforeMs || 0),
       });
     } catch (error) {
       next(error);
