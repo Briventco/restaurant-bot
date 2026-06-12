@@ -66,6 +66,10 @@ const puppeteerBaseArgs = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
+  "--disable-accelerated-2d-canvas",
+  "--no-first-run",
+  "--no-zygote",
+  "--single-process",
   "--disable-gpu",
 ];
 const puppeteerLowMemoryArgs = [
@@ -174,9 +178,10 @@ const constants = {
   SEND_RETRY_ATTEMPTS: toNumber(process.env.SEND_RETRY_ATTEMPTS, 1),
   SEND_RETRY_BACKOFF_MS: toNumber(process.env.SEND_RETRY_BACKOFF_MS, 800),
   INBOUND_DEDUPE_TTL_MS: toNumber(process.env.INBOUND_DEDUPE_TTL_MS, 5 * 60 * 1000),
-  INBOUND_DEDUPE_MAX_ENTRIES: toNumber(process.env.INBOUND_DEDUPE_MAX_ENTRIES, 5000),
+  INBOUND_DEDUPE_MAX_ENTRIES: toNumber(process.env.INBOUND_DEDUPE_MAX_ENTRIES, 1000),
   OUTBOUND_DEDUPE_TTL_MS: toNumber(process.env.OUTBOUND_DEDUPE_TTL_MS, 5 * 60 * 1000),
-  OUTBOUND_DEDUPE_MAX_ENTRIES: toNumber(process.env.OUTBOUND_DEDUPE_MAX_ENTRIES, 5000),
+  OUTBOUND_DEDUPE_MAX_ENTRIES: toNumber(process.env.OUTBOUND_DEDUPE_MAX_ENTRIES, 1000),
+  IDEMPOTENCY_MAX_ENTRIES: toNumber(process.env.IDEMPOTENCY_MAX_ENTRIES, 3000),
   SUPPORTED_INBOUND_TYPES: new Set(["chat", "text"]),
   IGNORE_BROADCAST: true,
   IGNORE_STATUS: true,

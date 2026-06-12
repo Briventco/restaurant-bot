@@ -1,4 +1,6 @@
 const os = require("os");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { createLogger } = require("../utils/logger");
 const { loadTenantConfig } = require("./tenantConfigLoader");
@@ -107,7 +109,23 @@ function createMultiTenantRuntimeManager({ constants }) {
     });
     tenantRuntimes.set(tenant.restaurantId, runtime);
     if (tenant.enabled) {
-      await runtime.start(reason || "dynamic_add");
+      const authSessionDir = path.join(constants.WHATSAPP_AUTH_DATA_PATH, `session-${tenant.whatsappClientId}`);
+      let sessionExists = false;
+      try {
+        sessionExists = fs.existsSync(authSessionDir) && fs.readdirSync(authSessionDir).length > 0;
+      } catch (_err) {
+        sessionExists = false;
+      }
+
+      if (!sessionExists) {
+        logger.warn("Skipping tenant dynamic start — no auth session on disk", {
+          restaurantId: tenant.restaurantId,
+          whatsappClientId: tenant.whatsappClientId,
+          authSessionDir,
+        });
+      } else {
+        await runtime.start(reason || "dynamic_add");
+      }
     }
   }
 
@@ -259,8 +277,30 @@ function createMultiTenantRuntimeManager({ constants }) {
         continue;
       }
 
+      const tenantCfg = runtime.tenantConfig || {};
+      const authSessionDir = path.join(constants.WHATSAPP_AUTH_DATA_PATH, `session-${tenantCfg.whatsappClientId}`);
+      let sessionExists = false;
+      try {
+        sessionExists = fs.existsSync(authSessionDir) && fs.readdirSync(authSessionDir).length > 0;
+      } catch (_err) {
+        sessionExists = false;
+      }
+
+      if (!sessionExists) {
+        logger.warn("Skipping tenant startup — no auth session on disk", {
+          restaurantId: tenantCfg.restaurantId,
+          whatsappClientId: tenantCfg.whatsappClientId,
+          authSessionDir,
+        });
+        continue;
+      }
+
       // eslint-disable-next-line no-await-in-loop
       await runtime.start("startup");
+
+      // stagger tenant startups to reduce simultaneous Chromium launches
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 5000));
     }
 
     await syncTenantsNow({ reason: "startup_sync" });

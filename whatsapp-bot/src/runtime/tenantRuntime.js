@@ -119,7 +119,7 @@ function createTenantRuntime({
     inFlightTtlMs: constants.BOT_RUNTIME_OUTBOUND_INFLIGHT_TTL_MS,
     sentTtlMs: constants.BOT_RUNTIME_OUTBOUND_SENT_TTL_MS,
     failedTtlMs: constants.BOT_RUNTIME_OUTBOUND_FAILED_TTL_MS,
-    maxEntries: 30000,
+    maxEntries: Number(constants.IDEMPOTENCY_MAX_ENTRIES || 3000),
   });
 
   const chatQueue = createChatQueue();

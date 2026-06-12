@@ -11,10 +11,23 @@ function createWhatsappClient({
   logger = null,
 }) {
   const resolvedChromium = resolveChromiumExecutablePath(puppeteerExecutablePath);
+  const requiredArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-accelerated-2d-canvas",
+    "--no-first-run",
+    "--no-zygote",
+    "--single-process",
+    "--disable-gpu",
+  ];
+  const providedArgs = Array.isArray(puppeteerArgs) ? puppeteerArgs : [];
+  const args = Array.from(new Set([...providedArgs, ...requiredArgs]));
+
   const launchConfig = {
     headless: Boolean(puppeteerHeadless),
     protocolTimeout: protocolTimeoutMs,
-    args: Array.isArray(puppeteerArgs) ? puppeteerArgs : [],
+    args,
   };
 
   if (resolvedChromium.executablePath) {
