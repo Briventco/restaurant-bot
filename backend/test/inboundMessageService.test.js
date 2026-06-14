@@ -23,6 +23,13 @@ function buildService(overrides = {}) {
     },
     orderService: {
       findActiveOrderByCustomer: async () => null,
+      listOrders: async () => [],
+      listOrderMessages: async () => ({ messages: [] }),
+      getOrder: async () => {
+        throw new Error("Order not found");
+      },
+      confirmOrder: async ({ orderId }) => ({ id: orderId, status: "confirmed" }),
+      rejectOrder: async ({ orderId }) => ({ id: orderId, status: "cancelled" }),
       logInboundMessage: async () => ({}),
       resolveRequestedItems: async () => ({ matched: [] }),
       handleAwaitingCustomerUpdate: async () => ({ handled: false }),
@@ -860,4 +867,130 @@ test("parser-only slang classification routes smalltalk deterministically", asyn
   });
 
   assert.equal(result.type, "smalltalk_how_are_you");
+});
+
+test("staff hash confirm is rejected for numbers that are not restaurant alert recipients", async () => {
+  const service = buildService({
+    restaurantRepo: {
+      getRestaurantById: async () => ({
+        id: "rest-1",
+        name: "Test Restaurant",
+        bot: {
+          orderAlertRecipients: ["08011112222"],
+        },
+      }),
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "2348000000000@c.us",
+      customerPhone: "+2348000000000",
+      text: "#confirm ord-1",
+      providerMessageId: "msg-staff-unauthorized",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "staff_hash_unauthorized");
+  assert.match(String(result.replyText || ""), /configured restaurant alert number/i);
+  assert.match(String(result.replyText || ""), /09130123219/);
+});
+
+test("staff hash confirm is rejected when no Servra alert was sent to that number", async () => {
+  const service = buildService({
+    restaurantRepo: {
+      getRestaurantById: async () => ({
+        id: "rest-1",
+        name: "Test Restaurant",
+        bot: {
+          orderAlertRecipients: ["08011112222"],
+        },
+      }),
+    },
+    orderService: {
+      getOrder: async ({ orderId }) => ({
+        id: orderId,
+        status: "pending_confirmation",
+      }),
+      listOrderMessages: async () => ({
+        messages: [],
+      }),
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "08011112222@c.us",
+      customerPhone: "08011112222",
+      text: "#confirm ord-2",
+      providerMessageId: "msg-staff-no-alert",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(result.type, "staff_hash_alert_not_found");
+  assert.match(String(result.replyText || ""), /could not find a Servra order alert/i);
+});
+
+test("staff hash confirm succeeds only when the Servra alert was sent to that restaurant number", async () => {
+  let confirmedOrderId = "";
+  const service = buildService({
+    restaurantRepo: {
+      getRestaurantById: async () => ({
+        id: "rest-1",
+        name: "Test Restaurant",
+        bot: {
+          orderAlertRecipients: ["08011112222"],
+        },
+      }),
+    },
+    orderService: {
+      getOrder: async ({ orderId }) => ({
+        id: orderId,
+        status: "pending_confirmation",
+      }),
+      listOrderMessages: async () => ({
+        messages: [
+          {
+            direction: "outbound",
+            channelCustomerId: "08011112222",
+            metadata: {
+              internalAlert: true,
+              messageType: "restaurant_order_alert",
+              alertRecipient: "08011112222",
+              deliveryStatus: "sent",
+            },
+          },
+        ],
+      }),
+      confirmOrder: async ({ orderId }) => {
+        confirmedOrderId = orderId;
+        return {
+          id: orderId,
+          status: "confirmed",
+        };
+      },
+    },
+  });
+
+  const result = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "08011112222@c.us",
+      customerPhone: "08011112222",
+      text: "#confirm ord-3",
+      providerMessageId: "msg-staff-confirm",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(confirmedOrderId, "ord-3");
+  assert.equal(result.type, "staff_hash_confirmed_order");
+  assert.match(String(result.replyText || ""), /Customer has been updated/i);
 });

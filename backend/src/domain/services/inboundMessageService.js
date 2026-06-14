@@ -793,7 +793,7 @@ function createInboundMessageService({
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
-  centralAlertNumbers = [],
+  alertSenderNumber = "09130123219",
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -966,12 +966,11 @@ function createInboundMessageService({
         ? restaurant.bot
         : {};
 
-    // Combine per-restaurant recipients with the platform-level central numbers.
-    const perRestaurant = Array.isArray(bot.orderAlertRecipients)
+    const recipients = Array.isArray(bot.orderAlertRecipients)
       ? bot.orderAlertRecipients
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
       : [];
-    const central = Array.isArray(centralAlertNumbers) ? centralAlertNumbers : [];
-    const recipients = Array.from(new Set([...central, ...perRestaurant]));
 
     const incomingCandidates = new Set([
       ...buildPhoneCandidates(normalized.channelCustomerId),
@@ -1096,6 +1095,52 @@ function createInboundMessageService({
     }
 
     return { orderId: identifier, found: false };
+  }
+
+  async function wasOrderAlertSentToRecipient(restaurantId, orderId, normalized) {
+    const incomingCandidates = new Set([
+      ...buildPhoneCandidates(normalized.channelCustomerId),
+      ...buildPhoneCandidates(normalized.customerPhone),
+    ]);
+
+    if (!incomingCandidates.size) {
+      return false;
+    }
+
+    try {
+      const result = await orderService.listOrderMessages({
+        restaurantId,
+        orderId,
+        limit: 50,
+      });
+      const messages = Array.isArray(result && result.messages) ? result.messages : [];
+
+      return messages.some((message) => {
+        const metadata =
+          message && message.metadata && typeof message.metadata === "object"
+            ? message.metadata
+            : {};
+        const messageType = String(metadata.messageType || metadata.type || "").trim();
+        const deliveryStatus = String(metadata.deliveryStatus || "").trim();
+        if (metadata.internalAlert !== true) {
+          return false;
+        }
+        if (messageType !== "restaurant_order_alert") {
+          return false;
+        }
+        if (deliveryStatus === "failed") {
+          return false;
+        }
+
+        const alertRecipient = String(
+          metadata.alertRecipient || message.channelCustomerId || ""
+        ).trim();
+        const alertCandidates = buildPhoneCandidates(alertRecipient);
+        return alertCandidates.some((candidate) => incomingCandidates.has(candidate));
+      });
+    } catch (_error) {
+      return false;
+    }
   }
 
   async function sendText(sendMessage, to, text) {
@@ -1306,6 +1351,7 @@ function createInboundMessageService({
         getConversationSessionWithAliases(restaurantId, normalized.channel, normalized)
       ),
     ]);
+    const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
     if (aiShadowMode && incomingMessage.trim()) {
       const shadowMeta = {
@@ -1359,6 +1405,18 @@ function createInboundMessageService({
 
     const parsedHashCommand = parseStaffHashCommand(incomingMessage);
     if (parsedHashCommand) {
+      if (!isStaffAlertSender) {
+        const replyText =
+          `This command only works from a configured restaurant alert number after you receive the Servra order alert from ${alertSenderNumber}.`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_hash_unauthorized",
+          replyText,
+        };
+      }
+
       if (!["confirm", "reject"].includes(parsedHashCommand.action)) {
         const replyText =
           "Unknown command. Use:\n#confirm <ORDER_REF>\n#reject <ORDER_REF> <REASON>";
@@ -1389,6 +1447,24 @@ function createInboundMessageService({
         return { handled: true, shouldReply: true, type: "staff_hash_order_not_found", replyText };
       }
       const resolvedOrderId = resolved.orderId;
+
+      const alertWasSentToSender = await wasOrderAlertSentToRecipient(
+        restaurantId,
+        resolvedOrderId,
+        normalized
+      );
+      if (!alertWasSentToSender) {
+        const replyText =
+          `I could not find a Servra order alert for "${parsedHashCommand.orderId}" on this number. Wait for the alert from ${alertSenderNumber} and reply from that alert chat.`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_hash_alert_not_found",
+          replyText,
+          orderId: resolvedOrderId,
+        };
+      }
 
       if (parsedHashCommand.action === "confirm") {
         try {
@@ -1499,8 +1575,6 @@ function createInboundMessageService({
         };
       }
     }
-
-    const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
     if (
       isStaffAlertSender &&

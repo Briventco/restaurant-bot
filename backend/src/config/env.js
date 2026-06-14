@@ -189,11 +189,19 @@ const env = {
     "https://servra.io",
     "https://www.servra.io"
   ]),
-  // Central Servra operations WhatsApp number(s).
-  // Comma or newline-separated. All restaurant order/payment alerts are sent
-  // to these numbers automatically — no per-restaurant configuration needed.
-  // Replies using #confirm / #reject from these numbers are always accepted
-  // regardless of each restaurant's orderAlertRecipients list.
+  // Dedicated Servra sender line for restaurant order alerts.
+  // Alerts are sent from this number to each restaurant/admin recipient.
+  SERVRA_ORDER_ALERT_SENDER_NUMBER: String(
+    process.env.SERVRA_ORDER_ALERT_SENDER_NUMBER || "09130123219"
+  ).trim(),
+  // Optional explicit tenant/restaurant id that owns the Servra sender line.
+  // If omitted, the backend will try to resolve it from restaurant.whatsapp.phone.
+  SERVRA_ORDER_ALERT_SENDER_RESTAURANT_ID: String(
+    process.env.SERVRA_ORDER_ALERT_SENDER_RESTAURANT_ID || ""
+  ).trim(),
+  // Legacy Servra operations numbers kept for backwards compatibility with
+  // manual monitoring workflows. They are not used as automatic order-alert
+  // recipients anymore.
   SERVRA_CENTRAL_ALERT_NUMBERS: toStringArray(
     process.env.SERVRA_CENTRAL_ALERT_NUMBERS,
     []

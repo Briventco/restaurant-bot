@@ -170,11 +170,23 @@ function createOrderService({
   orderParsingService,
   outboxService,
   conversationSessionRepo,
-  centralAlertNumbers = [],
+  alertSenderNumber = "09130123219",
+  alertSenderRestaurantId = "",
   logger = null,
 }) {
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
+  }
+
+  function logAlertError(message, meta = {}) {
+    if (logger && typeof logger.error === "function") {
+      logger.error(message, meta);
+      return;
+    }
+
+    if (logger && typeof logger.warn === "function") {
+      logger.warn(message, meta);
+    }
   }
 
   function buildPhoneCandidates(value) {
@@ -209,6 +221,29 @@ function createOrderService({
     return buildPhoneCandidates(recipient);
   }
 
+  function getRestaurantRecordId(restaurant) {
+    return String(
+      (restaurant && (restaurant.id || restaurant.restaurantId)) || ""
+    ).trim();
+  }
+
+  function getRestaurantWhatsappNumber(restaurant) {
+    const whatsapp =
+      restaurant && restaurant.whatsapp && typeof restaurant.whatsapp === "object"
+        ? restaurant.whatsapp
+        : {};
+
+    return String(whatsapp.phone || whatsapp.phoneNumber || "").trim();
+  }
+
+  function getCustomerDisplayName(customer) {
+    return String(
+      (customer &&
+        (customer.displayName || customer.customerName || customer.name || customer.fullName)) ||
+        ""
+    ).trim();
+  }
+
   function getManualPaymentConfig(restaurant) {
     const payment =
       restaurant && restaurant.payment && typeof restaurant.payment === "object"
@@ -230,19 +265,106 @@ function createOrderService({
         ? restaurant.bot
         : {};
 
-    const perRestaurant = Array.isArray(bot.orderAlertRecipients)
-      ? bot.orderAlertRecipients
+    return Array.from(
+      new Set(
+        (Array.isArray(bot.orderAlertRecipients) ? bot.orderAlertRecipients : [])
           .map((value) => String(value || "").trim())
           .filter(Boolean)
-      : [];
+      )
+    );
+  }
 
-    // Merge platform-level central numbers — deduplicated, always included.
-    const central = Array.isArray(centralAlertNumbers)
-      ? centralAlertNumbers.map((v) => String(v || "").trim()).filter(Boolean)
-      : [];
+  async function resolveRestaurantAlertSenderContext() {
+    const configuredSenderRestaurantId = String(alertSenderRestaurantId || "").trim();
+    const configuredSenderNumber =
+      String(alertSenderNumber || "").trim() || "09130123219";
 
-    const merged = Array.from(new Set([...central, ...perRestaurant]));
-    return merged;
+    if (configuredSenderRestaurantId) {
+      const senderRestaurant = await restaurantRepo.getRestaurantById(
+        configuredSenderRestaurantId
+      );
+      if (senderRestaurant) {
+        return {
+          senderRestaurantId:
+            getRestaurantRecordId(senderRestaurant) || configuredSenderRestaurantId,
+          senderNumber:
+            getRestaurantWhatsappNumber(senderRestaurant) || configuredSenderNumber,
+          resolution: "restaurant_id",
+        };
+      }
+
+      logAlertError("notifyRestaurantOrderAlert: sender restaurant not found", {
+        senderRestaurantId: configuredSenderRestaurantId,
+        senderNumber: configuredSenderNumber,
+      });
+    }
+
+    if (
+      configuredSenderNumber &&
+      restaurantRepo &&
+      typeof restaurantRepo.findRestaurantByWhatsappBinding === "function"
+    ) {
+      const senderRestaurant = await restaurantRepo.findRestaurantByWhatsappBinding({
+        phone: configuredSenderNumber,
+      });
+      if (senderRestaurant) {
+        return {
+          senderRestaurantId: getRestaurantRecordId(senderRestaurant),
+          senderNumber:
+            getRestaurantWhatsappNumber(senderRestaurant) || configuredSenderNumber,
+          resolution: "whatsapp_phone_binding",
+        };
+      }
+    }
+
+    return {
+      senderRestaurantId: "",
+      senderNumber: configuredSenderNumber,
+      resolution: "unresolved",
+    };
+  }
+
+  function buildRestaurantAlertDeliveryStatus(outboxResult) {
+    const finalStatus = (outboxResult.message && outboxResult.message.status) || "queued";
+
+    if (finalStatus === "sent") {
+      return outboxResult.duplicate ? "sent_duplicate_suppressed" : "sent";
+    }
+    if (finalStatus === "failed") {
+      return "failed";
+    }
+    if (finalStatus === "processing") {
+      return "processing";
+    }
+    return "queued_for_retry";
+  }
+
+  function buildRestaurantAlertAuditMetadata({
+    recipient,
+    senderRestaurantId,
+    senderNumber,
+    messageType,
+    sourceAction,
+    outboxResult,
+    deliveryStatus,
+    metadata,
+  }) {
+    return {
+      ...metadata,
+      internalAlert: true,
+      alertRecipient: recipient,
+      senderRestaurantId,
+      senderNumber,
+      sourceAction,
+      messageType,
+      deliveryStatus,
+      outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
+      outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
+      outboxAttemptCount: outboxResult.message
+        ? Number(outboxResult.message.attemptCount || 0)
+        : 0,
+      duplicateSuppressed: Boolean(outboxResult.duplicate),
+    };
   }
 
   function hashText(value) {
@@ -339,32 +461,111 @@ function createOrderService({
     recipient,
     text,
     metadata = {},
+    senderContext = null,
   }) {
-    await outboxService.enqueueAndMaybeDispatch({
+    const normalizedRecipient = String(recipient || "").trim();
+    const messageType =
+      String(metadata.type || "restaurant_alert").trim() || "restaurant_alert";
+    const sourceAction =
+      String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert";
+    const sourceRef = String(metadata.sourceRef || order.id || "").trim();
+    const resolvedSenderContext =
+      senderContext && String(senderContext.senderRestaurantId || "").trim()
+        ? senderContext
+        : await resolveRestaurantAlertSenderContext();
+
+    if (!resolvedSenderContext.senderRestaurantId) {
+      const senderError = new Error(
+        `Servra alert sender ${resolvedSenderContext.senderNumber || alertSenderNumber} is not configured`
+      );
+      senderError.code = "SERVRA_ALERT_SENDER_NOT_CONFIGURED";
+      senderError.retryable = false;
+      throw senderError;
+    }
+
+    const outboxResult = await outboxService.enqueueAndMaybeDispatch({
       restaurantId: order.restaurantId,
       channel: order.channel,
-      recipient,
+      recipient: normalizedRecipient,
       text,
-      messageType: String(metadata.type || "restaurant_alert").trim() || "restaurant_alert",
-      sourceAction:
-        String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert",
-      sourceRef: String(metadata.sourceRef || order.id || "").trim(),
+      messageType,
+      sourceAction,
+      sourceRef,
       idempotencyKey:
         String(metadata.idempotencyKey || "").trim() ||
         [
           "restaurant_alert",
           order.restaurantId,
           order.id,
-          String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert",
-          normalizePhoneLike(recipient) || "none",
+          sourceAction,
+          normalizePhoneLike(normalizedRecipient) || "none",
         ].join(":"),
       metadata: {
         orderId: order.id,
         internalAlert: true,
-        alertRecipient: recipient,
+        alertRecipient: normalizedRecipient,
+        senderRestaurantId: resolvedSenderContext.senderRestaurantId,
+        senderNumber: resolvedSenderContext.senderNumber,
         ...metadata,
       },
     });
+
+    const deliveryStatus = buildRestaurantAlertDeliveryStatus(outboxResult);
+    const auditMetadata = buildRestaurantAlertAuditMetadata({
+      recipient: normalizedRecipient,
+      senderRestaurantId: resolvedSenderContext.senderRestaurantId,
+      senderNumber: resolvedSenderContext.senderNumber,
+      messageType,
+      sourceAction,
+      outboxResult,
+      deliveryStatus,
+      metadata,
+    });
+
+    try {
+      await orderRepo.addOrderMessage(order.restaurantId, order.id, {
+        restaurantId: order.restaurantId,
+        channel: order.channel,
+        channelCustomerId: normalizedRecipient,
+        customerPhone: normalizePhoneLike(normalizedRecipient),
+        direction: "outbound",
+        text,
+        metadata: auditMetadata,
+      });
+    } catch (error) {
+      if (logger && typeof logger.warn === "function") {
+        logger.warn("sendRestaurantAlertMessage: failed to log order alert message", {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          recipient: normalizedRecipient,
+          error: error && error.message ? error.message : String(error || ""),
+        });
+      }
+    }
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("Restaurant order alert queued for delivery", {
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        senderRestaurantId: resolvedSenderContext.senderRestaurantId,
+        senderNumber: resolvedSenderContext.senderNumber,
+        recipient: normalizedRecipient,
+        messageType,
+        outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
+        deliveryStatus,
+      });
+    }
+
+    return {
+      deliveryStatus,
+      senderRestaurantId: resolvedSenderContext.senderRestaurantId,
+      senderNumber: resolvedSenderContext.senderNumber,
+      recipient: normalizedRecipient,
+      outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
+      outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
+      duplicateSuppressed: Boolean(outboxResult.duplicate),
+      messageType,
+    };
   }
 
   async function notifyRestaurantOrderAlert(order) {
@@ -387,37 +588,49 @@ function createOrderService({
       return;
     }
 
-    // Primary recipients: only the restaurant's own configured alert numbers.
-    const primaryRecipients = Array.isArray(bot.orderAlertRecipients)
-      ? bot.orderAlertRecipients.map((v) => String(v || "").trim()).filter(Boolean)
-      : [];
-
-    // Monitoring recipients: Servra central numbers (fallback/oversight only).
-    const monitoringRecipients = Array.isArray(centralAlertNumbers)
-      ? centralAlertNumbers.map((v) => String(v || "").trim()).filter(Boolean)
-      : [];
+    const primaryRecipients = getOrderAlertRecipients(restaurant);
 
     if (!primaryRecipients.length) {
-      if (logger) {
-        logger.warn("notifyRestaurantOrderAlert: no alert recipients configured", {
-          restaurantId: order.restaurantId,
-          restaurantName: String(restaurant.name || "").trim(),
-        });
-      }
+      logAlertError("notifyRestaurantOrderAlert: no alert recipients configured", {
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        restaurantName: String(restaurant.name || "").trim(),
+      });
+      return;
+    }
+
+    const senderContext = await resolveRestaurantAlertSenderContext();
+    if (!senderContext.senderRestaurantId) {
+      logAlertError("notifyRestaurantOrderAlert: sender line could not be resolved", {
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        senderNumber: senderContext.senderNumber,
+        configuredSenderRestaurantId: String(alertSenderRestaurantId || "").trim(),
+      });
+      return;
+    }
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("Restaurant order alert recipients resolved", {
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        senderRestaurantId: senderContext.senderRestaurantId,
+        senderNumber: senderContext.senderNumber,
+        recipients: primaryRecipients,
+      });
     }
 
     const alertText = buildRestaurantOrderAlertMessage({
       ...order,
       shortCode: buildShortOrderCode(order && order.id),
       restaurantName: String(restaurant.name || "").trim(),
-      orderTime: new Date().toISOString(),
+      orderTime: order.createdAt || new Date().toISOString(),
     });
 
-    // Send to primary recipients and register staff action session for replies.
     await Promise.all(
       primaryRecipients.map(async (recipient) => {
         try {
-          await sendRestaurantAlertMessage({
+          const dispatchResult = await sendRestaurantAlertMessage({
             order,
             recipient,
             text: alertText,
@@ -426,9 +639,14 @@ function createOrderService({
               sourceAction: "newOrderAlert",
               sourceRef: order.id,
             },
+            senderContext,
           });
 
-          if (conversationSessionRepo) {
+          if (
+            conversationSessionRepo &&
+            dispatchResult &&
+            dispatchResult.deliveryStatus !== "failed"
+          ) {
             const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
             await Promise.all(
               sessionRecipients.map((sessionRecipient) =>
@@ -446,41 +664,27 @@ function createOrderService({
               )
             );
           }
-        } catch (alertError) {
-          if (logger) {
-            logger.warn("notifyRestaurantOrderAlert: failed to alert primary recipient", {
+
+          if (logger && typeof logger.info === "function") {
+            logger.info("Restaurant order alert delivery recorded", {
               restaurantId: order.restaurantId,
-              recipient,
-              error: alertError && alertError.message,
+              orderId: order.id,
+              senderRestaurantId: dispatchResult.senderRestaurantId,
+              senderNumber: dispatchResult.senderNumber,
+              recipient: dispatchResult.recipient,
+              outboxStatus: dispatchResult.outboxStatus,
+              deliveryStatus: dispatchResult.deliveryStatus,
             });
           }
-        }
-      })
-    );
-
-    // Send monitoring copy to central numbers that are not already primary recipients.
-    const primarySet = new Set(primaryRecipients);
-    const monitorOnly = monitoringRecipients.filter((r) => !primarySet.has(r));
-
-    await Promise.all(
-      monitorOnly.map(async (recipient) => {
-        try {
-          await sendRestaurantAlertMessage({
-            order,
-            recipient,
-            text: alertText,
-            metadata: {
-              type: "restaurant_order_alert_monitoring",
-              sourceAction: "newOrderAlertMonitoring",
-              sourceRef: order.id,
-            },
-          });
-        } catch (monitorError) {
+        } catch (alertError) {
           if (logger) {
-            logger.warn("notifyRestaurantOrderAlert: failed to send monitoring copy", {
+            logger.warn("notifyRestaurantOrderAlert: failed to send alert to restaurant recipient", {
               restaurantId: order.restaurantId,
+              orderId: order.id,
+              senderRestaurantId: senderContext.senderRestaurantId,
+              senderNumber: senderContext.senderNumber,
               recipient,
-              error: monitorError && monitorError.message,
+              error: alertError && alertError.message,
             });
           }
         }
@@ -523,10 +727,7 @@ function createOrderService({
           });
 
           const finalStatus =
-            (dispatchResult &&
-              dispatchResult.message &&
-              dispatchResult.message.status) ||
-            "queued";
+            (dispatchResult && dispatchResult.outboxStatus) || "queued";
 
           return {
             recipient,
@@ -688,6 +889,7 @@ function createOrderService({
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
       customerId: customer.id,
+      customerName: getCustomerDisplayName(customer),
       channel,
       channelCustomerId,
       customerPhone,
@@ -715,6 +917,18 @@ function createOrderService({
         providerMessageId: providerMessageId || "",
       },
     });
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("Order created", {
+        restaurantId,
+        orderId: order.id,
+        customerName: String(order.customerName || "").trim(),
+        customerPhone: String(order.customerPhone || "").trim(),
+        fulfillmentType: String(order.fulfillmentType || "pickup").trim() || "pickup",
+        total: Number(order.total || 0),
+        sourceAction: "createNewOrderFromInbound",
+      });
+    }
 
     await notifyRestaurantOrderAlert(order);
 
@@ -766,6 +980,7 @@ function createOrderService({
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
       customerId: customer.id,
+      customerName: getCustomerDisplayName(customer),
       channel,
       channelCustomerId,
       customerPhone,
@@ -801,6 +1016,18 @@ function createOrderService({
       },
     });
 
+    if (logger && typeof logger.info === "function") {
+      logger.info("Order created", {
+        restaurantId,
+        orderId: order.id,
+        customerName: String(order.customerName || "").trim(),
+        customerPhone: String(order.customerPhone || "").trim(),
+        fulfillmentType: String(order.fulfillmentType || "pickup").trim() || "pickup",
+        total: Number(order.total || 0),
+        sourceAction: "createGuidedOrder",
+      });
+    }
+
     await notifyRestaurantOrderAlert(order);
 
     return order;
@@ -834,6 +1061,7 @@ function createOrderService({
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
       customerId: customer.id,
+      customerName: getCustomerDisplayName(customer),
       channel,
       channelCustomerId,
       customerPhone,
@@ -873,6 +1101,18 @@ function createOrderService({
         itemCount: safeMatched.length,
       },
     });
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("Order created", {
+        restaurantId,
+        orderId: order.id,
+        customerName: String(order.customerName || "").trim(),
+        customerPhone: String(order.customerPhone || "").trim(),
+        fulfillmentType: String(order.fulfillmentType || "pickup").trim() || "pickup",
+        total: Number(order.total || 0),
+        sourceAction: "createGuidedOrderFromItems",
+      });
+    }
 
     await notifyRestaurantOrderAlert(order);
 

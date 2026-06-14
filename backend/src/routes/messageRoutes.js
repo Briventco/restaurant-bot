@@ -299,103 +299,40 @@ function createMessageRoutes({
     async (req, res, next) => {
       try {
         const command = normalizeStaffCommand(req.body || {});
-        const parsed = parseStaffCommand(command.command);
 
         logger.info("Staff command received", {
           restaurantId: req.restaurantId,
           channel: command.channel,
           channelCustomerId: command.channelCustomerId,
           command: command.command,
-          parsed,
         });
 
-        if (!parsed) {
-          res.status(200).json({
-            handled: true,
-            shouldReply: true,
-            replyText: "Invalid command format. Use: #confirm ORDER_ID or #reject ORDER_ID reason",
-            type: "invalid_command",
-          });
-          return;
-        }
+        const result = await inboundMessageService.handleInboundNormalized({
+          restaurantId: req.restaurantId,
+          message: {
+            channel: command.channel,
+            channelCustomerId: command.channelCustomerId,
+            customerPhone: command.customerPhone,
+            displayName: command.displayName,
+            text: command.command,
+            providerMessageId: command.providerMessageId,
+            timestamp: command.timestamp,
+            type: command.type,
+            isFromMe: command.isFromMe,
+            isStatus: command.isStatus,
+            isBroadcast: command.isBroadcast,
+          },
+        });
 
-        if (!['confirm', 'reject'].includes(parsed.action)) {
-          res.status(200).json({
-            handled: true,
-            shouldReply: true,
-            replyText: "Unknown command. Use: #confirm ORDER_ID or #reject ORDER_ID reason",
-            type: "unknown_command",
-          });
-          return;
-        }
+        logger.info("Staff command processed", {
+          restaurantId: req.restaurantId,
+          channel: command.channel,
+          channelCustomerId: command.channelCustomerId,
+          type: result && result.type ? result.type : "unknown",
+          shouldReply: Boolean(result && result.shouldReply),
+        });
 
-        if (!parsed.orderId) {
-          res.status(200).json({
-            handled: true,
-            shouldReply: true,
-            replyText: "Missing order ID. Use: #confirm ORDER_ID or #reject ORDER_ID reason",
-            type: "missing_order_id",
-          });
-          return;
-        }
-
-        try {
-          const actor = {
-            type: "staff",
-            id: command.channelCustomerId,
-          };
-
-          if (parsed.action === 'confirm') {
-            await orderService.confirmOrder({
-              restaurantId: req.restaurantId,
-              orderId: parsed.orderId,
-              actor,
-            });
-            logger.info("Order confirmed via staff command", {
-              restaurantId: req.restaurantId,
-              orderId: parsed.orderId,
-              staffId: command.channelCustomerId,
-            });
-            res.status(200).json({
-              handled: true,
-              shouldReply: true,
-              replyText: `Order ${parsed.orderId} confirmed. Customer will be notified.`,
-              type: "order_confirmed",
-            });
-          } else if (parsed.action === 'reject') {
-            await orderService.rejectOrder({
-              restaurantId: req.restaurantId,
-              orderId: parsed.orderId,
-              actor,
-              note: parsed.reason,
-            });
-            logger.info("Order rejected via staff command", {
-              restaurantId: req.restaurantId,
-              orderId: parsed.orderId,
-              staffId: command.channelCustomerId,
-              reason: parsed.reason,
-            });
-            res.status(200).json({
-              handled: true,
-              shouldReply: true,
-              replyText: `Order ${parsed.orderId} rejected. Reason: ${parsed.reason || 'Not specified'}. Customer will be notified.`,
-              type: "order_rejected",
-            });
-          }
-        } catch (error) {
-          logger.error("Staff command execution failed", {
-            restaurantId: req.restaurantId,
-            action: parsed.action,
-            orderId: parsed.orderId,
-            error: error.message,
-          });
-          res.status(200).json({
-            handled: true,
-            shouldReply: true,
-            replyText: `Failed to ${parsed.action} order: ${error.message}`,
-            type: "command_failed",
-          });
-        }
+        res.status(200).json(result);
       } catch (error) {
         next(error);
       }

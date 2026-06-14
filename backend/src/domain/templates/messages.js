@@ -348,11 +348,17 @@ function buildRestaurantOrderAlertMessage(order = {}) {
 
   lines.push("");
 
+  const customerName = String(order.customerName || order.displayName || "").trim();
   const customerPhone = String(order.customerPhone || order.channelCustomerId || "")
     .replace(/@c\.us|@lid/g, "")
     .trim();
+  if (customerName) {
+    lines.push(`Customer name: ${customerName}`);
+  }
   if (customerPhone) {
-    lines.push(`Customer: ${customerPhone}`);
+    lines.push(`Customer phone: ${customerPhone}`);
+  }
+  if (customerName || customerPhone) {
     lines.push("");
   }
 
