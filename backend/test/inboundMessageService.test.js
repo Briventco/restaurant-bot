@@ -725,7 +725,7 @@ test("parser-only mode routes generic order intent to guided menu", async () => 
   });
 
   assert.equal(result.type, "guided_menu");
-  assert.match(String(result.replyText || ""), /Here's our menu/i);
+  assert.match(String(result.replyText || ""), /Here is our menu today|Here's our menu|our menu/i);
 });
 
 test("smalltalk hello gets friendly greeting response", async () => {

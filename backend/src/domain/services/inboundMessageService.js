@@ -10,6 +10,8 @@ const {
   buildSelectedItemPrompt,
   buildDeliveryOrPickupPrompt,
   buildAddressPrompt,
+  buildPhonePrompt,
+  buildInvalidPhonePrompt,
   buildDeliveryZoneNotFoundMessage,
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
@@ -31,6 +33,7 @@ const FLOW_STATES = {
   AWAITING_QUANTITY: "awaiting_quantity",
   AWAITING_FULFILLMENT_TYPE: "awaiting_fulfillment_type",
   AWAITING_ADDRESS: "awaiting_address",
+  AWAITING_DELIVERY_PHONE: "awaiting_delivery_phone",
   AWAITING_CONFIRMATION: "awaiting_confirmation",
   AWAITING_PAYMENT_REFERENCE: "awaiting_payment_reference",
   AWAITING_STAFF_ORDER_ACTION: "awaiting_staff_order_action",
@@ -41,6 +44,7 @@ const ORDER_INTAKE_SESSION_STATES = new Set([
   FLOW_STATES.AWAITING_QUANTITY,
   FLOW_STATES.AWAITING_FULFILLMENT_TYPE,
   FLOW_STATES.AWAITING_ADDRESS,
+  FLOW_STATES.AWAITING_DELIVERY_PHONE,
   FLOW_STATES.AWAITING_CONFIRMATION,
 ]);
 
@@ -345,6 +349,35 @@ function parseStaffHashCommand(rawText) {
     orderId,
     reason,
   };
+}
+
+function isValidDeliveryPhone(value) {
+  const digits = String(value || "").replace(/[^0-9]/g, "");
+  if (digits.length < 10 || digits.length > 13) return false;
+  // Nigerian local (08x, 07x, 09x — 11 digits)
+  if (/^0[789]\d{9}$/.test(digits)) return true;
+  // Nigerian with country code 234 (13 digits)
+  if (/^234[789]\d{9}$/.test(digits)) return true;
+  // Loose: 10-13 digit number accepted
+  return true;
+}
+
+function extractPhoneFromText(text) {
+  const raw = String(text || "").trim();
+  const patterns = [
+    /\+234[789]\d{9}/,
+    /\b234[789]\d{9}\b/,
+    /\b0[789]\d{3}[\s\-]?\d{3}[\s\-]?\d{4}\b/,
+    /\b0[789]\d{9}\b/,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match) {
+      const candidate = match[0].trim();
+      if (isValidDeliveryPhone(candidate)) return candidate;
+    }
+  }
+  return "";
 }
 
 function normalizePhoneLike(value) {
@@ -1123,6 +1156,10 @@ function createInboundMessageService({
     calculateMatchedTotal,
     buildGuidedConfirmPrompt,
     buildAddressPrompt,
+    buildPhonePrompt,
+    buildInvalidPhonePrompt,
+    isValidDeliveryPhone,
+    extractPhoneFromText,
     buildDeliveryZoneNotFoundMessage,
     buildDeliveryOrPickupPrompt,
     buildMenuWelcome,

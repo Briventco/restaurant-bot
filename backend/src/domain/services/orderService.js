@@ -676,6 +676,7 @@ function createOrderService({
     quantity,
     fulfillmentType,
     deliveryAddress,
+    deliveryPhone = "",
     deliveryFee = 0,
   }) {
     const safeQuantity = toValidQuantityOrNull(quantity);
@@ -722,6 +723,7 @@ function createOrderService({
       paymentState: "not_started",
       fulfillmentType: fulfillmentType || "pickup",
       deliveryAddress: deliveryAddress || "",
+      deliveryPhone: deliveryPhone || "",
       summaryText: buildOrderSummaryLineItems(matched),
     });
 
@@ -752,6 +754,7 @@ function createOrderService({
     matched,
     fulfillmentType,
     deliveryAddress,
+    deliveryPhone = "",
     deliveryFee = 0,
     rawMessage = "",
   }) {
@@ -792,6 +795,7 @@ function createOrderService({
       paymentState: "not_started",
       fulfillmentType: fulfillmentType || "pickup",
       deliveryAddress: deliveryAddress || "",
+      deliveryPhone: deliveryPhone || "",
       summaryText: buildOrderSummaryLineItems(safeMatched),
     });
 
