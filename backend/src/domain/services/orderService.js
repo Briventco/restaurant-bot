@@ -172,6 +172,7 @@ function createOrderService({
   conversationSessionRepo,
   alertSenderNumber = "09130123219",
   alertSenderRestaurantId = "",
+  fallbackAlertSenderRestaurantId = "",
   logger = null,
 }) {
   function normalizePhoneLike(value) {
@@ -270,6 +271,9 @@ function createOrderService({
 
   async function resolveRestaurantAlertSenderContext() {
     const configuredSenderRestaurantId = String(alertSenderRestaurantId || "").trim();
+    const fallbackSenderRestaurantId = String(
+      fallbackAlertSenderRestaurantId || ""
+    ).trim();
     const configuredSenderNumber =
       String(alertSenderNumber || "").trim() || "09130123219";
 
@@ -291,6 +295,24 @@ function createOrderService({
         senderRestaurantId: configuredSenderRestaurantId,
         senderNumber: configuredSenderNumber,
       });
+    }
+
+    if (
+      fallbackSenderRestaurantId &&
+      fallbackSenderRestaurantId !== configuredSenderRestaurantId
+    ) {
+      const senderRestaurant = await restaurantRepo.getRestaurantById(
+        fallbackSenderRestaurantId
+      );
+      if (senderRestaurant) {
+        return {
+          senderRestaurantId:
+            getRestaurantRecordId(senderRestaurant) || fallbackSenderRestaurantId,
+          senderNumber:
+            getRestaurantWhatsappNumber(senderRestaurant) || configuredSenderNumber,
+          resolution: "default_restaurant_id",
+        };
+      }
     }
 
     if (

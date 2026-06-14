@@ -195,7 +195,8 @@ const env = {
     process.env.SERVRA_ORDER_ALERT_SENDER_NUMBER || "09130123219"
   ).trim(),
   // Optional explicit tenant/restaurant id that owns the Servra sender line.
-  // If omitted, the backend will try to resolve it from restaurant.whatsapp.phone.
+  // If omitted, the backend will fall back to BACKEND_DEFAULT_RESTAURANT_ID,
+  // then try to resolve it from restaurant.whatsapp.phone.
   SERVRA_ORDER_ALERT_SENDER_RESTAURANT_ID: String(
     process.env.SERVRA_ORDER_ALERT_SENDER_RESTAURANT_ID || ""
   ).trim(),

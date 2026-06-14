@@ -357,6 +357,7 @@ function createApp() {
     conversationSessionRepo,
     alertSenderNumber: env.SERVRA_ORDER_ALERT_SENDER_NUMBER,
     alertSenderRestaurantId: env.SERVRA_ORDER_ALERT_SENDER_RESTAURANT_ID,
+    fallbackAlertSenderRestaurantId: env.BACKEND_DEFAULT_RESTAURANT_ID,
     logger,
   });
 

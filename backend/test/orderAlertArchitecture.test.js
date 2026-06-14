@@ -53,6 +53,7 @@ function buildOrderServiceDeps({
   orderAlertRecipients = [],
   notifyOnOrder = true,
   senderRestaurantId = "servra-hq",
+  fallbackSenderRestaurantId = "",
   senderNumber = "09130123219",
   resolveSenderByPhone = false,
   outboxImpl = null,
@@ -172,6 +173,7 @@ function buildOrderServiceDeps({
     logger,
     alertSenderNumber: senderNumber,
     alertSenderRestaurantId: resolveSenderByPhone ? "" : senderRestaurantId,
+    fallbackAlertSenderRestaurantId: fallbackSenderRestaurantId,
     orderRepo,
     menuRepo: { listMenuItems: async () => [] },
     orderParsingService: { parseOrder: async () => [] },
@@ -269,6 +271,34 @@ describe("restaurant order alert direction", () => {
       deps.sentAlerts[0].metadata.senderRestaurantId,
       "servra-hq"
     );
+    assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
+  });
+
+  it("can fall back to the default restaurant id when the dedicated sender tenant id is not configured", async () => {
+    const deps = buildOrderServiceDeps({
+      restaurantPhone: "08099990004",
+      senderRestaurantId: "",
+      fallbackSenderRestaurantId: "servra-hq",
+      senderNumber: "09130123219",
+    });
+
+    await deps.orderService.createGuidedOrder({
+      restaurantId: "rest1",
+      customer: {
+        id: "cust-1",
+        displayName: "Eniola",
+      },
+      channel: "whatsapp-web",
+      channelCustomerId: "2348012345678@c.us",
+      customerPhone: "08012345678",
+      menuItem: { id: "m1", name: "Pasta", price: 1500 },
+      quantity: 1,
+      fulfillmentType: "pickup",
+    });
+
+    assert.equal(deps.sentAlerts.length, 1);
+    assert.equal(deps.sentAlerts[0].recipient, "08099990004");
+    assert.equal(deps.sentAlerts[0].metadata.senderRestaurantId, "servra-hq");
     assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
   });
 
