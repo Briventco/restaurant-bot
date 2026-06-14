@@ -323,11 +323,39 @@ function buildPaymentReferenceSavedMessage() {
 
 function buildRestaurantOrderAlertMessage(order = {}) {
   const lines = [];
-  lines.push(`New Order #${order.id || "-"}`);
+
+  const restaurantName = String(order.restaurantName || "").trim();
+  lines.push(restaurantName ? `New Order — ${restaurantName}` : "New Order");
+  lines.push(`#${order.id || "-"}`);
   if (order.shortCode) {
-    lines.push(`Staff Ref: ${order.shortCode}`);
+    lines.push(`Ref: ${order.shortCode}`);
   }
+
+  if (order.orderTime) {
+    const timeStr = (() => {
+      try {
+        return new Date(order.orderTime).toLocaleString("en-NG", {
+          timeZone: "Africa/Lagos",
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+      } catch (_) {
+        return String(order.orderTime);
+      }
+    })();
+    lines.push(`Time: ${timeStr}`);
+  }
+
   lines.push("");
+
+  const customerPhone = String(order.customerPhone || order.channelCustomerId || "")
+    .replace(/@c\.us|@lid/g, "")
+    .trim();
+  if (customerPhone) {
+    lines.push(`Customer: ${customerPhone}`);
+    lines.push("");
+  }
+
   lines.push(buildOrderSummaryLineItems(order.matched || []));
 
   const fee = Number(order.deliveryFee || 0);
@@ -414,6 +442,12 @@ function buildRestaurantTestAlertMessage(restaurant = {}) {
   return `Test alert from ${restaurantName}.\n\nIf you received this, the restaurant WhatsApp order alert setup is working for this number.`;
 }
 
+function applyWelcomePlaceholders(template, { restaurantName = "", customerName = "" } = {}) {
+  return String(template || "")
+    .replace(/\{restaurant_name\}/gi, restaurantName || "our restaurant")
+    .replace(/\{customer_name\}/gi, customerName || "there");
+}
+
 module.exports = {
   formatMenu,
   buildCategorizedMenuList,
@@ -453,4 +487,5 @@ module.exports = {
   buildRestaurantOrderAlertHandledMessage,
   buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
+  applyWelcomePlaceholders,
 };

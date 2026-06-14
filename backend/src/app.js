@@ -356,6 +356,7 @@ function createApp() {
     outboxService,
     conversationSessionRepo,
     centralAlertNumbers: env.SERVRA_CENTRAL_ALERT_NUMBERS,
+    logger,
   });
 
   const paymentService = createPaymentService({

@@ -171,6 +171,7 @@ function createOrderService({
   outboxService,
   conversationSessionRepo,
   centralAlertNumbers = [],
+  logger = null,
 }) {
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
@@ -369,6 +370,11 @@ function createOrderService({
   async function notifyRestaurantOrderAlert(order) {
     const restaurant = await restaurantRepo.getRestaurantById(order.restaurantId);
     if (!restaurant) {
+      if (logger) {
+        logger.warn("notifyRestaurantOrderAlert: restaurant not found", {
+          restaurantId: order.restaurantId,
+        });
+      }
       return;
     }
 
@@ -381,46 +387,102 @@ function createOrderService({
       return;
     }
 
-    const recipients = getOrderAlertRecipients(restaurant);
-    if (!recipients.length) {
-      return;
+    // Primary recipients: only the restaurant's own configured alert numbers.
+    const primaryRecipients = Array.isArray(bot.orderAlertRecipients)
+      ? bot.orderAlertRecipients.map((v) => String(v || "").trim()).filter(Boolean)
+      : [];
+
+    // Monitoring recipients: Servra central numbers (fallback/oversight only).
+    const monitoringRecipients = Array.isArray(centralAlertNumbers)
+      ? centralAlertNumbers.map((v) => String(v || "").trim()).filter(Boolean)
+      : [];
+
+    if (!primaryRecipients.length) {
+      if (logger) {
+        logger.warn("notifyRestaurantOrderAlert: no alert recipients configured", {
+          restaurantId: order.restaurantId,
+          restaurantName: String(restaurant.name || "").trim(),
+        });
+      }
     }
 
     const alertText = buildRestaurantOrderAlertMessage({
       ...order,
       shortCode: buildShortOrderCode(order && order.id),
+      restaurantName: String(restaurant.name || "").trim(),
+      orderTime: new Date().toISOString(),
     });
 
+    // Send to primary recipients and register staff action session for replies.
     await Promise.all(
-      recipients.map(async (recipient) => {
-        await sendRestaurantAlertMessage({
-          order,
-          recipient,
-          text: alertText,
-          metadata: {
-            type: "restaurant_order_alert",
-            sourceAction: "newOrderAlert",
-            sourceRef: order.id,
-          },
-        });
+      primaryRecipients.map(async (recipient) => {
+        try {
+          await sendRestaurantAlertMessage({
+            order,
+            recipient,
+            text: alertText,
+            metadata: {
+              type: "restaurant_order_alert",
+              sourceAction: "newOrderAlert",
+              sourceRef: order.id,
+            },
+          });
 
-        if (conversationSessionRepo) {
-          const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
-          await Promise.all(
-            sessionRecipients.map((sessionRecipient) =>
-              conversationSessionRepo.upsertSession(
-                order.restaurantId,
-                order.channel,
-                sessionRecipient,
-                {
-                  state: "awaiting_staff_order_action",
-                  role: "restaurant_staff_alert",
-                  orderId: order.id,
-                  alertType: "new_order",
-                }
+          if (conversationSessionRepo) {
+            const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
+            await Promise.all(
+              sessionRecipients.map((sessionRecipient) =>
+                conversationSessionRepo.upsertSession(
+                  order.restaurantId,
+                  order.channel,
+                  sessionRecipient,
+                  {
+                    state: "awaiting_staff_order_action",
+                    role: "restaurant_staff_alert",
+                    orderId: order.id,
+                    alertType: "new_order",
+                  }
+                )
               )
-            )
-          );
+            );
+          }
+        } catch (alertError) {
+          if (logger) {
+            logger.warn("notifyRestaurantOrderAlert: failed to alert primary recipient", {
+              restaurantId: order.restaurantId,
+              recipient,
+              error: alertError && alertError.message,
+            });
+          }
+        }
+      })
+    );
+
+    // Send monitoring copy to central numbers that are not already primary recipients.
+    const primarySet = new Set(primaryRecipients);
+    const monitorOnly = monitoringRecipients.filter((r) => !primarySet.has(r));
+
+    await Promise.all(
+      monitorOnly.map(async (recipient) => {
+        try {
+          await sendRestaurantAlertMessage({
+            order,
+            recipient,
+            text: alertText,
+            metadata: {
+              type: "restaurant_order_alert_monitoring",
+              sourceAction: "newOrderAlertMonitoring",
+              sourceRef: order.id,
+            },
+          });
+        } catch (monitorError) {
+          if (logger) {
+            logger.warn("notifyRestaurantOrderAlert: failed to send monitoring copy", {
+              restaurantId: order.restaurantId,
+              recipient,
+              error: monitorError && monitorError.message,
+            });
+          }
         }
       })
     );

@@ -17,6 +17,7 @@ function serializeSettings(restaurant) {
     acceptOrders: bot.enabled !== false,
     autoConfirm: Boolean(bot.autoConfirm),
     notifyOnOrder: bot.notifyOnOrder !== false,
+    customWelcomeMessage: String(bot.customWelcomeMessage || "").trim(),
     orderAlertRecipients: Array.isArray(bot.orderAlertRecipients)
       ? bot.orderAlertRecipients
           .map((value) => String(value || "").trim())
@@ -71,6 +72,16 @@ function createSettingsRoutes({
       acceptOrders: { type: "boolean", required: false },
       autoConfirm: { type: "boolean", required: false },
       notifyOnOrder: { type: "boolean", required: false },
+      customWelcomeMessage: {
+        type: "string",
+        required: false,
+        custom: (value) => {
+          if (value === undefined || value === null) return null;
+          if (typeof value !== "string") return "customWelcomeMessage must be a string";
+          if (value.trim().length > 2000) return "customWelcomeMessage must be 2000 characters or fewer";
+          return null;
+        },
+      },
       orderAlertRecipients: {
         type: "array",
         required: false,
@@ -146,10 +157,10 @@ function createSettingsRoutes({
                 ? req.body.notifyOnOrder
                 : currentBot.notifyOnOrder !== false,
             notifyOnPayment: true,
-            // orderAlertRecipients is no longer configurable from the portal
-            // (alerts are now handled by SERVRA_CENTRAL_ALERT_NUMBERS platform-wide).
-            // Explicitly clear any previously saved per-restaurant numbers so they
-            // don't keep receiving duplicate alerts alongside the central number.
+            customWelcomeMessage:
+              typeof req.body.customWelcomeMessage === "string"
+                ? req.body.customWelcomeMessage.trim()
+                : String(currentBot.customWelcomeMessage || "").trim(),
             orderAlertRecipients: Array.isArray(req.body.orderAlertRecipients)
               ? req.body.orderAlertRecipients
                   .map((value) => String(value || "").trim())

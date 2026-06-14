@@ -21,6 +21,7 @@ const {
   buildPaymentStillUnderReviewMessage,
   buildRestaurantOrderAlertHandledMessage,
   buildRephraseOrderPrompt,
+  applyWelcomePlaceholders,
 } = require("../templates/messages");
 const { createChatOrchestrator } = require("./chatOrchestrator");
 const { createRuleBasedRouter } = require("./ruleBasedRouter");
@@ -2042,11 +2043,29 @@ function createInboundMessageService({
       const menuItems = await timedDb("listAvailableMenuItemsCached_greeting", () =>
         listAvailableMenuItemsCached(restaurantId)
       );
-      const availableItems = (menuItems || []).filter((item) => item.available);
-      const sample = availableItems.slice(0, 3).map((item) => item.name).join(", ");
-      const replyText = sample
-        ? `Hi there. You're welcome at ${String((restaurant && restaurant.name) || "our restaurant").trim()}.\n\nToday we have ${sample}. Reply MENU to see everything.`
-        : `Hi there. You're welcome at ${String((restaurant && restaurant.name) || "our restaurant").trim()}.\n\nReply MENU to see what is available today.`;
+
+      const bot =
+        restaurant && restaurant.bot && typeof restaurant.bot === "object"
+          ? restaurant.bot
+          : {};
+      const restaurantName =
+        String((restaurant && restaurant.name) || "").trim() || "our restaurant";
+      const customerName = String(normalized.displayName || "").trim();
+
+      let replyText;
+      if (bot.customWelcomeMessage && String(bot.customWelcomeMessage).trim()) {
+        replyText = applyWelcomePlaceholders(String(bot.customWelcomeMessage).trim(), {
+          restaurantName,
+          customerName,
+        });
+      } else {
+        const availableItems = (menuItems || []).filter((item) => item.available);
+        const sample = availableItems.slice(0, 3).map((item) => item.name).join(", ");
+        replyText = sample
+          ? `Hi there. You're welcome at ${restaurantName}.\n\nToday we have ${sample}. Reply MENU to see everything.`
+          : `Hi there. You're welcome at ${restaurantName}.\n\nReply MENU to see what is available today.`;
+      }
+
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,
