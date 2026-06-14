@@ -49,6 +49,7 @@ describe("buildRestaurantOrderAlertMessage", () => {
 });
 
 function buildOrderServiceDeps({
+  restaurantPhone = "",
   orderAlertRecipients = [],
   notifyOnOrder = true,
   senderRestaurantId = "servra-hq",
@@ -73,6 +74,7 @@ function buildOrderServiceDeps({
         id: "rest1",
         restaurantId: "rest1",
         name: "Test Bistro",
+        phone: restaurantPhone,
         bot: {
           notifyOnOrder,
           orderAlertRecipients,
@@ -185,9 +187,10 @@ function buildOrderServiceDeps({
 }
 
 describe("restaurant order alert direction", () => {
-  it("sends the new order alert to the restaurant recipient and marks Servra as the sender", async () => {
+  it("sends the new order alert to the restaurant profile phone and marks Servra as the sender", async () => {
     const deps = buildOrderServiceDeps({
-      orderAlertRecipients: ["08099990001"],
+      restaurantPhone: "08099990001",
+      orderAlertRecipients: ["08000000000"],
       senderRestaurantId: "servra-hq",
       senderNumber: "09130123219",
     });
@@ -214,6 +217,10 @@ describe("restaurant order alert direction", () => {
     );
     assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
     assert.ok(
+      !deps.sentAlerts.some((payload) => payload.recipient === "08000000000"),
+      "legacy settings-based alert numbers must not drive order alert delivery"
+    );
+    assert.ok(
       !deps.sentAlerts.some((payload) => payload.recipient === "09130123219"),
       "Servra default number must not be used as the alert recipient"
     );
@@ -238,7 +245,7 @@ describe("restaurant order alert direction", () => {
 
   it("can resolve the Servra sender tenant from the configured sender phone number", async () => {
     const deps = buildOrderServiceDeps({
-      orderAlertRecipients: ["08099990002"],
+      restaurantPhone: "08099990002",
       senderNumber: "09130123219",
       resolveSenderByPhone: true,
     });
@@ -265,9 +272,10 @@ describe("restaurant order alert direction", () => {
     assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
   });
 
-  it("logs a clear error and keeps order creation alive when no restaurant alert recipient exists", async () => {
+  it("logs a clear error and keeps order creation alive when the restaurant profile phone is missing", async () => {
     const deps = buildOrderServiceDeps({
-      orderAlertRecipients: [],
+      restaurantPhone: "",
+      orderAlertRecipients: ["08099990003"],
       senderRestaurantId: "servra-hq",
     });
 
@@ -290,31 +298,19 @@ describe("restaurant order alert direction", () => {
     assert.equal(deps.sentAlerts.length, 0);
     assert.ok(
       deps.logs.error.some((entry) =>
-        /no alert recipients configured/i.test(entry.message)
+        /restaurant profile phone is missing/i.test(entry.message)
       ),
-      "missing restaurant recipient should be logged clearly"
+      "missing restaurant profile phone should be logged clearly"
     );
   });
 
-  it("continues to the next restaurant recipient when one alert delivery fails", async () => {
-    const deliveredRecipients = [];
+  it("logs a clear warning and keeps order creation alive when alert delivery to the profile phone fails", async () => {
     const deps = buildOrderServiceDeps({
-      orderAlertRecipients: ["0801BAD0001", "0801GOOD001"],
+      restaurantPhone: "0801GOOD001",
+      orderAlertRecipients: ["0801BAD0001"],
       senderRestaurantId: "servra-hq",
       outboxImpl: async (payload) => {
-        if (payload.recipient === "0801BAD0001") {
-          throw new Error("transport_down");
-        }
-        deliveredRecipients.push(payload.recipient);
-        return {
-          message: {
-            id: `outbox-${payload.recipient}`,
-            status: "sent",
-            attemptCount: 1,
-          },
-          created: true,
-          duplicate: false,
-        };
+        throw new Error(`transport_down:${payload.recipient}`);
       },
     });
 
@@ -334,10 +330,8 @@ describe("restaurant order alert direction", () => {
       })
     );
 
-    assert.ok(
-      deliveredRecipients.includes("0801GOOD001"),
-      "a good restaurant recipient should still receive the alert"
-    );
+    assert.equal(deps.sentAlerts.length, 1);
+    assert.equal(deps.sentAlerts[0].recipient, "0801GOOD001");
     assert.ok(
       deps.logs.warn.some((entry) =>
         /failed to send alert to restaurant recipient/i.test(entry.message)

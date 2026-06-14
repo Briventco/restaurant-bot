@@ -869,15 +869,14 @@ test("parser-only slang classification routes smalltalk deterministically", asyn
   assert.equal(result.type, "smalltalk_how_are_you");
 });
 
-test("staff hash confirm is rejected for numbers that are not restaurant alert recipients", async () => {
+test("staff hash confirm is rejected for numbers that do not match the restaurant profile phone", async () => {
   const service = buildService({
     restaurantRepo: {
       getRestaurantById: async () => ({
         id: "rest-1",
         name: "Test Restaurant",
-        bot: {
-          orderAlertRecipients: ["08011112222"],
-        },
+        phone: "08011112222",
+        bot: {},
       }),
     },
   });
@@ -895,7 +894,7 @@ test("staff hash confirm is rejected for numbers that are not restaurant alert r
   });
 
   assert.equal(result.type, "staff_hash_unauthorized");
-  assert.match(String(result.replyText || ""), /configured restaurant alert number/i);
+  assert.match(String(result.replyText || ""), /restaurant profile phone/i);
   assert.match(String(result.replyText || ""), /09130123219/);
 });
 
@@ -905,9 +904,8 @@ test("staff hash confirm is rejected when no Servra alert was sent to that numbe
       getRestaurantById: async () => ({
         id: "rest-1",
         name: "Test Restaurant",
-        bot: {
-          orderAlertRecipients: ["08011112222"],
-        },
+        phone: "08011112222",
+        bot: {},
       }),
     },
     orderService: {
@@ -944,9 +942,8 @@ test("staff hash confirm succeeds only when the Servra alert was sent to that re
       getRestaurantById: async () => ({
         id: "rest-1",
         name: "Test Restaurant",
-        bot: {
-          orderAlertRecipients: ["08011112222"],
-        },
+        phone: "08011112222",
+        bot: {},
       }),
     },
     orderService: {

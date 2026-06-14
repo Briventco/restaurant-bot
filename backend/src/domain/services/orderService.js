@@ -236,6 +236,10 @@ function createOrderService({
     return String(whatsapp.phone || whatsapp.phoneNumber || "").trim();
   }
 
+  function getRestaurantProfilePhone(restaurant) {
+    return String((restaurant && restaurant.phone) || "").trim();
+  }
+
   function getCustomerDisplayName(customer) {
     return String(
       (customer &&
@@ -260,18 +264,8 @@ function createOrderService({
   }
 
   function getOrderAlertRecipients(restaurant) {
-    const bot =
-      restaurant && restaurant.bot && typeof restaurant.bot === "object"
-        ? restaurant.bot
-        : {};
-
-    return Array.from(
-      new Set(
-        (Array.isArray(bot.orderAlertRecipients) ? bot.orderAlertRecipients : [])
-          .map((value) => String(value || "").trim())
-          .filter(Boolean)
-      )
-    );
+    const profilePhone = getRestaurantProfilePhone(restaurant);
+    return profilePhone ? [profilePhone] : [];
   }
 
   async function resolveRestaurantAlertSenderContext() {
@@ -589,12 +583,14 @@ function createOrderService({
     }
 
     const primaryRecipients = getOrderAlertRecipients(restaurant);
+    const restaurantProfilePhone = getRestaurantProfilePhone(restaurant);
 
     if (!primaryRecipients.length) {
-      logAlertError("notifyRestaurantOrderAlert: no alert recipients configured", {
+      logAlertError("notifyRestaurantOrderAlert: restaurant profile phone is missing", {
         restaurantId: order.restaurantId,
         orderId: order.id,
         restaurantName: String(restaurant.name || "").trim(),
+        restaurantProfilePhone,
       });
       return;
     }
@@ -611,11 +607,12 @@ function createOrderService({
     }
 
     if (logger && typeof logger.info === "function") {
-      logger.info("Restaurant order alert recipients resolved", {
+      logger.info("Restaurant order alert recipient resolved from restaurant profile phone", {
         restaurantId: order.restaurantId,
         orderId: order.id,
         senderRestaurantId: senderContext.senderRestaurantId,
         senderNumber: senderContext.senderNumber,
+        restaurantProfilePhone,
         recipients: primaryRecipients,
       });
     }
@@ -702,7 +699,7 @@ function createOrderService({
     if (!recipients.length) {
       throw createHttpError(
         409,
-        "No restaurant alert WhatsApp numbers are configured yet."
+        "Restaurant profile phone is required before order alerts can be sent."
       );
     }
 

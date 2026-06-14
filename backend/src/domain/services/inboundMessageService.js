@@ -960,17 +960,13 @@ function createInboundMessageService({
     return false;
   }
 
-  function isRestaurantStaffAlertSender(restaurant, normalized) {
-    const bot =
-      restaurant && restaurant.bot && typeof restaurant.bot === "object"
-        ? restaurant.bot
-        : {};
+  function getRestaurantAlertRecipients(restaurant) {
+    const profilePhone = String((restaurant && restaurant.phone) || "").trim();
+    return profilePhone ? [profilePhone] : [];
+  }
 
-    const recipients = Array.isArray(bot.orderAlertRecipients)
-      ? bot.orderAlertRecipients
-          .map((value) => String(value || "").trim())
-          .filter(Boolean)
-      : [];
+  function isRestaurantStaffAlertSender(restaurant, normalized) {
+    const recipients = getRestaurantAlertRecipients(restaurant);
 
     const incomingCandidates = new Set([
       ...buildPhoneCandidates(normalized.channelCustomerId),
@@ -1407,7 +1403,7 @@ function createInboundMessageService({
     if (parsedHashCommand) {
       if (!isStaffAlertSender) {
         const replyText =
-          `This command only works from a configured restaurant alert number after you receive the Servra order alert from ${alertSenderNumber}.`;
+          `This command only works from the restaurant profile phone after you receive the Servra order alert from ${alertSenderNumber}.`;
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
           handled: true,
@@ -2267,7 +2263,7 @@ function createInboundMessageService({
       // Staff alert sessions must never be processed by the guided session router.
       // The staff handlers above (lines 868-975 and 977-1055) are the only correct
       // handlers for these sessions. If execution reaches here with a staff session,
-      // it means isStaffAlertSender returned false (phone not in orderAlertRecipients)
+      // it means isStaffAlertSender returned false (phone does not match restaurant profile phone)
       // for a customer who somehow has a staff session stored against their ID.
       // Clear the stale session and let the message continue as a normal customer flow.
       if (
