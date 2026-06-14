@@ -153,18 +153,9 @@ function createOutboxService({
   async function dispatchClaimedMessage(claimedMessage, workerId) {
     const nowMs = Date.now();
     try {
-      const senderRestaurantId = String(
-        (
-          claimedMessage.metadata &&
-          claimedMessage.metadata.senderRestaurantId
-        ) || claimedMessage.restaurantId || ""
-      ).trim();
-      const senderNumber = String(
-        (claimedMessage.metadata && claimedMessage.metadata.senderNumber) || ""
-      ).trim();
       const response = await channelGateway.sendMessage({
         channel: claimedMessage.channel,
-        restaurantId: senderRestaurantId || claimedMessage.restaurantId,
+        restaurantId: claimedMessage.restaurantId,
         to: claimedMessage.recipient,
         text: claimedMessage.text,
         metadata: {
@@ -190,8 +181,6 @@ function createOutboxService({
       logger.info("Outbound outbox send delivered", {
         messageId: claimedMessage.id,
         restaurantId: claimedMessage.restaurantId,
-        senderRestaurantId: senderRestaurantId || claimedMessage.restaurantId,
-        senderNumber,
         channel: claimedMessage.channel,
         recipient: claimedMessage.recipient,
         messageType: claimedMessage.messageType,
@@ -204,15 +193,6 @@ function createOutboxService({
         message: updated || claimedMessage,
       };
     } catch (error) {
-      const senderRestaurantId = String(
-        (
-          claimedMessage.metadata &&
-          claimedMessage.metadata.senderRestaurantId
-        ) || claimedMessage.restaurantId || ""
-      ).trim();
-      const senderNumber = String(
-        (claimedMessage.metadata && claimedMessage.metadata.senderNumber) || ""
-      ).trim();
       const currentAttemptNumber = toSafeNumber(claimedMessage.attemptCount, 0) + 1;
       const delayMs = computeRetryDelayMs({
         attemptNumber: currentAttemptNumber,
@@ -237,8 +217,6 @@ function createOutboxService({
       logger.warn("Outbound outbox send failed", {
         messageId: claimedMessage.id,
         restaurantId: claimedMessage.restaurantId,
-        senderRestaurantId: senderRestaurantId || claimedMessage.restaurantId,
-        senderNumber,
         channel: claimedMessage.channel,
         recipient: claimedMessage.recipient,
         messageType: claimedMessage.messageType,

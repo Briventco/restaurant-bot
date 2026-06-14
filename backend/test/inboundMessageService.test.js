@@ -895,7 +895,6 @@ test("staff hash confirm is rejected for numbers that do not match the restauran
 
   assert.equal(result.type, "staff_hash_unauthorized");
   assert.match(String(result.replyText || ""), /restaurant profile phone/i);
-  assert.match(String(result.replyText || ""), /09130123219/);
 });
 
 test("staff hash confirm is rejected when no Servra alert was sent to that number", async () => {
@@ -932,7 +931,7 @@ test("staff hash confirm is rejected when no Servra alert was sent to that numbe
   });
 
   assert.equal(result.type, "staff_hash_alert_not_found");
-  assert.match(String(result.replyText || ""), /could not find a Servra order alert/i);
+  assert.match(String(result.replyText || ""), /could not find an order alert/i);
 });
 
 test("staff hash confirm succeeds only when the Servra alert was sent to that restaurant number", async () => {

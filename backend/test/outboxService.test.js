@@ -281,7 +281,7 @@ test("outbox idempotency prevents duplicate sends for same key", async () => {
   assert.equal(second.message.status, "sent");
 });
 
-test("outbox dispatch uses senderRestaurantId override for delivery direction", async () => {
+test("outbox dispatch always uses the message's own restaurantId for delivery", async () => {
   const outboxRepo = createInMemoryOutboxRepo();
   const sends = [];
 
@@ -311,16 +311,15 @@ test("outbox dispatch uses senderRestaurantId override for delivery direction", 
       recipient: "08099990001",
       metadata: {
         orderId: "order-123",
-        senderRestaurantId: "servra-hq",
-        senderNumber: "09130123219",
+        internalAlert: true,
       },
     })
   );
 
   assert.equal(sends.length, 1);
-  assert.equal(sends[0].restaurantId, "servra-hq");
+  // restaurantId must be the message's own restaurantId, never overridden by metadata
+  assert.equal(sends[0].restaurantId, "rest-1");
   assert.equal(sends[0].to, "08099990001");
-  assert.equal(sends[0].metadata.senderNumber, "09130123219");
 });
 
 test("outbox retries and eventually reaches failed on retry exhaustion", async () => {

@@ -170,24 +170,10 @@ function createOrderService({
   orderParsingService,
   outboxService,
   conversationSessionRepo,
-  alertSenderNumber = "09130123219",
-  alertSenderRestaurantId = "",
-  fallbackAlertSenderRestaurantId = "",
   logger = null,
 }) {
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
-  }
-
-  function logAlertError(message, meta = {}) {
-    if (logger && typeof logger.error === "function") {
-      logger.error(message, meta);
-      return;
-    }
-
-    if (logger && typeof logger.warn === "function") {
-      logger.warn(message, meta);
-    }
   }
 
   function buildPhoneCandidates(value) {
@@ -222,21 +208,6 @@ function createOrderService({
     return buildPhoneCandidates(recipient);
   }
 
-  function getRestaurantRecordId(restaurant) {
-    return String(
-      (restaurant && (restaurant.id || restaurant.restaurantId)) || ""
-    ).trim();
-  }
-
-  function getRestaurantWhatsappNumber(restaurant) {
-    const whatsapp =
-      restaurant && restaurant.whatsapp && typeof restaurant.whatsapp === "object"
-        ? restaurant.whatsapp
-        : {};
-
-    return String(whatsapp.phone || whatsapp.phoneNumber || "").trim();
-  }
-
   function getRestaurantProfilePhone(restaurant) {
     return String((restaurant && restaurant.phone) || "").trim();
   }
@@ -265,79 +236,21 @@ function createOrderService({
   }
 
   function getOrderAlertRecipients(restaurant) {
+    const bot =
+      restaurant && restaurant.bot && typeof restaurant.bot === "object"
+        ? restaurant.bot
+        : {};
+
+    const configured = Array.isArray(bot.orderAlertRecipients)
+      ? bot.orderAlertRecipients.map((v) => String(v || "").trim()).filter(Boolean)
+      : [];
+
+    if (configured.length) {
+      return configured;
+    }
+
     const profilePhone = getRestaurantProfilePhone(restaurant);
     return profilePhone ? [profilePhone] : [];
-  }
-
-  async function resolveRestaurantAlertSenderContext() {
-    const configuredSenderRestaurantId = String(alertSenderRestaurantId || "").trim();
-    const fallbackSenderRestaurantId = String(
-      fallbackAlertSenderRestaurantId || ""
-    ).trim();
-    const configuredSenderNumber =
-      String(alertSenderNumber || "").trim() || "09130123219";
-
-    if (configuredSenderRestaurantId) {
-      const senderRestaurant = await restaurantRepo.getRestaurantById(
-        configuredSenderRestaurantId
-      );
-      if (senderRestaurant) {
-        return {
-          senderRestaurantId:
-            getRestaurantRecordId(senderRestaurant) || configuredSenderRestaurantId,
-          senderNumber:
-            getRestaurantWhatsappNumber(senderRestaurant) || configuredSenderNumber,
-          resolution: "restaurant_id",
-        };
-      }
-
-      logAlertError("notifyRestaurantOrderAlert: sender restaurant not found", {
-        senderRestaurantId: configuredSenderRestaurantId,
-        senderNumber: configuredSenderNumber,
-      });
-    }
-
-    if (
-      fallbackSenderRestaurantId &&
-      fallbackSenderRestaurantId !== configuredSenderRestaurantId
-    ) {
-      const senderRestaurant = await restaurantRepo.getRestaurantById(
-        fallbackSenderRestaurantId
-      );
-      if (senderRestaurant) {
-        return {
-          senderRestaurantId:
-            getRestaurantRecordId(senderRestaurant) || fallbackSenderRestaurantId,
-          senderNumber:
-            getRestaurantWhatsappNumber(senderRestaurant) || configuredSenderNumber,
-          resolution: "default_restaurant_id",
-        };
-      }
-    }
-
-    if (
-      configuredSenderNumber &&
-      restaurantRepo &&
-      typeof restaurantRepo.findRestaurantByWhatsappBinding === "function"
-    ) {
-      const senderRestaurant = await restaurantRepo.findRestaurantByWhatsappBinding({
-        phone: configuredSenderNumber,
-      });
-      if (senderRestaurant) {
-        return {
-          senderRestaurantId: getRestaurantRecordId(senderRestaurant),
-          senderNumber:
-            getRestaurantWhatsappNumber(senderRestaurant) || configuredSenderNumber,
-          resolution: "whatsapp_phone_binding",
-        };
-      }
-    }
-
-    return {
-      senderRestaurantId: "",
-      senderNumber: configuredSenderNumber,
-      resolution: "unresolved",
-    };
   }
 
   function buildRestaurantAlertDeliveryStatus(outboxResult) {
@@ -353,34 +266,6 @@ function createOrderService({
       return "processing";
     }
     return "queued_for_retry";
-  }
-
-  function buildRestaurantAlertAuditMetadata({
-    recipient,
-    senderRestaurantId,
-    senderNumber,
-    messageType,
-    sourceAction,
-    outboxResult,
-    deliveryStatus,
-    metadata,
-  }) {
-    return {
-      ...metadata,
-      internalAlert: true,
-      alertRecipient: recipient,
-      senderRestaurantId,
-      senderNumber,
-      sourceAction,
-      messageType,
-      deliveryStatus,
-      outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
-      outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
-      outboxAttemptCount: outboxResult.message
-        ? Number(outboxResult.message.attemptCount || 0)
-        : 0,
-      duplicateSuppressed: Boolean(outboxResult.duplicate),
-    };
   }
 
   function hashText(value) {
@@ -477,7 +362,6 @@ function createOrderService({
     recipient,
     text,
     metadata = {},
-    senderContext = null,
   }) {
     const normalizedRecipient = String(recipient || "").trim();
     const messageType =
@@ -485,19 +369,6 @@ function createOrderService({
     const sourceAction =
       String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert";
     const sourceRef = String(metadata.sourceRef || order.id || "").trim();
-    const resolvedSenderContext =
-      senderContext && String(senderContext.senderRestaurantId || "").trim()
-        ? senderContext
-        : await resolveRestaurantAlertSenderContext();
-
-    if (!resolvedSenderContext.senderRestaurantId) {
-      const senderError = new Error(
-        `Servra alert sender ${resolvedSenderContext.senderNumber || alertSenderNumber} is not configured`
-      );
-      senderError.code = "SERVRA_ALERT_SENDER_NOT_CONFIGURED";
-      senderError.retryable = false;
-      throw senderError;
-    }
 
     const outboxResult = await outboxService.enqueueAndMaybeDispatch({
       restaurantId: order.restaurantId,
@@ -520,23 +391,11 @@ function createOrderService({
         orderId: order.id,
         internalAlert: true,
         alertRecipient: normalizedRecipient,
-        senderRestaurantId: resolvedSenderContext.senderRestaurantId,
-        senderNumber: resolvedSenderContext.senderNumber,
         ...metadata,
       },
     });
 
     const deliveryStatus = buildRestaurantAlertDeliveryStatus(outboxResult);
-    const auditMetadata = buildRestaurantAlertAuditMetadata({
-      recipient: normalizedRecipient,
-      senderRestaurantId: resolvedSenderContext.senderRestaurantId,
-      senderNumber: resolvedSenderContext.senderNumber,
-      messageType,
-      sourceAction,
-      outboxResult,
-      deliveryStatus,
-      metadata,
-    });
 
     try {
       await orderRepo.addOrderMessage(order.restaurantId, order.id, {
@@ -546,36 +405,34 @@ function createOrderService({
         customerPhone: normalizePhoneLike(normalizedRecipient),
         direction: "outbound",
         text,
-        metadata: auditMetadata,
+        metadata: {
+          ...metadata,
+          internalAlert: true,
+          alertRecipient: normalizedRecipient,
+          sourceAction,
+          messageType,
+          deliveryStatus,
+          outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
+          outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
+          outboxAttemptCount: outboxResult.message
+            ? Number(outboxResult.message.attemptCount || 0)
+            : 0,
+          duplicateSuppressed: Boolean(outboxResult.duplicate),
+        },
       });
-    } catch (error) {
+    } catch (logError) {
       if (logger && typeof logger.warn === "function") {
-        logger.warn("sendRestaurantAlertMessage: failed to log order alert message", {
+        logger.warn("sendRestaurantAlertMessage: failed to log alert message", {
           restaurantId: order.restaurantId,
           orderId: order.id,
           recipient: normalizedRecipient,
-          error: error && error.message ? error.message : String(error || ""),
+          error: logError && logError.message,
         });
       }
     }
 
-    if (logger && typeof logger.info === "function") {
-      logger.info("Restaurant order alert queued for delivery", {
-        restaurantId: order.restaurantId,
-        orderId: order.id,
-        senderRestaurantId: resolvedSenderContext.senderRestaurantId,
-        senderNumber: resolvedSenderContext.senderNumber,
-        recipient: normalizedRecipient,
-        messageType,
-        outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
-        deliveryStatus,
-      });
-    }
-
     return {
       deliveryStatus,
-      senderRestaurantId: resolvedSenderContext.senderRestaurantId,
-      senderNumber: resolvedSenderContext.senderNumber,
       recipient: normalizedRecipient,
       outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
       outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
@@ -605,36 +462,24 @@ function createOrderService({
     }
 
     const primaryRecipients = getOrderAlertRecipients(restaurant);
-    const restaurantProfilePhone = getRestaurantProfilePhone(restaurant);
+    const restaurantName = String(restaurant.name || "").trim();
 
     if (!primaryRecipients.length) {
-      logAlertError("notifyRestaurantOrderAlert: restaurant profile phone is missing", {
-        restaurantId: order.restaurantId,
-        orderId: order.id,
-        restaurantName: String(restaurant.name || "").trim(),
-        restaurantProfilePhone,
-      });
-      return;
-    }
-
-    const senderContext = await resolveRestaurantAlertSenderContext();
-    if (!senderContext.senderRestaurantId) {
-      logAlertError("notifyRestaurantOrderAlert: sender line could not be resolved", {
-        restaurantId: order.restaurantId,
-        orderId: order.id,
-        senderNumber: senderContext.senderNumber,
-        configuredSenderRestaurantId: String(alertSenderRestaurantId || "").trim(),
-      });
+      if (logger) {
+        logger.error("notifyRestaurantOrderAlert: no alert recipients configured", {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          restaurantName,
+        });
+      }
       return;
     }
 
     if (logger && typeof logger.info === "function") {
-      logger.info("Restaurant order alert recipient resolved from restaurant profile phone", {
+      logger.info("notifyRestaurantOrderAlert: sending alert", {
         restaurantId: order.restaurantId,
         orderId: order.id,
-        senderRestaurantId: senderContext.senderRestaurantId,
-        senderNumber: senderContext.senderNumber,
-        restaurantProfilePhone,
+        restaurantName,
         recipients: primaryRecipients,
       });
     }
@@ -642,7 +487,7 @@ function createOrderService({
     const alertText = buildRestaurantOrderAlertMessage({
       ...order,
       shortCode: buildShortOrderCode(order && order.id),
-      restaurantName: String(restaurant.name || "").trim(),
+      restaurantName,
       orderTime: order.createdAt || new Date().toISOString(),
     });
 
@@ -658,7 +503,6 @@ function createOrderService({
               sourceAction: "newOrderAlert",
               sourceRef: order.id,
             },
-            senderContext,
           });
 
           if (
@@ -688,8 +532,7 @@ function createOrderService({
             logger.info("Restaurant order alert delivery recorded", {
               restaurantId: order.restaurantId,
               orderId: order.id,
-              senderRestaurantId: dispatchResult.senderRestaurantId,
-              senderNumber: dispatchResult.senderNumber,
+              restaurantName,
               recipient: dispatchResult.recipient,
               outboxStatus: dispatchResult.outboxStatus,
               deliveryStatus: dispatchResult.deliveryStatus,
@@ -697,11 +540,10 @@ function createOrderService({
           }
         } catch (alertError) {
           if (logger) {
-            logger.warn("notifyRestaurantOrderAlert: failed to send alert to restaurant recipient", {
+            logger.warn("notifyRestaurantOrderAlert: failed to send alert to recipient", {
               restaurantId: order.restaurantId,
               orderId: order.id,
-              senderRestaurantId: senderContext.senderRestaurantId,
-              senderNumber: senderContext.senderNumber,
+              restaurantName,
               recipient,
               error: alertError && alertError.message,
             });

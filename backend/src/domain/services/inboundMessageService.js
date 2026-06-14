@@ -793,7 +793,6 @@ function createInboundMessageService({
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
-  alertSenderNumber = "09130123219",
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -1403,7 +1402,7 @@ function createInboundMessageService({
     if (parsedHashCommand) {
       if (!isStaffAlertSender) {
         const replyText =
-          `This command only works from the restaurant profile phone after you receive the Servra order alert from ${alertSenderNumber}.`;
+          `This command only works from the restaurant profile phone after you receive the order alert.`;
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
           handled: true,
@@ -1451,7 +1450,7 @@ function createInboundMessageService({
       );
       if (!alertWasSentToSender) {
         const replyText =
-          `I could not find a Servra order alert for "${parsedHashCommand.orderId}" on this number. Wait for the alert from ${alertSenderNumber} and reply from that alert chat.`;
+          `I could not find an order alert for "${parsedHashCommand.orderId}" on this number. Make sure you are replying from the same chat where the alert was received.`;
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
         return {
           handled: true,

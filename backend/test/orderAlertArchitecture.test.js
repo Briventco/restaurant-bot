@@ -52,10 +52,6 @@ function buildOrderServiceDeps({
   restaurantPhone = "",
   orderAlertRecipients = [],
   notifyOnOrder = true,
-  senderRestaurantId = "servra-hq",
-  fallbackSenderRestaurantId = "",
-  senderNumber = "09130123219",
-  resolveSenderByPhone = false,
   outboxImpl = null,
 } = {}) {
   const sentAlerts = [];
@@ -83,13 +79,15 @@ function buildOrderServiceDeps({
       },
     ],
     [
-      "servra-hq",
+      "tacos_joint",
       {
-        id: "servra-hq",
-        restaurantId: "servra-hq",
-        name: "Servra Alerts",
-        whatsapp: {
-          phone: senderNumber,
+        id: "tacos_joint",
+        restaurantId: "tacos_joint",
+        name: "Taco Joint",
+        phone: "08055550001",
+        bot: {
+          notifyOnOrder: true,
+          orderAlertRecipients: ["08055550001"],
         },
       },
     ],
@@ -98,15 +96,6 @@ function buildOrderServiceDeps({
   const restaurantRepo = {
     getRestaurantById: async (restaurantId) =>
       restaurants.get(String(restaurantId || "").trim()) || null,
-    findRestaurantByWhatsappBinding: async ({ phone }) => {
-      if (!resolveSenderByPhone) {
-        return null;
-      }
-
-      const normalizedPhone = String(phone || "").replace(/[^0-9]/g, "");
-      const senderDigits = String(senderNumber || "").replace(/[^0-9]/g, "");
-      return normalizedPhone === senderDigits ? restaurants.get("servra-hq") : null;
-    },
   };
 
   const outboxService = {
@@ -129,12 +118,7 @@ function buildOrderServiceDeps({
 
   const conversationSessionRepo = {
     upsertSession: async (restaurantId, channel, sessionRecipient, data) => {
-      sessions.push({
-        restaurantId,
-        channel,
-        sessionRecipient,
-        data,
-      });
+      sessions.push({ restaurantId, channel, sessionRecipient, data });
     },
   };
 
@@ -150,10 +134,7 @@ function buildOrderServiceDeps({
     },
     addStatusHistory: async () => ({}),
     addOrderMessage: async (_restaurantId, orderId, payload) => {
-      orderMessages.push({
-        orderId,
-        ...JSON.parse(JSON.stringify(payload)),
-      });
+      orderMessages.push({ orderId, ...JSON.parse(JSON.stringify(payload)) });
       return payload;
     },
     getOrderById: async () => null,
@@ -171,202 +152,126 @@ function buildOrderServiceDeps({
     outboxService,
     conversationSessionRepo,
     logger,
-    alertSenderNumber: senderNumber,
-    alertSenderRestaurantId: resolveSenderByPhone ? "" : senderRestaurantId,
-    fallbackAlertSenderRestaurantId: fallbackSenderRestaurantId,
     orderRepo,
     menuRepo: { listMenuItems: async () => [] },
     orderParsingService: { parseOrder: async () => [] },
   });
 
-  return {
-    orderService,
-    sentAlerts,
-    sessions,
-    orderMessages,
-    logs,
-  };
+  return { orderService, sentAlerts, sessions, orderMessages, logs };
+}
+
+async function placeOrder(orderService, restaurantId = "rest1") {
+  return orderService.createGuidedOrder({
+    restaurantId,
+    customer: { id: "cust-1", displayName: "Ada" },
+    channel: "whatsapp-web",
+    channelCustomerId: "2348012345678@c.us",
+    customerPhone: "08012345678",
+    menuItem: { id: "m1", name: "Suya", price: 800 },
+    quantity: 1,
+    fulfillmentType: "pickup",
+  });
 }
 
 describe("restaurant order alert direction", () => {
-  it("sends the new order alert to the restaurant profile phone and marks Servra as the sender", async () => {
+  it("sends alert to bot.orderAlertRecipients when configured", async () => {
     const deps = buildOrderServiceDeps({
-      restaurantPhone: "08099990001",
-      orderAlertRecipients: ["08000000000"],
-      senderRestaurantId: "servra-hq",
-      senderNumber: "09130123219",
+      restaurantPhone: "08099990000",
+      orderAlertRecipients: ["08099990001"],
     });
 
-    await deps.orderService.createGuidedOrder({
-      restaurantId: "rest1",
-      customer: {
-        id: "cust-1",
-        displayName: "Ada",
-      },
-      channel: "whatsapp-web",
-      channelCustomerId: "2348012345678@c.us",
-      customerPhone: "08012345678",
-      menuItem: { id: "m1", name: "Suya", price: 800 },
-      quantity: 1,
-      fulfillmentType: "pickup",
-    });
+    await placeOrder(deps.orderService);
 
     assert.equal(deps.sentAlerts.length, 1);
     assert.equal(deps.sentAlerts[0].recipient, "08099990001");
-    assert.equal(
-      deps.sentAlerts[0].metadata.senderRestaurantId,
-      "servra-hq"
-    );
-    assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
+    // alert is sent through the restaurant's own session, never a sender override
+    assert.equal(deps.sentAlerts[0].restaurantId, "rest1");
+    // no senderRestaurantId override in metadata
     assert.ok(
-      !deps.sentAlerts.some((payload) => payload.recipient === "08000000000"),
-      "legacy settings-based alert numbers must not drive order alert delivery"
+      !deps.sentAlerts[0].metadata.senderRestaurantId,
+      "senderRestaurantId must not be injected into metadata"
     );
-    assert.ok(
-      !deps.sentAlerts.some((payload) => payload.recipient === "09130123219"),
-      "Servra default number must not be used as the alert recipient"
-    );
-
-    const sessionRecipients = deps.sessions.map((session) => session.sessionRecipient);
-    assert.ok(
-      sessionRecipients.some((recipient) => recipient.includes("08099990001")),
-      "restaurant recipient should get a staff action session"
-    );
-    assert.ok(
-      !sessionRecipients.some((recipient) => recipient.includes("09130123219")),
-      "Servra sender number must not get a staff action session"
-    );
-
-    const storedAlertMessage = deps.orderMessages.find(
-      (message) => message.metadata && message.metadata.internalAlert === true
-    );
-    assert.ok(storedAlertMessage, "alert should be recorded on the order");
-    assert.equal(storedAlertMessage.metadata.alertRecipient, "08099990001");
-    assert.equal(storedAlertMessage.metadata.senderNumber, "09130123219");
   });
 
-  it("can resolve the Servra sender tenant from the configured sender phone number", async () => {
+  it("falls back to restaurant.phone when orderAlertRecipients is empty", async () => {
     const deps = buildOrderServiceDeps({
       restaurantPhone: "08099990002",
-      senderNumber: "09130123219",
-      resolveSenderByPhone: true,
+      orderAlertRecipients: [],
     });
 
-    await deps.orderService.createGuidedOrder({
-      restaurantId: "rest1",
-      customer: {
-        id: "cust-1",
-        displayName: "Tunde",
-      },
-      channel: "whatsapp-web",
-      channelCustomerId: "2348012345678@c.us",
-      customerPhone: "08012345678",
-      menuItem: { id: "m1", name: "Rice", price: 1200 },
-      quantity: 1,
-      fulfillmentType: "pickup",
-    });
+    await placeOrder(deps.orderService);
 
     assert.equal(deps.sentAlerts.length, 1);
-    assert.equal(
-      deps.sentAlerts[0].metadata.senderRestaurantId,
-      "servra-hq"
-    );
-    assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
+    assert.equal(deps.sentAlerts[0].recipient, "08099990002");
+    assert.equal(deps.sentAlerts[0].restaurantId, "rest1");
   });
 
-  it("can fall back to the default restaurant id when the dedicated sender tenant id is not configured", async () => {
+  it("routes each restaurant's alert through its own session independently", async () => {
     const deps = buildOrderServiceDeps({
-      restaurantPhone: "08099990004",
-      senderRestaurantId: "",
-      fallbackSenderRestaurantId: "servra-hq",
-      senderNumber: "09130123219",
+      restaurantPhone: "08055550001",
+      orderAlertRecipients: ["08055550001"],
     });
 
-    await deps.orderService.createGuidedOrder({
-      restaurantId: "rest1",
-      customer: {
-        id: "cust-1",
-        displayName: "Eniola",
-      },
-      channel: "whatsapp-web",
-      channelCustomerId: "2348012345678@c.us",
-      customerPhone: "08012345678",
-      menuItem: { id: "m1", name: "Pasta", price: 1500 },
-      quantity: 1,
-      fulfillmentType: "pickup",
-    });
+    // Order for rest1
+    await placeOrder(deps.orderService, "rest1");
+    // Order for tacos_joint
+    await placeOrder(deps.orderService, "tacos_joint");
 
-    assert.equal(deps.sentAlerts.length, 1);
-    assert.equal(deps.sentAlerts[0].recipient, "08099990004");
-    assert.equal(deps.sentAlerts[0].metadata.senderRestaurantId, "servra-hq");
-    assert.equal(deps.sentAlerts[0].metadata.senderNumber, "09130123219");
+    assert.equal(deps.sentAlerts.length, 2);
+    assert.equal(deps.sentAlerts[0].restaurantId, "rest1");
+    assert.equal(deps.sentAlerts[1].restaurantId, "tacos_joint");
+    assert.equal(deps.sentAlerts[0].recipient, "08055550001");
+    assert.equal(deps.sentAlerts[1].recipient, "08055550001");
   });
 
-  it("logs a clear error and keeps order creation alive when the restaurant profile phone is missing", async () => {
+  it("creates a staff action session for the alert recipient", async () => {
+    const deps = buildOrderServiceDeps({
+      restaurantPhone: "08099990001",
+      orderAlertRecipients: ["08099990001"],
+    });
+
+    await placeOrder(deps.orderService);
+
+    const sessionRecipients = deps.sessions.map((s) => s.sessionRecipient);
+    assert.ok(
+      sessionRecipients.some((r) => r.includes("08099990001")),
+      "alert recipient should get a staff action session"
+    );
+  });
+
+  it("logs a clear error and keeps order creation alive when no recipients are configured", async () => {
     const deps = buildOrderServiceDeps({
       restaurantPhone: "",
-      orderAlertRecipients: ["08099990003"],
-      senderRestaurantId: "servra-hq",
+      orderAlertRecipients: [],
     });
 
-    await assert.doesNotReject(() =>
-      deps.orderService.createGuidedOrder({
-        restaurantId: "rest1",
-        customer: {
-          id: "cust-1",
-          displayName: "Kemi",
-        },
-        channel: "whatsapp-web",
-        channelCustomerId: "2348012345678@c.us",
-        customerPhone: "08012345678",
-        menuItem: { id: "m1", name: "Wrap", price: 600 },
-        quantity: 1,
-        fulfillmentType: "pickup",
-      })
-    );
+    await assert.doesNotReject(() => placeOrder(deps.orderService));
 
     assert.equal(deps.sentAlerts.length, 0);
     assert.ok(
       deps.logs.error.some((entry) =>
-        /restaurant profile phone is missing/i.test(entry.message)
+        /no alert recipients configured/i.test(entry.message)
       ),
-      "missing restaurant profile phone should be logged clearly"
+      "missing recipients should be logged as an error"
     );
   });
 
-  it("logs a clear warning and keeps order creation alive when alert delivery to the profile phone fails", async () => {
+  it("logs a clear warning and keeps order creation alive when alert delivery fails", async () => {
     const deps = buildOrderServiceDeps({
-      restaurantPhone: "0801GOOD001",
-      orderAlertRecipients: ["0801BAD0001"],
-      senderRestaurantId: "servra-hq",
-      outboxImpl: async (payload) => {
-        throw new Error(`transport_down:${payload.recipient}`);
+      restaurantPhone: "08099990001",
+      orderAlertRecipients: ["08099990001"],
+      outboxImpl: async () => {
+        throw new Error("transport_down");
       },
     });
 
-    await assert.doesNotReject(() =>
-      deps.orderService.createGuidedOrder({
-        restaurantId: "rest1",
-        customer: {
-          id: "cust-1",
-          displayName: "Bola",
-        },
-        channel: "whatsapp-web",
-        channelCustomerId: "2348012345678@c.us",
-        customerPhone: "08012345678",
-        menuItem: { id: "m1", name: "Beans", price: 900 },
-        quantity: 1,
-        fulfillmentType: "pickup",
-      })
-    );
+    await assert.doesNotReject(() => placeOrder(deps.orderService));
 
-    assert.equal(deps.sentAlerts.length, 1);
-    assert.equal(deps.sentAlerts[0].recipient, "0801GOOD001");
     assert.ok(
       deps.logs.warn.some((entry) =>
-        /failed to send alert to restaurant recipient/i.test(entry.message)
+        /failed to send alert to recipient/i.test(entry.message)
       ),
-      "failed restaurant alert delivery should be logged"
+      "failed alert delivery should be logged as a warning"
     );
   });
 });
