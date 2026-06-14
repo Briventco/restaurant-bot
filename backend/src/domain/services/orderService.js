@@ -171,9 +171,43 @@ function createOrderService({
   outboxService,
   conversationSessionRepo,
   servraOpsRestaurantId = "",
+  servraOpsPhone = "",
   logger = null,
 }) {
-  const opsRestaurantId = String(servraOpsRestaurantId || "").trim();
+  // Explicit restaurant ID wins; otherwise resolve once from phone and cache.
+  let _resolvedOpsId = String(servraOpsRestaurantId || "").trim();
+  let _opsResolvePromise = null;
+
+  async function getOpsRestaurantId() {
+    if (_resolvedOpsId) return _resolvedOpsId;
+    const phone = String(servraOpsPhone || "").trim();
+    if (!phone) return "";
+    if (!_opsResolvePromise) {
+      _opsResolvePromise = (async () => {
+        const digits = phone.replace(/\D/g, "");
+        const candidates = [phone, digits];
+        if (digits.startsWith("234") && digits.length === 13) {
+          candidates.push(`0${digits.slice(3)}`);
+        }
+        for (const candidate of candidates) {
+          try {
+            const r = await restaurantRepo.findRestaurantByWhatsappBinding({ phone: candidate });
+            if (r) {
+              const id = String(r.id || r.restaurantId || "").trim();
+              if (id) {
+                _resolvedOpsId = id;
+                if (logger) logger.info("Resolved Servra ops restaurant from phone", { phone, restaurantId: id });
+                return id;
+              }
+            }
+          } catch (_) {}
+        }
+        if (logger) logger.warn("Could not resolve Servra ops restaurant from phone", { phone });
+        return "";
+      })();
+    }
+    return _opsResolvePromise;
+  }
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
   }
@@ -374,7 +408,7 @@ function createOrderService({
 
     // Send from the Servra ops session when configured; fall back to the
     // restaurant's own session if no centralised ops account is set up.
-    const alertSenderRestaurantId = opsRestaurantId || order.restaurantId;
+    const alertSenderRestaurantId = (await getOpsRestaurantId()) || order.restaurantId;
 
     const outboxResult = await outboxService.enqueueAndMaybeDispatch({
       restaurantId: alertSenderRestaurantId,
@@ -520,7 +554,7 @@ function createOrderService({
             // Session is stored under the alert sender's restaurantId so that
             // when the owner replies to Servra, the inbound handler finds the
             // session and knows which restaurant's order to act on.
-            const alertSessionRestaurantId = opsRestaurantId || order.restaurantId;
+            const alertSessionRestaurantId = (await getOpsRestaurantId()) || order.restaurantId;
             const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
             await Promise.all(
               sessionRecipients.map((sessionRecipient) =>

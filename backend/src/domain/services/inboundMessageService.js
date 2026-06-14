@@ -794,7 +794,42 @@ function createInboundMessageService({
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
   servraOpsRestaurantId = "",
+  servraOpsPhone = "",
 }) {
+  // Resolve Servra ops restaurant ID once from phone if not explicitly given.
+  let _resolvedOpsId = String(servraOpsRestaurantId || "").trim();
+  let _opsResolvePromise = null;
+
+  async function getOpsRestaurantId() {
+    if (_resolvedOpsId) return _resolvedOpsId;
+    const phone = String(servraOpsPhone || "").trim();
+    if (!phone) return "";
+    if (!_opsResolvePromise) {
+      _opsResolvePromise = (async () => {
+        const digits = phone.replace(/\D/g, "");
+        const candidates = [phone, digits];
+        if (digits.startsWith("234") && digits.length === 13) {
+          candidates.push(`0${digits.slice(3)}`);
+        }
+        for (const candidate of candidates) {
+          try {
+            const r = await restaurantRepo.findRestaurantByWhatsappBinding({ phone: candidate });
+            if (r) {
+              const id = String(r.id || r.restaurantId || "").trim();
+              if (id) {
+                _resolvedOpsId = id;
+                if (logger) logger.info("Resolved Servra ops restaurant from phone", { phone, restaurantId: id });
+                return id;
+              }
+            }
+          } catch (_) {}
+        }
+        if (logger) logger.warn("Could not resolve Servra ops restaurant from phone", { phone });
+        return "";
+      })();
+    }
+    return _opsResolvePromise;
+  }
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
   const menuCacheByRestaurant = new Map();
@@ -1351,8 +1386,8 @@ function createInboundMessageService({
 
     // True when this message arrived on the centralised Servra ops WhatsApp
     // session rather than a restaurant's own bot session.
-    const isServraOpsSession =
-      Boolean(servraOpsRestaurantId) && restaurantId === servraOpsRestaurantId;
+    const opsRestaurantId = await getOpsRestaurantId();
+    const isServraOpsSession = Boolean(opsRestaurantId) && restaurantId === opsRestaurantId;
 
     // The restaurant that owns the order being approved/rejected may differ from
     // the session's restaurantId (which is the Servra ops account when centralised
