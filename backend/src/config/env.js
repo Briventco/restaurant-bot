@@ -189,6 +189,13 @@ const env = {
     "https://servra.io",
     "https://www.servra.io"
   ]),
+  // The restaurantId of the Servra operations WhatsApp account.
+  // This session sends all order alerts to restaurant owners and receives their
+  // approval replies. Must match a restaurant record in Firestore that has a
+  // live WhatsApp session. Falls back to per-restaurant sending when empty.
+  SERVRA_OPS_RESTAURANT_ID: String(
+    process.env.SERVRA_OPS_RESTAURANT_ID || ""
+  ).trim(),
   // Servra operations numbers for manual monitoring (read-only copy of alerts).
   // Not used as order-alert recipients; each restaurant's own bot sends alerts.
   SERVRA_CENTRAL_ALERT_NUMBERS: toStringArray(

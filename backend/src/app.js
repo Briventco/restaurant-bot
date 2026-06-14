@@ -355,6 +355,7 @@ function createApp() {
     orderParsingService,
     outboxService,
     conversationSessionRepo,
+    servraOpsRestaurantId: env.SERVRA_OPS_RESTAURANT_ID,
     logger,
   });
 
@@ -381,6 +382,7 @@ function createApp() {
     aiShadowMode: env.AI_SHADOW_MODE,
     aiShadowTimeoutMs: env.AI_SHADOW_TIMEOUT_MS,
     llmParserOnlyMode: env.LLM_PARSER_ONLY_MODE,
+    servraOpsRestaurantId: env.SERVRA_OPS_RESTAURANT_ID,
   });
   const healthAlertService = createHealthAlertService({
     env,

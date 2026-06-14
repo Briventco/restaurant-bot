@@ -591,6 +591,7 @@ function createWhatsappClientRegistry({
     }
 
     const candidates = buildRecipientCandidates(to);
+    const attemptedCandidates = [];
     let lastError = null;
 
     for (const candidate of candidates) {
@@ -599,27 +600,29 @@ function createWhatsappClientRegistry({
         return;
       } catch (error) {
         const rawMessage = String(error && error.message ? error.message : "");
+        attemptedCandidates.push({ candidate, error: rawMessage || "(empty)" });
         if (rawMessage === "t" || rawMessage === "") {
-          // wwebjs throws a minified "t" error when the chat ID is not found.
-          // Log it and try the next candidate format before giving up.
-          logger.warn("WhatsApp send attempt failed for candidate", {
-            restaurantId,
-            candidate,
-            error: rawMessage || "(empty)",
-          });
+          // wwebjs "t" means chat not found for this format — try the next candidate silently.
           const wrapped = new Error(
-            `WhatsApp chat not found or unavailable for ${candidate}`
+            `WhatsApp chat not found for ${candidate}`
           );
           wrapped.code = "WWEBJS_CHAT_NOT_FOUND";
           wrapped.retryable = false;
           lastError = wrapped;
         } else {
           lastError = error;
+          break;
         }
       }
     }
 
     if (lastError) {
+      logger.warn("WhatsApp send failed for all candidate formats", {
+        restaurantId,
+        to,
+        attempted: attemptedCandidates,
+        finalError: lastError.message,
+      });
       throw lastError;
     }
   }

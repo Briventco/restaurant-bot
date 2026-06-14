@@ -793,6 +793,7 @@ function createInboundMessageService({
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
+  servraOpsRestaurantId = "",
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -1348,6 +1349,19 @@ function createInboundMessageService({
     ]);
     const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
+    // True when this message arrived on the centralised Servra ops WhatsApp
+    // session rather than a restaurant's own bot session.
+    const isServraOpsSession =
+      Boolean(servraOpsRestaurantId) && restaurantId === servraOpsRestaurantId;
+
+    // The restaurant that owns the order being approved/rejected may differ from
+    // the session's restaurantId (which is the Servra ops account when centralised
+    // alerts are enabled). Prefer the orderRestaurantId stored in the session.
+    const effectiveOrderRestaurantId =
+      isServraOpsSession && existingSession && existingSession.orderRestaurantId
+        ? existingSession.orderRestaurantId
+        : restaurantId;
+
     if (aiShadowMode && incomingMessage.trim()) {
       const shadowMeta = {
         restaurantId,
@@ -1400,16 +1414,23 @@ function createInboundMessageService({
 
     const parsedHashCommand = parseStaffHashCommand(incomingMessage);
     if (parsedHashCommand) {
-      if (!isStaffAlertSender) {
+      if (isServraOpsSession) {
+        // On the centralised Servra ops session, the sender must have an active
+        // awaiting_staff_order_action session (i.e. Servra sent them an alert).
+        if (
+          !existingSession ||
+          existingSession.state !== FLOW_STATES.AWAITING_STAFF_ORDER_ACTION
+        ) {
+          const replyText =
+            "No pending order alert. Hash commands only work after receiving an order alert from Servra.";
+          await sendText(sendMessage, normalized.channelCustomerId, replyText);
+          return { handled: true, shouldReply: true, type: "staff_hash_no_pending_alert", replyText };
+        }
+      } else if (!isStaffAlertSender) {
         const replyText =
           `This command only works from the restaurant profile phone after you receive the order alert.`;
         await sendText(sendMessage, normalized.channelCustomerId, replyText);
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "staff_hash_unauthorized",
-          replyText,
-        };
+        return { handled: true, shouldReply: true, type: "staff_hash_unauthorized", replyText };
       }
 
       if (!["confirm", "reject"].includes(parsedHashCommand.action)) {
@@ -1427,7 +1448,7 @@ function createInboundMessageService({
       }
 
       const resolved = await resolveOrderIdentifier(
-        restaurantId,
+        effectiveOrderRestaurantId,
         parsedHashCommand.orderId
       );
       if (resolved.ambiguous) {
@@ -1444,7 +1465,7 @@ function createInboundMessageService({
       const resolvedOrderId = resolved.orderId;
 
       const alertWasSentToSender = await wasOrderAlertSentToRecipient(
-        restaurantId,
+        effectiveOrderRestaurantId,
         resolvedOrderId,
         normalized
       );
@@ -1463,12 +1484,12 @@ function createInboundMessageService({
 
       if (parsedHashCommand.action === "confirm") {
         try {
-          const targetOrder = await orderService.getOrder({ restaurantId, orderId: resolvedOrderId });
+          const targetOrder = await orderService.getOrder({ restaurantId: effectiveOrderRestaurantId, orderId: resolvedOrderId });
           const isPaymentReview = targetOrder && targetOrder.status === ORDER_STATUSES.PAYMENT_REVIEW;
 
           if (isPaymentReview) {
             const result = await paymentService.confirmPaymentReview({
-              restaurantId,
+              restaurantId: effectiveOrderRestaurantId,
               orderId: resolvedOrderId,
               actorId: normalized.channelCustomerId,
               note: "Confirmed from staff WhatsApp",
@@ -1485,7 +1506,7 @@ function createInboundMessageService({
           }
 
           const updatedOrder = await orderService.confirmOrder({
-            restaurantId,
+            restaurantId: effectiveOrderRestaurantId,
             orderId: resolvedOrderId,
             actor: {
               type: "staff",
@@ -1517,12 +1538,12 @@ function createInboundMessageService({
       }
 
       try {
-        const targetOrder = await orderService.getOrder({ restaurantId, orderId: resolvedOrderId });
+        const targetOrder = await orderService.getOrder({ restaurantId: effectiveOrderRestaurantId, orderId: resolvedOrderId });
         const isPaymentReview = targetOrder && targetOrder.status === ORDER_STATUSES.PAYMENT_REVIEW;
 
         if (isPaymentReview) {
           const result = await paymentService.rejectPaymentReview({
-            restaurantId,
+            restaurantId: effectiveOrderRestaurantId,
             orderId: resolvedOrderId,
             actorId: normalized.channelCustomerId,
             note: parsedHashCommand.reason || "Payment not confirmed",
@@ -1539,7 +1560,7 @@ function createInboundMessageService({
         }
 
         const updatedOrder = await orderService.rejectOrder({
-          restaurantId,
+          restaurantId: effectiveOrderRestaurantId,
           orderId: resolvedOrderId,
           actor: {
             type: "staff",
@@ -1572,13 +1593,13 @@ function createInboundMessageService({
     }
 
     if (
-      isStaffAlertSender &&
+      (isStaffAlertSender || isServraOpsSession) &&
       existingSession &&
       existingSession.state === FLOW_STATES.AWAITING_STAFF_ORDER_ACTION &&
       existingSession.orderId
     ) {
       const activeStaffOrder = await orderService.getOrder({
-        restaurantId,
+        restaurantId: effectiveOrderRestaurantId,
         orderId: existingSession.orderId,
       });
 
@@ -1605,7 +1626,7 @@ function createInboundMessageService({
 
       if (lower === "1" || lower === "confirm" || lower === "confirm order") {
         const updatedOrder = await orderService.confirmOrder({
-          restaurantId,
+          restaurantId: effectiveOrderRestaurantId,
           orderId: activeStaffOrder.id,
           actor: {
             type: "staff",
@@ -1636,7 +1657,7 @@ function createInboundMessageService({
 
       if (lower === "2" || lower === "not available") {
         const updatedOrder = await orderService.rejectOrder({
-          restaurantId,
+          restaurantId: effectiveOrderRestaurantId,
           orderId: activeStaffOrder.id,
           actor: {
             type: "staff",
@@ -1678,6 +1699,12 @@ function createInboundMessageService({
           orderId: activeStaffOrder.id,
         };
       }
+    }
+
+    // Servra ops session: don't run any customer-facing flows beyond
+    // the staff approval branches handled above.
+    if (isServraOpsSession) {
+      return { handled: false, shouldReply: false, type: "servra_ops_unhandled" };
     }
 
     if (isStaffAlertSender) {

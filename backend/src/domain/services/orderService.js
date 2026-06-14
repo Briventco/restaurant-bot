@@ -170,8 +170,10 @@ function createOrderService({
   orderParsingService,
   outboxService,
   conversationSessionRepo,
+  servraOpsRestaurantId = "",
   logger = null,
 }) {
+  const opsRestaurantId = String(servraOpsRestaurantId || "").trim();
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
   }
@@ -370,8 +372,12 @@ function createOrderService({
       String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert";
     const sourceRef = String(metadata.sourceRef || order.id || "").trim();
 
+    // Send from the Servra ops session when configured; fall back to the
+    // restaurant's own session if no centralised ops account is set up.
+    const alertSenderRestaurantId = opsRestaurantId || order.restaurantId;
+
     const outboxResult = await outboxService.enqueueAndMaybeDispatch({
-      restaurantId: order.restaurantId,
+      restaurantId: alertSenderRestaurantId,
       channel: order.channel,
       recipient: normalizedRecipient,
       text,
@@ -389,6 +395,7 @@ function createOrderService({
         ].join(":"),
       metadata: {
         orderId: order.id,
+        orderRestaurantId: order.restaurantId,
         internalAlert: true,
         alertRecipient: normalizedRecipient,
         ...metadata,
@@ -510,17 +517,22 @@ function createOrderService({
             dispatchResult &&
             dispatchResult.deliveryStatus !== "failed"
           ) {
+            // Session is stored under the alert sender's restaurantId so that
+            // when the owner replies to Servra, the inbound handler finds the
+            // session and knows which restaurant's order to act on.
+            const alertSessionRestaurantId = opsRestaurantId || order.restaurantId;
             const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
             await Promise.all(
               sessionRecipients.map((sessionRecipient) =>
                 conversationSessionRepo.upsertSession(
-                  order.restaurantId,
+                  alertSessionRestaurantId,
                   order.channel,
                   sessionRecipient,
                   {
                     state: "awaiting_staff_order_action",
                     role: "restaurant_staff_alert",
                     orderId: order.id,
+                    orderRestaurantId: order.restaurantId,
                     alertType: "new_order",
                   }
                 )
