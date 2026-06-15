@@ -178,6 +178,16 @@ function createOutboxService({
         providerResponse: response || {},
       });
 
+      logger.info("Outbound outbox send delivered", {
+        messageId: claimedMessage.id,
+        restaurantId: claimedMessage.restaurantId,
+        channel: claimedMessage.channel,
+        recipient: claimedMessage.recipient,
+        messageType: claimedMessage.messageType,
+        sourceAction: claimedMessage.sourceAction,
+        providerMessageId,
+      });
+
       return {
         processed: true,
         message: updated || claimedMessage,

@@ -281,6 +281,47 @@ test("outbox idempotency prevents duplicate sends for same key", async () => {
   assert.equal(second.message.status, "sent");
 });
 
+test("outbox dispatch always uses the message's own restaurantId for delivery", async () => {
+  const outboxRepo = createInMemoryOutboxRepo();
+  const sends = [];
+
+  const outboxService = createOutboxService({
+    outboxRepo,
+    channelGateway: {
+      sendMessage: async (payload) => {
+        sends.push(payload);
+        return { providerMessageId: "provider-1" };
+      },
+    },
+    logger: {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    },
+    inlineSendEnabled: true,
+    defaultMaxAttempts: 3,
+    retryBaseMs: 1,
+    retryMaxMs: 1,
+    leaseMs: 10_000,
+  });
+
+  await outboxService.enqueueAndMaybeDispatch(
+    buildPayload({
+      idempotencyKey: "order:123:alert-direction",
+      recipient: "08099990001",
+      metadata: {
+        orderId: "order-123",
+        internalAlert: true,
+      },
+    })
+  );
+
+  assert.equal(sends.length, 1);
+  // restaurantId must be the message's own restaurantId, never overridden by metadata
+  assert.equal(sends[0].restaurantId, "rest-1");
+  assert.equal(sends[0].to, "08099990001");
+});
+
 test("outbox retries and eventually reaches failed on retry exhaustion", async () => {
   const outboxRepo = createInMemoryOutboxRepo();
   let sendAttempts = 0;

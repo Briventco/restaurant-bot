@@ -170,7 +170,7 @@ function createOrderService({
   orderParsingService,
   outboxService,
   conversationSessionRepo,
-  centralAlertNumbers = [],
+  logger = null,
 }) {
   function normalizePhoneLike(value) {
     return String(value || "").replace(/[^0-9]/g, "");
@@ -208,6 +208,18 @@ function createOrderService({
     return buildPhoneCandidates(recipient);
   }
 
+  function getRestaurantProfilePhone(restaurant) {
+    return String((restaurant && restaurant.phone) || "").trim();
+  }
+
+  function getCustomerDisplayName(customer) {
+    return String(
+      (customer &&
+        (customer.displayName || customer.customerName || customer.name || customer.fullName)) ||
+        ""
+    ).trim();
+  }
+
   function getManualPaymentConfig(restaurant) {
     const payment =
       restaurant && restaurant.payment && typeof restaurant.payment === "object"
@@ -229,19 +241,31 @@ function createOrderService({
         ? restaurant.bot
         : {};
 
-    const perRestaurant = Array.isArray(bot.orderAlertRecipients)
-      ? bot.orderAlertRecipients
-          .map((value) => String(value || "").trim())
-          .filter(Boolean)
+    const configured = Array.isArray(bot.orderAlertRecipients)
+      ? bot.orderAlertRecipients.map((v) => String(v || "").trim()).filter(Boolean)
       : [];
 
-    // Merge platform-level central numbers — deduplicated, always included.
-    const central = Array.isArray(centralAlertNumbers)
-      ? centralAlertNumbers.map((v) => String(v || "").trim()).filter(Boolean)
-      : [];
+    if (configured.length) {
+      return configured;
+    }
 
-    const merged = Array.from(new Set([...central, ...perRestaurant]));
-    return merged;
+    const profilePhone = getRestaurantProfilePhone(restaurant);
+    return profilePhone ? [profilePhone] : [];
+  }
+
+  function buildRestaurantAlertDeliveryStatus(outboxResult) {
+    const finalStatus = (outboxResult.message && outboxResult.message.status) || "queued";
+
+    if (finalStatus === "sent") {
+      return outboxResult.duplicate ? "sent_duplicate_suppressed" : "sent";
+    }
+    if (finalStatus === "failed") {
+      return "failed";
+    }
+    if (finalStatus === "processing") {
+      return "processing";
+    }
+    return "queued_for_retry";
   }
 
   function hashText(value) {
@@ -339,36 +363,92 @@ function createOrderService({
     text,
     metadata = {},
   }) {
-    await outboxService.enqueueAndMaybeDispatch({
+    const normalizedRecipient = String(recipient || "").trim();
+    const messageType =
+      String(metadata.type || "restaurant_alert").trim() || "restaurant_alert";
+    const sourceAction =
+      String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert";
+    const sourceRef = String(metadata.sourceRef || order.id || "").trim();
+
+    const outboxResult = await outboxService.enqueueAndMaybeDispatch({
       restaurantId: order.restaurantId,
       channel: order.channel,
-      recipient,
+      recipient: normalizedRecipient,
       text,
-      messageType: String(metadata.type || "restaurant_alert").trim() || "restaurant_alert",
-      sourceAction:
-        String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert",
-      sourceRef: String(metadata.sourceRef || order.id || "").trim(),
+      messageType,
+      sourceAction,
+      sourceRef,
       idempotencyKey:
         String(metadata.idempotencyKey || "").trim() ||
         [
           "restaurant_alert",
           order.restaurantId,
           order.id,
-          String(metadata.sourceAction || "restaurantAlert").trim() || "restaurantAlert",
-          normalizePhoneLike(recipient) || "none",
+          sourceAction,
+          normalizePhoneLike(normalizedRecipient) || "none",
         ].join(":"),
       metadata: {
         orderId: order.id,
         internalAlert: true,
-        alertRecipient: recipient,
+        alertRecipient: normalizedRecipient,
         ...metadata,
       },
     });
+
+    const deliveryStatus = buildRestaurantAlertDeliveryStatus(outboxResult);
+
+    try {
+      await orderRepo.addOrderMessage(order.restaurantId, order.id, {
+        restaurantId: order.restaurantId,
+        channel: order.channel,
+        channelCustomerId: normalizedRecipient,
+        customerPhone: normalizePhoneLike(normalizedRecipient),
+        direction: "outbound",
+        text,
+        metadata: {
+          ...metadata,
+          internalAlert: true,
+          alertRecipient: normalizedRecipient,
+          sourceAction,
+          messageType,
+          deliveryStatus,
+          outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
+          outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
+          outboxAttemptCount: outboxResult.message
+            ? Number(outboxResult.message.attemptCount || 0)
+            : 0,
+          duplicateSuppressed: Boolean(outboxResult.duplicate),
+        },
+      });
+    } catch (logError) {
+      if (logger && typeof logger.warn === "function") {
+        logger.warn("sendRestaurantAlertMessage: failed to log alert message", {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          recipient: normalizedRecipient,
+          error: logError && logError.message,
+        });
+      }
+    }
+
+    return {
+      deliveryStatus,
+      recipient: normalizedRecipient,
+      outboxMessageId: outboxResult.message ? outboxResult.message.id : "",
+      outboxStatus: outboxResult.message ? outboxResult.message.status : "queued",
+      duplicateSuppressed: Boolean(outboxResult.duplicate),
+      messageType,
+    };
   }
 
   async function notifyRestaurantOrderAlert(order) {
     const restaurant = await restaurantRepo.getRestaurantById(order.restaurantId);
     if (!restaurant) {
+      if (logger) {
+        logger.warn("notifyRestaurantOrderAlert: restaurant not found", {
+          restaurantId: order.restaurantId,
+        });
+      }
       return;
     }
 
@@ -381,46 +461,93 @@ function createOrderService({
       return;
     }
 
-    const recipients = getOrderAlertRecipients(restaurant);
-    if (!recipients.length) {
+    const primaryRecipients = getOrderAlertRecipients(restaurant);
+    const restaurantName = String(restaurant.name || "").trim();
+
+    if (!primaryRecipients.length) {
+      if (logger) {
+        logger.error("notifyRestaurantOrderAlert: no alert recipients configured", {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          restaurantName,
+        });
+      }
       return;
+    }
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("notifyRestaurantOrderAlert: sending alert", {
+        restaurantId: order.restaurantId,
+        orderId: order.id,
+        restaurantName,
+        recipients: primaryRecipients,
+      });
     }
 
     const alertText = buildRestaurantOrderAlertMessage({
       ...order,
       shortCode: buildShortOrderCode(order && order.id),
+      restaurantName,
+      orderTime: order.createdAt || new Date().toISOString(),
     });
 
     await Promise.all(
-      recipients.map(async (recipient) => {
-        await sendRestaurantAlertMessage({
-          order,
-          recipient,
-          text: alertText,
-          metadata: {
-            type: "restaurant_order_alert",
-            sourceAction: "newOrderAlert",
-            sourceRef: order.id,
-          },
-        });
+      primaryRecipients.map(async (recipient) => {
+        try {
+          const dispatchResult = await sendRestaurantAlertMessage({
+            order,
+            recipient,
+            text: alertText,
+            metadata: {
+              type: "restaurant_order_alert",
+              sourceAction: "newOrderAlert",
+              sourceRef: order.id,
+            },
+          });
 
-        if (conversationSessionRepo) {
-          const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
-          await Promise.all(
-            sessionRecipients.map((sessionRecipient) =>
-              conversationSessionRepo.upsertSession(
-                order.restaurantId,
-                order.channel,
-                sessionRecipient,
-                {
-                  state: "awaiting_staff_order_action",
-                  role: "restaurant_staff_alert",
-                  orderId: order.id,
-                  alertType: "new_order",
-                }
+          if (
+            conversationSessionRepo &&
+            dispatchResult &&
+            dispatchResult.deliveryStatus !== "failed"
+          ) {
+            const sessionRecipients = buildStaffAlertSessionRecipients(recipient);
+            await Promise.all(
+              sessionRecipients.map((sessionRecipient) =>
+                conversationSessionRepo.upsertSession(
+                  order.restaurantId,
+                  order.channel,
+                  sessionRecipient,
+                  {
+                    state: "awaiting_staff_order_action",
+                    role: "restaurant_staff_alert",
+                    orderId: order.id,
+                    alertType: "new_order",
+                  }
+                )
               )
-            )
-          );
+            );
+          }
+
+          if (logger && typeof logger.info === "function") {
+            logger.info("Restaurant order alert delivery recorded", {
+              restaurantId: order.restaurantId,
+              orderId: order.id,
+              restaurantName,
+              recipient: dispatchResult.recipient,
+              outboxStatus: dispatchResult.outboxStatus,
+              deliveryStatus: dispatchResult.deliveryStatus,
+            });
+          }
+        } catch (alertError) {
+          if (logger) {
+            logger.warn("notifyRestaurantOrderAlert: failed to send alert to recipient", {
+              restaurantId: order.restaurantId,
+              orderId: order.id,
+              restaurantName,
+              recipient,
+              error: alertError && alertError.message,
+            });
+          }
         }
       })
     );
@@ -436,7 +563,7 @@ function createOrderService({
     if (!recipients.length) {
       throw createHttpError(
         409,
-        "No restaurant alert WhatsApp numbers are configured yet."
+        "Restaurant profile phone is required before order alerts can be sent."
       );
     }
 
@@ -461,10 +588,7 @@ function createOrderService({
           });
 
           const finalStatus =
-            (dispatchResult &&
-              dispatchResult.message &&
-              dispatchResult.message.status) ||
-            "queued";
+            (dispatchResult && dispatchResult.outboxStatus) || "queued";
 
           return {
             recipient,
@@ -626,6 +750,7 @@ function createOrderService({
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
       customerId: customer.id,
+      customerName: getCustomerDisplayName(customer),
       channel,
       channelCustomerId,
       customerPhone,
@@ -654,6 +779,18 @@ function createOrderService({
       },
     });
 
+    if (logger && typeof logger.info === "function") {
+      logger.info("Order created", {
+        restaurantId,
+        orderId: order.id,
+        customerName: String(order.customerName || "").trim(),
+        customerPhone: String(order.customerPhone || "").trim(),
+        fulfillmentType: String(order.fulfillmentType || "pickup").trim() || "pickup",
+        total: Number(order.total || 0),
+        sourceAction: "createNewOrderFromInbound",
+      });
+    }
+
     await notifyRestaurantOrderAlert(order);
 
     return order;
@@ -676,6 +813,7 @@ function createOrderService({
     quantity,
     fulfillmentType,
     deliveryAddress,
+    deliveryPhone = "",
     deliveryFee = 0,
   }) {
     const safeQuantity = toValidQuantityOrNull(quantity);
@@ -703,6 +841,7 @@ function createOrderService({
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
       customerId: customer.id,
+      customerName: getCustomerDisplayName(customer),
       channel,
       channelCustomerId,
       customerPhone,
@@ -722,6 +861,7 @@ function createOrderService({
       paymentState: "not_started",
       fulfillmentType: fulfillmentType || "pickup",
       deliveryAddress: deliveryAddress || "",
+      deliveryPhone: deliveryPhone || "",
       summaryText: buildOrderSummaryLineItems(matched),
     });
 
@@ -736,6 +876,18 @@ function createOrderService({
         fulfillmentType: fulfillmentType || "pickup",
       },
     });
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("Order created", {
+        restaurantId,
+        orderId: order.id,
+        customerName: String(order.customerName || "").trim(),
+        customerPhone: String(order.customerPhone || "").trim(),
+        fulfillmentType: String(order.fulfillmentType || "pickup").trim() || "pickup",
+        total: Number(order.total || 0),
+        sourceAction: "createGuidedOrder",
+      });
+    }
 
     await notifyRestaurantOrderAlert(order);
 
@@ -752,6 +904,7 @@ function createOrderService({
     matched,
     fulfillmentType,
     deliveryAddress,
+    deliveryPhone = "",
     deliveryFee = 0,
     rawMessage = "",
   }) {
@@ -769,6 +922,7 @@ function createOrderService({
     const order = await orderRepo.createOrder(restaurantId, {
       restaurantId,
       customerId: customer.id,
+      customerName: getCustomerDisplayName(customer),
       channel,
       channelCustomerId,
       customerPhone,
@@ -792,6 +946,7 @@ function createOrderService({
       paymentState: "not_started",
       fulfillmentType: fulfillmentType || "pickup",
       deliveryAddress: deliveryAddress || "",
+      deliveryPhone: deliveryPhone || "",
       summaryText: buildOrderSummaryLineItems(safeMatched),
     });
 
@@ -807,6 +962,18 @@ function createOrderService({
         itemCount: safeMatched.length,
       },
     });
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("Order created", {
+        restaurantId,
+        orderId: order.id,
+        customerName: String(order.customerName || "").trim(),
+        customerPhone: String(order.customerPhone || "").trim(),
+        fulfillmentType: String(order.fulfillmentType || "pickup").trim() || "pickup",
+        total: Number(order.total || 0),
+        sourceAction: "createGuidedOrderFromItems",
+      });
+    }
 
     await notifyRestaurantOrderAlert(order);
 

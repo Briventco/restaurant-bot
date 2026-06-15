@@ -5,11 +5,42 @@ function formatMenu(menuItems) {
     .join("\n");
 }
 
+function buildCategorizedMenuList(menuItems) {
+  const available = (menuItems || []).filter((item) => item.available);
+  if (!available.length) return "";
+
+  const categoryOrder = [];
+  const categoryMap = new Map();
+
+  available.forEach((item, index) => {
+    const cat = String(item.category || "").trim().toUpperCase() || "OTHERS";
+    if (!categoryMap.has(cat)) {
+      categoryMap.set(cat, []);
+      categoryOrder.push(cat);
+    }
+    categoryMap.get(cat).push({ item, number: index + 1 });
+  });
+
+  // Single uncategorized group — use flat numbered list without section header
+  if (categoryOrder.length === 1 && categoryOrder[0] === "OTHERS") {
+    return available
+      .map((item, index) => `${index + 1}. ${item.name} — ₦${item.price}`)
+      .join("\n");
+  }
+
+  return categoryOrder
+    .map((cat) => {
+      const entries = categoryMap.get(cat);
+      const lines = entries.map(
+        ({ item, number }) => `${number}. ${item.name} — ₦${item.price}`
+      );
+      return `${cat}\n${lines.join("\n")}`;
+    })
+    .join("\n\n");
+}
+
 function buildGuidedMenuList(menuItems) {
-  return (menuItems || [])
-    .filter((item) => item.available)
-    .map((item, index) => `${index + 1}. ${item.name} - N${item.price}`)
-    .join("\n");
+  return buildCategorizedMenuList(menuItems);
 }
 
 function buildMenuWelcome(menuItems, restaurantName = "") {
@@ -18,9 +49,9 @@ function buildMenuWelcome(menuItems, restaurantName = "") {
     ? `Welcome to ${safeRestaurantName}!`
     : "Welcome!";
 
-  return `${heading}\n\nHere's our menu:\n${buildGuidedMenuList(
+  return `${heading}\n\nHere is our menu today:\n\n${buildCategorizedMenuList(
     menuItems
-  )}\n\nReply with the item name.`;
+  )}\n\nReply with the item name or number to order.`;
 }
 
 function buildGreetingMessage(restaurantName = "") {
@@ -168,6 +199,14 @@ function buildAddressPrompt() {
   return "Please send your delivery address.";
 }
 
+function buildPhonePrompt() {
+  return "Please send a phone number the rider can call.";
+}
+
+function buildInvalidPhonePrompt() {
+  return "That doesn't look like a valid phone number. Please send a number like 08012345678 or +2348012345678.";
+}
+
 function buildDeliveryZoneNotFoundMessage(zones) {
   const list = zones
     .filter((z) => z.enabled !== false)
@@ -188,6 +227,7 @@ function buildGuidedConfirmPrompt({
   total,
   fulfillmentType,
   address,
+  deliveryPhone = "",
   deliveryFee = 0,
   prefix = "",
 }) {
@@ -211,6 +251,10 @@ function buildGuidedConfirmPrompt({
 
   if (fulfillmentType === "delivery" && address) {
     text += `\nAddress: ${address}`;
+  }
+
+  if (fulfillmentType === "delivery" && deliveryPhone) {
+    text += `\nPhone: ${deliveryPhone}`;
   }
 
   text += "\n\nReply YES or NO";
@@ -279,11 +323,45 @@ function buildPaymentReferenceSavedMessage() {
 
 function buildRestaurantOrderAlertMessage(order = {}) {
   const lines = [];
-  lines.push(`New Order #${order.id || "-"}`);
+
+  const restaurantName = String(order.restaurantName || "").trim();
+  lines.push(restaurantName ? `New Order — ${restaurantName}` : "New Order");
+  lines.push(`#${order.id || "-"}`);
   if (order.shortCode) {
-    lines.push(`Staff Ref: ${order.shortCode}`);
+    lines.push(`Ref: ${order.shortCode}`);
   }
+
+  if (order.orderTime) {
+    const timeStr = (() => {
+      try {
+        return new Date(order.orderTime).toLocaleString("en-NG", {
+          timeZone: "Africa/Lagos",
+          dateStyle: "short",
+          timeStyle: "short",
+        });
+      } catch (_) {
+        return String(order.orderTime);
+      }
+    })();
+    lines.push(`Time: ${timeStr}`);
+  }
+
   lines.push("");
+
+  const customerName = String(order.customerName || order.displayName || "").trim();
+  const customerPhone = String(order.customerPhone || order.channelCustomerId || "")
+    .replace(/@c\.us|@lid/g, "")
+    .trim();
+  if (customerName) {
+    lines.push(`Customer name: ${customerName}`);
+  }
+  if (customerPhone) {
+    lines.push(`Customer phone: ${customerPhone}`);
+  }
+  if (customerName || customerPhone) {
+    lines.push("");
+  }
+
   lines.push(buildOrderSummaryLineItems(order.matched || []));
 
   const fee = Number(order.deliveryFee || 0);
@@ -299,6 +377,9 @@ function buildRestaurantOrderAlertMessage(order = {}) {
 
   if (String(order.fulfillmentType || "pickup").trim().toLowerCase() === "delivery") {
     lines.push(`Delivery: ${order.deliveryAddress || "Address not provided"}`);
+    if (order.deliveryPhone) {
+      lines.push(`Rider phone: ${order.deliveryPhone}`);
+    }
   } else {
     lines.push("Pickup order");
   }
@@ -367,8 +448,15 @@ function buildRestaurantTestAlertMessage(restaurant = {}) {
   return `Test alert from ${restaurantName}.\n\nIf you received this, the restaurant WhatsApp order alert setup is working for this number.`;
 }
 
+function applyWelcomePlaceholders(template, { restaurantName = "", customerName = "" } = {}) {
+  return String(template || "")
+    .replace(/\{restaurant_name\}/gi, restaurantName || "our restaurant")
+    .replace(/\{customer_name\}/gi, customerName || "there");
+}
+
 module.exports = {
   formatMenu,
+  buildCategorizedMenuList,
   buildGuidedMenuList,
   buildGreetingMessage,
   buildStockAvailabilityMessage,
@@ -387,6 +475,8 @@ module.exports = {
   buildSelectedItemPrompt,
   buildDeliveryOrPickupPrompt,
   buildAddressPrompt,
+  buildPhonePrompt,
+  buildInvalidPhonePrompt,
   buildDeliveryZoneNotFoundMessage,
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
@@ -403,4 +493,5 @@ module.exports = {
   buildRestaurantOrderAlertHandledMessage,
   buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
+  applyWelcomePlaceholders,
 };

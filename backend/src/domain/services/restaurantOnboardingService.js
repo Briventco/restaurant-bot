@@ -204,6 +204,7 @@ function createRestaurantOnboardingService({
     const normalizedRestaurantName = String(restaurantName || "").trim();
     const normalizedAdminEmail = String(adminEmail || "").trim().toLowerCase();
     const normalizedAdminPassword = String(adminPassword || "");
+    const normalizedProfilePhone = String(phone || alertPhone || "").trim();
     const resolvedRestaurantId = await buildUniqueRestaurantId(
       restaurantId,
       normalizedRestaurantName,
@@ -234,7 +235,7 @@ function createRestaurantOnboardingService({
       const restaurant = await restaurantRepo.upsertRestaurant(resolvedRestaurantId, {
         name: normalizedRestaurantName,
         email: normalizedAdminEmail,
-        phone: String(phone || "").trim(),
+        phone: normalizedProfilePhone,
         address: String(address || "").trim(),
         timezone: String(timezone || "Africa/Lagos").trim(),
         currency: String(currency || "NGN").trim(),
@@ -245,7 +246,6 @@ function createRestaurantOnboardingService({
           enabled: true,
           autoConfirm: false,
           notifyOnOrder: true,
-          orderAlertRecipients: alertPhone ? [String(alertPhone).trim()] : [],
         },
         onboarding: createInitialOnboardingState({
           source,

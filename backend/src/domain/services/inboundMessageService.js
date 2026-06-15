@@ -10,6 +10,8 @@ const {
   buildSelectedItemPrompt,
   buildDeliveryOrPickupPrompt,
   buildAddressPrompt,
+  buildPhonePrompt,
+  buildInvalidPhonePrompt,
   buildDeliveryZoneNotFoundMessage,
   buildGuidedConfirmPrompt,
   buildGuidedOrderConfirmedMessage,
@@ -19,6 +21,7 @@ const {
   buildPaymentStillUnderReviewMessage,
   buildRestaurantOrderAlertHandledMessage,
   buildRephraseOrderPrompt,
+  applyWelcomePlaceholders,
 } = require("../templates/messages");
 const { createChatOrchestrator } = require("./chatOrchestrator");
 const { createRuleBasedRouter } = require("./ruleBasedRouter");
@@ -31,6 +34,7 @@ const FLOW_STATES = {
   AWAITING_QUANTITY: "awaiting_quantity",
   AWAITING_FULFILLMENT_TYPE: "awaiting_fulfillment_type",
   AWAITING_ADDRESS: "awaiting_address",
+  AWAITING_DELIVERY_PHONE: "awaiting_delivery_phone",
   AWAITING_CONFIRMATION: "awaiting_confirmation",
   AWAITING_PAYMENT_REFERENCE: "awaiting_payment_reference",
   AWAITING_STAFF_ORDER_ACTION: "awaiting_staff_order_action",
@@ -41,6 +45,7 @@ const ORDER_INTAKE_SESSION_STATES = new Set([
   FLOW_STATES.AWAITING_QUANTITY,
   FLOW_STATES.AWAITING_FULFILLMENT_TYPE,
   FLOW_STATES.AWAITING_ADDRESS,
+  FLOW_STATES.AWAITING_DELIVERY_PHONE,
   FLOW_STATES.AWAITING_CONFIRMATION,
 ]);
 
@@ -345,6 +350,35 @@ function parseStaffHashCommand(rawText) {
     orderId,
     reason,
   };
+}
+
+function isValidDeliveryPhone(value) {
+  const digits = String(value || "").replace(/[^0-9]/g, "");
+  if (digits.length < 10 || digits.length > 13) return false;
+  // Nigerian local (08x, 07x, 09x — 11 digits)
+  if (/^0[789]\d{9}$/.test(digits)) return true;
+  // Nigerian with country code 234 (13 digits)
+  if (/^234[789]\d{9}$/.test(digits)) return true;
+  // Loose: 10-13 digit number accepted
+  return true;
+}
+
+function extractPhoneFromText(text) {
+  const raw = String(text || "").trim();
+  const patterns = [
+    /\+234[789]\d{9}/,
+    /\b234[789]\d{9}\b/,
+    /\b0[789]\d{3}[\s\-]?\d{3}[\s\-]?\d{4}\b/,
+    /\b0[789]\d{9}\b/,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match) {
+      const candidate = match[0].trim();
+      if (isValidDeliveryPhone(candidate)) return candidate;
+    }
+  }
+  return "";
 }
 
 function normalizePhoneLike(value) {
@@ -759,7 +793,6 @@ function createInboundMessageService({
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
-  centralAlertNumbers = [],
 }) {
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -926,18 +959,13 @@ function createInboundMessageService({
     return false;
   }
 
-  function isRestaurantStaffAlertSender(restaurant, normalized) {
-    const bot =
-      restaurant && restaurant.bot && typeof restaurant.bot === "object"
-        ? restaurant.bot
-        : {};
+  function getRestaurantAlertRecipients(restaurant) {
+    const profilePhone = String((restaurant && restaurant.phone) || "").trim();
+    return profilePhone ? [profilePhone] : [];
+  }
 
-    // Combine per-restaurant recipients with the platform-level central numbers.
-    const perRestaurant = Array.isArray(bot.orderAlertRecipients)
-      ? bot.orderAlertRecipients
-      : [];
-    const central = Array.isArray(centralAlertNumbers) ? centralAlertNumbers : [];
-    const recipients = Array.from(new Set([...central, ...perRestaurant]));
+  function isRestaurantStaffAlertSender(restaurant, normalized) {
+    const recipients = getRestaurantAlertRecipients(restaurant);
 
     const incomingCandidates = new Set([
       ...buildPhoneCandidates(normalized.channelCustomerId),
@@ -1064,6 +1092,52 @@ function createInboundMessageService({
     return { orderId: identifier, found: false };
   }
 
+  async function wasOrderAlertSentToRecipient(restaurantId, orderId, normalized) {
+    const incomingCandidates = new Set([
+      ...buildPhoneCandidates(normalized.channelCustomerId),
+      ...buildPhoneCandidates(normalized.customerPhone),
+    ]);
+
+    if (!incomingCandidates.size) {
+      return false;
+    }
+
+    try {
+      const result = await orderService.listOrderMessages({
+        restaurantId,
+        orderId,
+        limit: 50,
+      });
+      const messages = Array.isArray(result && result.messages) ? result.messages : [];
+
+      return messages.some((message) => {
+        const metadata =
+          message && message.metadata && typeof message.metadata === "object"
+            ? message.metadata
+            : {};
+        const messageType = String(metadata.messageType || metadata.type || "").trim();
+        const deliveryStatus = String(metadata.deliveryStatus || "").trim();
+        if (metadata.internalAlert !== true) {
+          return false;
+        }
+        if (messageType !== "restaurant_order_alert") {
+          return false;
+        }
+        if (deliveryStatus === "failed") {
+          return false;
+        }
+
+        const alertRecipient = String(
+          metadata.alertRecipient || message.channelCustomerId || ""
+        ).trim();
+        const alertCandidates = buildPhoneCandidates(alertRecipient);
+        return alertCandidates.some((candidate) => incomingCandidates.has(candidate));
+      });
+    } catch (_error) {
+      return false;
+    }
+  }
+
   async function sendText(sendMessage, to, text) {
     if (!sendMessage) {
       return;
@@ -1123,6 +1197,10 @@ function createInboundMessageService({
     calculateMatchedTotal,
     buildGuidedConfirmPrompt,
     buildAddressPrompt,
+    buildPhonePrompt,
+    buildInvalidPhonePrompt,
+    isValidDeliveryPhone,
+    extractPhoneFromText,
     buildDeliveryZoneNotFoundMessage,
     buildDeliveryOrPickupPrompt,
     buildMenuWelcome,
@@ -1268,6 +1346,7 @@ function createInboundMessageService({
         getConversationSessionWithAliases(restaurantId, normalized.channel, normalized)
       ),
     ]);
+    const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
     if (aiShadowMode && incomingMessage.trim()) {
       const shadowMeta = {
@@ -1321,6 +1400,18 @@ function createInboundMessageService({
 
     const parsedHashCommand = parseStaffHashCommand(incomingMessage);
     if (parsedHashCommand) {
+      if (!isStaffAlertSender) {
+        const replyText =
+          `This command only works from the restaurant profile phone after you receive the order alert.`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_hash_unauthorized",
+          replyText,
+        };
+      }
+
       if (!["confirm", "reject"].includes(parsedHashCommand.action)) {
         const replyText =
           "Unknown command. Use:\n#confirm <ORDER_REF>\n#reject <ORDER_REF> <REASON>";
@@ -1351,6 +1442,24 @@ function createInboundMessageService({
         return { handled: true, shouldReply: true, type: "staff_hash_order_not_found", replyText };
       }
       const resolvedOrderId = resolved.orderId;
+
+      const alertWasSentToSender = await wasOrderAlertSentToRecipient(
+        restaurantId,
+        resolvedOrderId,
+        normalized
+      );
+      if (!alertWasSentToSender) {
+        const replyText =
+          `I could not find an order alert for "${parsedHashCommand.orderId}" on this number. Make sure you are replying from the same chat where the alert was received.`;
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "staff_hash_alert_not_found",
+          replyText,
+          orderId: resolvedOrderId,
+        };
+      }
 
       if (parsedHashCommand.action === "confirm") {
         try {
@@ -1461,8 +1570,6 @@ function createInboundMessageService({
         };
       }
     }
-
-    const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
     if (
       isStaffAlertSender &&
@@ -2005,11 +2112,29 @@ function createInboundMessageService({
       const menuItems = await timedDb("listAvailableMenuItemsCached_greeting", () =>
         listAvailableMenuItemsCached(restaurantId)
       );
-      const availableItems = (menuItems || []).filter((item) => item.available);
-      const sample = availableItems.slice(0, 3).map((item) => item.name).join(", ");
-      const replyText = sample
-        ? `Hi there. You're welcome at ${String((restaurant && restaurant.name) || "our restaurant").trim()}.\n\nToday we have ${sample}. Reply MENU to see everything.`
-        : `Hi there. You're welcome at ${String((restaurant && restaurant.name) || "our restaurant").trim()}.\n\nReply MENU to see what is available today.`;
+
+      const bot =
+        restaurant && restaurant.bot && typeof restaurant.bot === "object"
+          ? restaurant.bot
+          : {};
+      const restaurantName =
+        String((restaurant && restaurant.name) || "").trim() || "our restaurant";
+      const customerName = String(normalized.displayName || "").trim();
+
+      let replyText;
+      if (bot.customWelcomeMessage && String(bot.customWelcomeMessage).trim()) {
+        replyText = applyWelcomePlaceholders(String(bot.customWelcomeMessage).trim(), {
+          restaurantName,
+          customerName,
+        });
+      } else {
+        const availableItems = (menuItems || []).filter((item) => item.available);
+        const sample = availableItems.slice(0, 3).map((item) => item.name).join(", ");
+        replyText = sample
+          ? `Hi there. You're welcome at ${restaurantName}.\n\nToday we have ${sample}. Reply MENU to see everything.`
+          : `Hi there. You're welcome at ${restaurantName}.\n\nReply MENU to see what is available today.`;
+      }
+
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,
@@ -2137,7 +2262,7 @@ function createInboundMessageService({
       // Staff alert sessions must never be processed by the guided session router.
       // The staff handlers above (lines 868-975 and 977-1055) are the only correct
       // handlers for these sessions. If execution reaches here with a staff session,
-      // it means isStaffAlertSender returned false (phone not in orderAlertRecipients)
+      // it means isStaffAlertSender returned false (phone does not match restaurant profile phone)
       // for a customer who somehow has a staff session stored against their ID.
       // Clear the stale session and let the message continue as a normal customer flow.
       if (

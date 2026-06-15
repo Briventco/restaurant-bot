@@ -355,7 +355,7 @@ function createApp() {
     orderParsingService,
     outboxService,
     conversationSessionRepo,
-    centralAlertNumbers: env.SERVRA_CENTRAL_ALERT_NUMBERS,
+    logger,
   });
 
   const paymentService = createPaymentService({
@@ -381,7 +381,6 @@ function createApp() {
     aiShadowMode: env.AI_SHADOW_MODE,
     aiShadowTimeoutMs: env.AI_SHADOW_TIMEOUT_MS,
     llmParserOnlyMode: env.LLM_PARSER_ONLY_MODE,
-    centralAlertNumbers: env.SERVRA_CENTRAL_ALERT_NUMBERS,
   });
   const healthAlertService = createHealthAlertService({
     env,

@@ -149,18 +149,39 @@ function normalizeOutboundRecipient(to) {
   return `${digits}@c.us`;
 }
 
+function toInternationalDigits(digits) {
+  // Nigerian local (08XXXXXXXXX, 11 digits) → international (2348XXXXXXXXX)
+  if (digits.startsWith("0") && digits.length === 11) {
+    return `234${digits.slice(1)}`;
+  }
+  return null;
+}
+
 function buildRecipientCandidates(to) {
   const raw = String(to || "").trim();
   if (!raw) {
     return [];
   }
 
-  const candidates = new Set([normalizeOutboundRecipient(raw)]);
+  const candidates = new Set();
   const digits = raw.split("@")[0].replace(/\D/g, "");
+
+  // Always try the normalised form first
+  candidates.add(normalizeOutboundRecipient(raw));
+
   if (digits) {
     candidates.add(`${digits}@c.us`);
     candidates.add(`${digits}@lid`);
+
+    // Add international format variant so local numbers (e.g. 08XXXXXXXXX)
+    // resolve to the correct WhatsApp contact ID (2348XXXXXXXXX@c.us).
+    const intl = toInternationalDigits(digits);
+    if (intl) {
+      candidates.add(`${intl}@c.us`);
+      candidates.add(`${intl}@lid`);
+    }
   }
+
   if (raw.includes("@")) {
     candidates.add(raw);
   }
@@ -318,6 +339,10 @@ function createWhatsappClientRegistry({
 
     client.on("ready", () => {
       logger.info("WhatsApp connected", { restaurantId });
+      const existingEntry = clients.get(restaurantId);
+      if (existingEntry) {
+        clients.set(restaurantId, { ...existingEntry, ready: true });
+      }
       clearQrCache(restaurantId);
       void setSessionState(restaurantId, {
         status: "connected",
@@ -457,7 +482,7 @@ function createWhatsappClientRegistry({
     const initializeClient = async () => {
       const client = createClient();
       bindClientEvents(restaurantId, client);
-      clients.set(restaurantId, { client });
+      clients.set(restaurantId, { client, ready: false });
       await client.initialize();
       return client;
     };
@@ -541,12 +566,28 @@ function createWhatsappClientRegistry({
   async function sendMessage({ restaurantId, to, text }) {
     let entry = clients.get(restaurantId);
     if (!entry) {
-      await startSession(restaurantId);
-      entry = clients.get(restaurantId);
+      // Kick off session start in the background so retries can find a ready client.
+      void startSession(restaurantId).catch((err) => {
+        logger.warn("Background session start failed", {
+          restaurantId,
+          error: err && err.message,
+        });
+      });
+      const notInitialized = new Error(
+        `WhatsApp session for ${restaurantId} is not initialized — session start triggered`
+      );
+      notInitialized.code = "SESSION_NOT_INITIALIZED";
+      notInitialized.retryable = true;
+      throw notInitialized;
     }
 
-    if (!entry) {
-      throw new Error("Failed to initialize WhatsApp client");
+    if (!entry.ready) {
+      const notReady = new Error(
+        `WhatsApp session for ${restaurantId} is starting up — not ready to send yet`
+      );
+      notReady.code = "SESSION_NOT_READY";
+      notReady.retryable = true;
+      throw notReady;
     }
 
     const candidates = buildRecipientCandidates(to);
@@ -557,7 +598,24 @@ function createWhatsappClientRegistry({
         await entry.client.sendMessage(candidate, text);
         return;
       } catch (error) {
-        lastError = error;
+        const rawMessage = String(error && error.message ? error.message : "");
+        if (rawMessage === "t" || rawMessage === "") {
+          // wwebjs throws a minified "t" error when the chat ID is not found.
+          // Log it and try the next candidate format before giving up.
+          logger.warn("WhatsApp send attempt failed for candidate", {
+            restaurantId,
+            candidate,
+            error: rawMessage || "(empty)",
+          });
+          const wrapped = new Error(
+            `WhatsApp chat not found or unavailable for ${candidate}`
+          );
+          wrapped.code = "WWEBJS_CHAT_NOT_FOUND";
+          wrapped.retryable = false;
+          lastError = wrapped;
+        } else {
+          lastError = error;
+        }
       }
     }
 

@@ -189,11 +189,8 @@ const env = {
     "https://servra.io",
     "https://www.servra.io"
   ]),
-  // Central Servra operations WhatsApp number(s).
-  // Comma or newline-separated. All restaurant order/payment alerts are sent
-  // to these numbers automatically — no per-restaurant configuration needed.
-  // Replies using #confirm / #reject from these numbers are always accepted
-  // regardless of each restaurant's orderAlertRecipients list.
+  // Servra operations numbers for manual monitoring (read-only copy of alerts).
+  // Not used as order-alert recipients; each restaurant's own bot sends alerts.
   SERVRA_CENTRAL_ALERT_NUMBERS: toStringArray(
     process.env.SERVRA_CENTRAL_ALERT_NUMBERS,
     []

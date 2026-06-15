@@ -14,6 +14,10 @@ function createGuidedSessionRouter({
   calculateMatchedTotal,
   buildGuidedConfirmPrompt,
   buildAddressPrompt,
+  buildPhonePrompt,
+  buildInvalidPhonePrompt,
+  isValidDeliveryPhone,
+  extractPhoneFromText,
   buildDeliveryZoneNotFoundMessage,
   buildDeliveryOrPickupPrompt,
   deliveryZoneRepo,
@@ -1076,15 +1080,120 @@ function createGuidedSessionRouter({
         }
       }
 
+      // Check if the customer also included their phone number in the address message
+      const inlinePhone = extractPhoneFromText ? extractPhoneFromText(normalized.text) : "";
+      const cleanAddress = inlinePhone
+        ? address.replace(inlinePhone, "").replace(/\s+/g, " ").trim() || address
+        : address;
+
+      if (inlinePhone) {
+        // Both address and phone provided — go straight to confirmation
+        await conversationSessionRepo.upsertSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId,
+          {
+            state: flowStates.AWAITING_CONFIRMATION,
+            fulfillmentType: "delivery",
+            deliveryAddress: cleanAddress,
+            deliveryPhone: inlinePhone,
+            deliveryFee,
+            ...(sessionMatched.length
+              ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
+              : {}),
+          }
+        );
+
+        const replyText = buildGuidedConfirmPrompt({
+          matched: Array.isArray(session.matched) ? session.matched : null,
+          itemName: session.itemName,
+          quantity: Number(session.quantity || 0),
+          total: Number(session.total || 0),
+          fulfillmentType: "delivery",
+          deliveryFee,
+          address: cleanAddress,
+          deliveryPhone: inlinePhone,
+        });
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_confirmation_prompt",
+          replyText,
+        };
+      }
+
+      // Address only — ask for rider phone number next
+      await conversationSessionRepo.upsertSession(
+        restaurantId,
+        normalized.channel,
+        normalized.channelCustomerId,
+        {
+          state: flowStates.AWAITING_DELIVERY_PHONE,
+          fulfillmentType: "delivery",
+          deliveryAddress: address,
+          deliveryFee,
+          ...(sessionMatched.length
+            ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
+            : {}),
+        }
+      );
+
+      const replyText = buildPhonePrompt();
+      await sendText(sendMessage, normalized.channelCustomerId, replyText);
+
+      return {
+        handled: true,
+        shouldReply: true,
+        type: "guided_phone_prompt",
+        replyText,
+      };
+    }
+
+    if (session.state === flowStates.AWAITING_DELIVERY_PHONE) {
+      const sessionMatched = buildMatchedFromSession(session);
+
+      // Allow restart/cancel during phone step
+      if (looksLikeOrderRestart && looksLikeOrderRestart(lower, normalized.text)) {
+        await conversationSessionRepo.clearSession(
+          restaurantId,
+          normalized.channel,
+          normalized.channelCustomerId
+        );
+        const freshMenuItems = await menuService.listAvailableMenuItems(restaurantId);
+        const replyText = "No problem! Let's start fresh.\n\n" + buildMenuWelcome(freshMenuItems);
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_order_restart",
+          replyText,
+        };
+      }
+
+      const phoneInput = String(normalized.text || "").trim();
+      const validPhone = isValidDeliveryPhone ? isValidDeliveryPhone(phoneInput) : true;
+
+      if (!validPhone) {
+        const replyText = buildInvalidPhonePrompt();
+        await sendText(sendMessage, normalized.channelCustomerId, replyText);
+        return {
+          handled: true,
+          shouldReply: true,
+          type: "guided_invalid_phone",
+          replyText,
+        };
+      }
+
+      const deliveryFee = Number(session.deliveryFee || 0);
       await conversationSessionRepo.upsertSession(
         restaurantId,
         normalized.channel,
         normalized.channelCustomerId,
         {
           state: flowStates.AWAITING_CONFIRMATION,
-          fulfillmentType: "delivery",
-          deliveryAddress: address,
-          deliveryFee,
+          deliveryPhone: phoneInput,
           ...(sessionMatched.length
             ? { matched: sessionMatched, total: calculateMatchedTotal(sessionMatched) }
             : {}),
@@ -1098,7 +1207,8 @@ function createGuidedSessionRouter({
         total: Number(session.total || 0),
         fulfillmentType: "delivery",
         deliveryFee,
-        address,
+        address: String(session.deliveryAddress || "").trim(),
+        deliveryPhone: phoneInput,
       });
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
 
@@ -1400,6 +1510,7 @@ function createGuidedSessionRouter({
         };
       }
 
+      const sessionDeliveryPhone = String(session.deliveryPhone || "").trim();
       const order =
         Array.isArray(session.matched) && session.matched.length
           ? await orderService.createGuidedOrderFromItems({
@@ -1412,6 +1523,7 @@ function createGuidedSessionRouter({
               matched: session.matched,
               fulfillmentType: String(session.fulfillmentType || "pickup"),
               deliveryAddress: String(session.deliveryAddress || "").trim(),
+              deliveryPhone: sessionDeliveryPhone,
               deliveryFee: Number(session.deliveryFee || 0),
               rawMessage: normalized.text,
             })
@@ -1426,6 +1538,7 @@ function createGuidedSessionRouter({
               quantity: Number(session.quantity || 0),
               fulfillmentType: String(session.fulfillmentType || "pickup"),
               deliveryAddress: String(session.deliveryAddress || "").trim(),
+              deliveryPhone: sessionDeliveryPhone,
               deliveryFee: Number(session.deliveryFee || 0),
             });
 
