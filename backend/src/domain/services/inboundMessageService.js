@@ -1924,8 +1924,17 @@ function createInboundMessageService({
     const hasBlockingActiveOrder =
       activeOrder && CUSTOMER_BLOCKING_ORDER_STATUSES.includes(activeOrder.status);
 
+    // Skip the full LLM classification for messages that already have a
+    // deterministic handler: greetings, acks, and explicit menu triggers.
+    // looksLikeQuestion is intentionally excluded here — delivery/recommendation
+    // questions still need LLM reasoning.
+    const skipLlmClassify =
+      isGreetingText(lower) ||
+      isAcknowledgementText(lower) ||
+      isMenuOrStockQuestion(lower);
+
     let llmDecision = emptyDecision;
-    if (!llmParserOnlyMode && llmService && incomingMessage.trim()) {
+    if (!llmParserOnlyMode && llmService && incomingMessage.trim() && (!skipLlmClassify || existingSession)) {
       try {
         const menuItemsForDecision = await timedDb("listAvailableMenuItemsCached_llm_decision", () =>
           listAvailableMenuItemsCached(restaurantId)
@@ -1945,6 +1954,23 @@ function createInboundMessageService({
         );
       } catch (_error) {
         llmDecision = emptyDecision;
+      }
+    }
+
+    // Structured log emitted at each major routing branch so the full decision path
+    // is visible in logs without reading code.
+    function logRoutingDecision(handler, { llmCalled = false, replyPreview = "" } = {}) {
+      if (logger && typeof logger.info === "function") {
+        logger.info("routing_decision", {
+          restaurantId,
+          message: String(incomingMessage || "").slice(0, 80),
+          handler,
+          deterministic: !llmCalled,
+          llmCalled,
+          hasSession: Boolean(existingSession),
+          hasActiveOrder: Boolean(activeOrder),
+          replyPreview: String(replyPreview || "").slice(0, 120),
+        });
       }
     }
 
@@ -2161,6 +2187,7 @@ function createInboundMessageService({
       const replyText = activeOrder
         ? "You're welcome. Your order is still in progress. Reply CANCEL if you need to stop it."
         : "You're welcome. Reply MENU whenever you're ready to order.";
+      logRoutingDecision("acknowledgement", { replyPreview: replyText });
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,
@@ -2198,6 +2225,7 @@ function createInboundMessageService({
           : `Hi there. You're welcome at ${restaurantName}.\n\nReply MENU to see what is available today.`;
       }
 
+      logRoutingDecision("greeting", { replyPreview: replyText });
       await sendText(sendMessage, normalized.channelCustomerId, replyText);
       return {
         handled: true,
@@ -2256,6 +2284,7 @@ function createInboundMessageService({
       const menuItems = await timedDb("listAvailableMenuItemsCached_menu_intent", () =>
         listAvailableMenuItemsCached(restaurantId)
       );
+      logRoutingDecision("menu_template");
       return chatOrchestrator.beginGuidedOrderingFlow({
         restaurantId,
         normalized,
@@ -2279,6 +2308,7 @@ function createInboundMessageService({
         preResolvedRequest.matched.length > 0);
 
     if (!llmParserOnlyMode && !isStaffAlertSender && !existingSession && !skipLlmFirst) {
+      logRoutingDecision("llm_first", { llmCalled: true });
       const menuItemsForLlm = await timedDb("listAvailableMenuItemsCached_llm_first", () =>
         listAvailableMenuItemsCached(restaurantId)
       );

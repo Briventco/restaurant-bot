@@ -1,4 +1,4 @@
-const { buildMenuWelcome } = require("../templates/messages");
+const { buildMenuWelcome, applyWelcomePlaceholders } = require("../templates/messages");
 
 function getDirectReplyThreshold(intent) {
   return [
@@ -137,6 +137,17 @@ function enforceGroundedReply({ replyText, intent, menuItems }) {
       .filter(Boolean);
     if (!available.length) {
       return "I do not have current stock details right now. Please try again shortly.";
+    }
+
+    // Block hallucinated prices: if the LLM mentions a price not in the real menu, discard the reply.
+    const realPrices = new Set(
+      (menuItems || []).filter((i) => i.available).map((i) => Number(i.price || 0)).filter(Boolean)
+    );
+    const mentionedPrices = Array.from(safeReply.matchAll(/[N₦](\d[\d,]*)/gi)).map(
+      (m) => Number(String(m[1] || "").replace(/,/g, ""))
+    );
+    if (mentionedPrices.length && mentionedPrices.some((p) => p > 0 && !realPrices.has(p))) {
+      return "";
     }
   }
 
@@ -461,34 +472,46 @@ function createChatOrchestrator({
             };
           }
           break;
-        case "handle_greeting":
-          if (decision.replyText) {
-            const groundedReply = enforceGroundedReply({
+        case "handle_greeting": {
+          // Prefer the restaurant's designed welcome message over whatever the LLM generated.
+          const greetingBot =
+            restaurant && restaurant.bot && typeof restaurant.bot === "object" ? restaurant.bot : {};
+          const greetingRestaurantName = String((restaurant && restaurant.name) || "").trim();
+          const greetingCustomerName = String(normalized.displayName || "").trim();
+
+          let greetingReply = "";
+          if (greetingBot.customWelcomeMessage && String(greetingBot.customWelcomeMessage).trim()) {
+            greetingReply = applyWelcomePlaceholders(String(greetingBot.customWelcomeMessage).trim(), {
+              restaurantName: greetingRestaurantName,
+              customerName: greetingCustomerName,
+            });
+          } else if (decision.replyText) {
+            greetingReply = enforceGroundedReply({
               replyText: decision.replyText,
               intent: decision.intent,
               menuItems,
             });
-            if (!groundedReply) {
-              break;
-            }
-            await sendText(sendMessage, normalized.channelCustomerId, groundedReply);
-            await persistLlmMemory(groundedReply);
-            return {
-              handled: true,
-              shouldReply: true,
-              type: "llm_greeting",
-              replyText: groundedReply,
-              decision: {
-                handler: "llm_greeting",
-                intent: decision.intent,
-                confidence: decision.confidence,
-                reason: "llm_suggested_greeting",
-                entities,
-                metrics: { llm_ms: llmMs },
-              },
-            };
           }
-          break;
+
+          if (!greetingReply) break;
+
+          await sendText(sendMessage, normalized.channelCustomerId, greetingReply);
+          await persistLlmMemory(greetingReply);
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "llm_greeting",
+            replyText: greetingReply,
+            decision: {
+              handler: "llm_greeting",
+              intent: decision.intent,
+              confidence: decision.confidence,
+              reason: greetingBot.customWelcomeMessage ? "custom_welcome" : "llm_suggested_greeting",
+              entities,
+              metrics: { llm_ms: llmMs },
+            },
+          };
+        }
         case "create_order":
         case "update_order": {
           if (allowGuidedFlow) {
