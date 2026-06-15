@@ -196,28 +196,30 @@ async function buildCustomerMessageTimeline({
     }
   }
 
-  for (const audit of routingAudits) {
-    if (!matchesChannelCustomerId(audit.channelCustomerId, candidates)) {
-      continue;
-    }
-    if (!String(audit.textPreview || "").trim()) {
-      continue;
-    }
+  if (!hasConversationMessages && !outboxMessages.length) {
+    for (const audit of routingAudits) {
+      if (!matchesChannelCustomerId(audit.channelCustomerId, candidates)) {
+        continue;
+      }
+      if (!String(audit.textPreview || "").trim()) {
+        continue;
+      }
 
-    const createdAtMs = toMs(audit.createdAt);
-    if (effectiveBeforeMs > 0 && createdAtMs >= effectiveBeforeMs) {
-      continue;
-    }
+      const createdAtMs = toMs(audit.createdAt);
+      if (effectiveBeforeMs > 0 && createdAtMs >= effectiveBeforeMs) {
+        continue;
+      }
 
-    items.push({
-      id: `audit-${audit.id}`,
-      direction: "in",
-      text: audit.textPreview,
-      messageType: audit.messageType || "text",
-      createdAtMs,
-      createdAt: audit.createdAt || null,
-      source: "routing_audit",
-    });
+      items.push({
+        id: `audit-${audit.id}`,
+        direction: "in",
+        text: audit.textPreview,
+        messageType: audit.messageType || "text",
+        createdAtMs,
+        createdAt: audit.createdAt || null,
+        source: "routing_audit",
+      });
+    }
   }
 
   const deduped = new Map();
@@ -230,7 +232,10 @@ async function buildCustomerMessageTimeline({
   }
 
   const ordered = Array.from(deduped.values()).sort(
-    (left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0)
+    (left, right) =>
+      Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0) ||
+      (left.direction === "in" ? -1 : 1) - (right.direction === "in" ? -1 : 1) ||
+      String(left.id || "").localeCompare(String(right.id || ""))
   );
 
   const page = ordered.slice(Math.max(0, ordered.length - effectiveLimit));
