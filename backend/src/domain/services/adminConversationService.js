@@ -123,6 +123,7 @@ async function buildCustomerActivityList({
 async function buildCustomerMessageTimeline({
   restaurantId,
   customer,
+  orderRepo,
   conversationMessageRepo,
   outboxService,
   routingAuditRepo,
@@ -136,7 +137,15 @@ async function buildCustomerMessageTimeline({
   const effectiveLimit = Math.max(1, Math.min(200, Number(limit) || 50));
   const effectiveBeforeMs = Number(beforeMs) > 0 ? Number(beforeMs) : 0;
 
-  const [conversationMessages, outboxMessages, routingAudits] = await Promise.all([
+  const [orders, conversationMessages, outboxMessages, routingAudits] = await Promise.all([
+    orderRepo && typeof orderRepo.listOrdersByCustomer === "function"
+      ? orderRepo.listOrdersByCustomer({
+          restaurantId,
+          channel: customer.channel,
+          channelCustomerId: customer.channelCustomerId,
+          limit: effectiveLimit * 4,
+        })
+      : Promise.resolve([]),
     conversationMessageRepo.listMessagesByCustomer({
       restaurantId,
       channel: customer.channel,
@@ -150,11 +159,37 @@ async function buildCustomerMessageTimeline({
       ? routingAuditRepo.listRecentRoutingAudits({ restaurantId, limit: effectiveLimit * 2 })
       : Promise.resolve([]),
   ]);
+  const orderMessages = [];
   const hasConversationMessages = conversationMessages.length > 0;
 
-  const items = [];
+  for (const order of orders) {
+    const messages = await (orderRepo && typeof orderRepo.listOrderMessages === "function"
+      ? orderRepo.listOrderMessages(restaurantId, order.id, { limit: effectiveLimit * 4 })
+      : Promise.resolve([]));
 
-  for (const message of conversationMessages) {
+    for (const message of messages || []) {
+      const createdAtMs = toMs(message.createdAtMs || message.updatedAt || message.createdAt);
+      if (effectiveBeforeMs > 0 && createdAtMs >= effectiveBeforeMs) {
+        continue;
+      }
+
+      orderMessages.push({
+        id: `order-${order.id}-${message.id || createdAtMs}`,
+        direction: String(message.direction || "").toLowerCase() === "inbound" ? "in" : "out",
+        text: message.text || "",
+        messageType: message.messageType || "text",
+        createdAtMs,
+        createdAt: message.createdAt || message.updatedAt || null,
+        source: "order",
+      });
+    }
+  }
+  const hasOrderMessages = orderMessages.length > 0;
+
+  const items = [];
+  const threadSourceMessages = hasOrderMessages ? orderMessages : conversationMessages;
+
+  for (const message of threadSourceMessages) {
     if (effectiveBeforeMs > 0 && Number(message.createdAtMs || 0) >= effectiveBeforeMs) {
       continue;
     }
@@ -165,11 +200,11 @@ async function buildCustomerMessageTimeline({
       messageType: message.messageType || "text",
       createdAtMs: message.createdAtMs || 0,
       createdAt: message.createdAt || null,
-      source: "conversation",
+      source: hasOrderMessages ? "order" : "conversation",
     });
   }
 
-  if (!hasConversationMessages) {
+  if (!hasOrderMessages && !hasConversationMessages) {
     for (const message of outboxMessages) {
       if (!matchesChannelCustomerId(message.recipient, candidates)) {
         continue;
@@ -196,28 +231,30 @@ async function buildCustomerMessageTimeline({
     }
   }
 
-  for (const audit of routingAudits) {
-    if (!matchesChannelCustomerId(audit.channelCustomerId, candidates)) {
-      continue;
-    }
-    if (!String(audit.textPreview || "").trim()) {
-      continue;
-    }
+  if (!hasOrderMessages && !hasConversationMessages && !outboxMessages.length) {
+    for (const audit of routingAudits) {
+      if (!matchesChannelCustomerId(audit.channelCustomerId, candidates)) {
+        continue;
+      }
+      if (!String(audit.textPreview || "").trim()) {
+        continue;
+      }
 
-    const createdAtMs = toMs(audit.createdAt);
-    if (effectiveBeforeMs > 0 && createdAtMs >= effectiveBeforeMs) {
-      continue;
-    }
+      const createdAtMs = toMs(audit.createdAt);
+      if (effectiveBeforeMs > 0 && createdAtMs >= effectiveBeforeMs) {
+        continue;
+      }
 
-    items.push({
-      id: `audit-${audit.id}`,
-      direction: "in",
-      text: audit.textPreview,
-      messageType: audit.messageType || "text",
-      createdAtMs,
-      createdAt: audit.createdAt || null,
-      source: "routing_audit",
-    });
+      items.push({
+        id: `audit-${audit.id}`,
+        direction: "in",
+        text: audit.textPreview,
+        messageType: audit.messageType || "text",
+        createdAtMs,
+        createdAt: audit.createdAt || null,
+        source: "routing_audit",
+      });
+    }
   }
 
   const deduped = new Map();
@@ -230,7 +267,10 @@ async function buildCustomerMessageTimeline({
   }
 
   const ordered = Array.from(deduped.values()).sort(
-    (left, right) => Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0)
+    (left, right) =>
+      Number(left.createdAtMs || 0) - Number(right.createdAtMs || 0) ||
+      ((left.direction === "in" ? 0 : 1) - (right.direction === "in" ? 0 : 1)) ||
+      String(left.id || "").localeCompare(String(right.id || ""))
   );
 
   const page = ordered.slice(Math.max(0, ordered.length - effectiveLimit));

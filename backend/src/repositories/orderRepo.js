@@ -29,6 +29,42 @@ async function listOrders(restaurantId, options = {}) {
   return snapshot.docs.map((doc) => serializeDoc(doc));
 }
 
+async function listOrdersByCustomer({
+  restaurantId,
+  channel,
+  channelCustomerId,
+  limit = 50,
+}) {
+  const effectiveLimit = Math.max(1, Math.min(500, Number(limit) || 50));
+  const normalizedChannel = String(channel || "").trim();
+  const normalizedCustomerId = String(channelCustomerId || "").trim();
+
+  try {
+    let query = ordersCollection(restaurantId)
+      .where("channel", "==", normalizedChannel)
+      .where("channelCustomerId", "==", normalizedCustomerId)
+      .orderBy("createdAt", "desc")
+      .limit(effectiveLimit);
+
+    const snapshot = await query.get();
+    return snapshot.docs.map((doc) => serializeDoc(doc));
+  } catch (_error) {
+    const snapshot = await ordersCollection(restaurantId)
+      .where("channel", "==", normalizedChannel)
+      .where("channelCustomerId", "==", normalizedCustomerId)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => serializeDoc(doc))
+      .sort((left, right) => {
+        const leftTime = new Date(left.createdAt || 0).getTime();
+        const rightTime = new Date(right.createdAt || 0).getTime();
+        return rightTime - leftTime;
+      })
+      .slice(0, effectiveLimit);
+  }
+}
+
 async function listOrdersByStatuses(restaurantId, statuses, options = {}) {
   const safeStatuses = Array.isArray(statuses)
     ? statuses.map((status) => String(status || "").trim()).filter(Boolean)
@@ -191,6 +227,7 @@ async function listOrderMessages(restaurantId, orderId, options = {}) {
 
 module.exports = {
   listOrders,
+  listOrdersByCustomer,
   listOrdersByStatuses,
   getOrderById,
   createOrder,
