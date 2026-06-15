@@ -550,25 +550,6 @@ function createChatOrchestrator({
         }
       }
 
-      const confirmationText = buildEntityOrderConfirmation(prematched, entities.fulfillmentType);
-      if (confirmationText) {
-        await sendText(sendMessage, normalized.channelCustomerId, confirmationText);
-        await persistLlmMemory(confirmationText);
-        return {
-          handled: true,
-          shouldReply: true,
-          type: "llm_order_entity_confirmation",
-          replyText: confirmationText,
-          decision: {
-            handler: "llm_order_entity_confirmation",
-            intent: "place_order",
-            confidence: Number(decision.confidence || 0),
-            reason: "llm_detected_partial_order_entities",
-            entities,
-          },
-        };
-      }
-
       if (allowGuidedFlow && prematched.length) {
         return beginGuidedOrderingFlowWithItems({
           restaurantId,

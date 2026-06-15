@@ -157,8 +157,8 @@ function extractInlineAddress(messageText) {
 }
 
 function isGreetingText(lower) {
-  return ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"].includes(
-    lower
+  return ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"].some(
+    (word) => lower === word || lower.startsWith(`${word} `) || lower.startsWith(`${word},`)
   );
 }
 
@@ -184,6 +184,7 @@ function isMenuOrStockQuestion(lower) {
   return (
     lower === "menu" ||
     lower === "start" ||
+    lower.includes("menu") ||
     lower.includes("what do you have") ||
     lower.includes("what do you have in stock") ||
     lower.includes("in stock") ||
