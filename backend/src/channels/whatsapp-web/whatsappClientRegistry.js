@@ -601,8 +601,13 @@ function createWhatsappClientRegistry({
       } catch (error) {
         const rawMessage = String(error && error.message ? error.message : "");
         attemptedCandidates.push({ candidate, error: rawMessage || "(empty)" });
-        if (rawMessage === "t" || rawMessage === "") {
-          // wwebjs "t" means chat not found for this format — try the next candidate silently.
+        const isFormatMismatch =
+          rawMessage === "t" ||
+          rawMessage === "" ||
+          rawMessage.toLowerCase().includes("no lid for user");
+        if (isFormatMismatch) {
+          // wwebjs format-mismatch errors ("t", "No LID for user") mean this
+          // candidate ID format isn't valid for the contact — try the next one.
           const wrapped = new Error(
             `WhatsApp chat not found for ${candidate}`
           );

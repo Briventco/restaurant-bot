@@ -12,14 +12,21 @@ function buildCategorizedMenuList(menuItems) {
   const categoryOrder = [];
   const categoryMap = new Map();
 
-  available.forEach((item, index) => {
+  available.forEach((item) => {
     const cat = String(item.category || "").trim().toUpperCase() || "OTHERS";
     if (!categoryMap.has(cat)) {
       categoryMap.set(cat, []);
       categoryOrder.push(cat);
     }
-    categoryMap.get(cat).push({ item, number: index + 1 });
+    categoryMap.get(cat).push({ item });
   });
+
+  let displayNumber = 1;
+  for (const cat of categoryOrder) {
+    for (const entry of categoryMap.get(cat)) {
+      entry.number = displayNumber++;
+    }
+  }
 
   // Single uncategorized group — use flat numbered list without section header
   if (categoryOrder.length === 1 && categoryOrder[0] === "OTHERS") {
