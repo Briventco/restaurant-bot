@@ -1282,6 +1282,7 @@ function createAdminRoutes({
       const timeline = await buildCustomerMessageTimeline({
         restaurantId: req.params.restaurantId,
         customer,
+        orderRepo,
         conversationMessageRepo,
         outboxService,
         routingAuditRepo,
