@@ -2,6 +2,20 @@ const fs = require("fs");
 const path = require("path");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function getRuntimeInstanceId() {
+  const hostname = String(process.env.RENDER_INSTANCE_ID || process.env.HOSTNAME || "").trim();
+  const pid = process.pid;
+  return hostname ? `${hostname}:${pid}` : `pid:${pid}`;
+}
+
 function findChromeExecutableInCache(cacheDir) {
   if (!cacheDir || !fs.existsSync(cacheDir) || !fs.statSync(cacheDir).isDirectory()) {
     return "";
@@ -89,6 +103,46 @@ function getSessionClientDataPath(sessionDataPath, restaurantId) {
   );
 }
 
+function getSessionProcessLockPath(sessionDataPath, restaurantId) {
+  return path.join(getSessionClientDataPath(sessionDataPath, restaurantId), ".runtime.lock");
+}
+
+function ensureParentDirectoryExists(filePath) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  } catch (_error) {
+    // Best effort; lock acquisition will fail later with a clearer error.
+  }
+}
+
+function releaseProcessLock(lockPath) {
+  if (!lockPath) {
+    return;
+  }
+  try {
+    fs.rmSync(lockPath, { force: true });
+  } catch (_error) {
+    // Best-effort cleanup.
+  }
+}
+
+function tryAcquireProcessLock(lockPath, payload) {
+  ensureParentDirectoryExists(lockPath);
+  const body = JSON.stringify(payload, null, 2);
+  // Use 'wx' to fail if lock already exists (cross-process).
+  fs.writeFileSync(lockPath, body, { flag: "wx" });
+}
+
+function isStaleLockFile(lockPath, staleMs) {
+  try {
+    const stat = fs.statSync(lockPath);
+    const ageMs = Date.now() - stat.mtimeMs;
+    return ageMs > staleMs;
+  } catch (_error) {
+    return false;
+  }
+}
+
 function clearStaleChromiumLocks(sessionDataPath, restaurantId, logger) {
   const clientDataPath = getSessionClientDataPath(sessionDataPath, restaurantId);
   const lockFileNames = [
@@ -130,11 +184,6 @@ function normalizeOutboundRecipient(to) {
   const value = String(to || "").trim();
   if (!value) {
     return value;
-  }
-
-  if (value.endsWith("@lid")) {
-    const base = value.split("@")[0].replace(/\D/g, "");
-    return base ? `${base}@c.us` : value;
   }
 
   if (value.includes("@")) {
@@ -233,6 +282,8 @@ function createWhatsappClientRegistry({
   const qrCache = new Map();
   const qrAttempts = new Map();
   const startLocks = new Map();
+  const processLockPaths = new Map();
+  const runtimeInstanceId = getRuntimeInstanceId();
   const resolvedBrowserExecutablePath = resolveBrowserExecutablePath(
     browserExecutablePath
   );
@@ -455,6 +506,82 @@ function createWhatsappClientRegistry({
     });
     await createSessionEvent(restaurantId, "start_requested");
 
+    // Cross-process lock: Render may run multiple Node processes (WEB_CONCURRENCY>1).
+    // Only one process should own a restaurant's WhatsApp Web session profile at a time,
+    // otherwise Chromium will lock the profile and all startups will fail.
+    const lockPath = getSessionProcessLockPath(sessionDataPath, restaurantId);
+    const staleMs = Math.max(60_000, Number(process.env.WHATSAPP_PROCESS_LOCK_STALE_MS || 5 * 60_000));
+    try {
+      tryAcquireProcessLock(lockPath, {
+        restaurantId,
+        runtimeInstanceId,
+        pid: process.pid,
+        createdAt: new Date().toISOString(),
+      });
+      processLockPaths.set(restaurantId, lockPath);
+    } catch (error) {
+      const code = String(error && error.code ? error.code : "");
+      const alreadyExists = code === "EEXIST";
+      if (alreadyExists && isStaleLockFile(lockPath, staleMs)) {
+        logger.warn("Found stale WhatsApp process lock; removing and retrying lock acquisition", {
+          restaurantId,
+          lockPath,
+          staleMs,
+        });
+        releaseProcessLock(lockPath);
+        try {
+          tryAcquireProcessLock(lockPath, {
+            restaurantId,
+            runtimeInstanceId,
+            pid: process.pid,
+            createdAt: new Date().toISOString(),
+            recoveredFromStaleLock: true,
+          });
+          processLockPaths.set(restaurantId, lockPath);
+        } catch (retryLockError) {
+          logger.warn("Failed to acquire WhatsApp process lock after stale cleanup", {
+            restaurantId,
+            lockPath,
+            message: retryLockError.message,
+          });
+          await setSessionState(restaurantId, {
+            status: "starting",
+            qrAvailable: false,
+            lastError:
+              "Another server process is currently owning this WhatsApp session. Wait a moment and retry.",
+          });
+          await createSessionEvent(restaurantId, "start_failed", {
+            message: retryLockError.message || "process_lock_acquire_failed",
+          });
+          return getSessionStatus(restaurantId);
+        }
+      } else {
+        let existingInfo = null;
+        try {
+          existingInfo = safeJsonParse(fs.readFileSync(lockPath, "utf8"));
+        } catch (_readError) {
+          existingInfo = null;
+        }
+        logger.warn("WhatsApp session already owned by another process; skipping startup", {
+          restaurantId,
+          lockPath,
+          existingOwner: existingInfo || {},
+          webConcurrency: String(process.env.WEB_CONCURRENCY || ""),
+        });
+        await setSessionState(restaurantId, {
+          status: "starting",
+          qrAvailable: false,
+          lastError:
+            "Another server process is currently owning this WhatsApp session. If this persists, set WEB_CONCURRENCY=1 on Render.",
+        });
+        await createSessionEvent(restaurantId, "start_failed", {
+          message: "process_lock_in_use",
+          existingOwner: existingInfo || {},
+        });
+        return getSessionStatus(restaurantId);
+      }
+    }
+
     const createClient = () =>
       new Client({
         authStrategy: new LocalAuth({
@@ -492,6 +619,8 @@ function createWhatsappClientRegistry({
     } catch (error) {
       removeClient(restaurantId);
       clearQrCache(restaurantId);
+      releaseProcessLock(processLockPaths.get(restaurantId));
+      processLockPaths.delete(restaurantId);
 
       if (isBrowserAlreadyRunningError(error)) {
         logger.warn("WhatsApp browser profile lock detected; attempting stale lock cleanup", {
@@ -505,6 +634,8 @@ function createWhatsappClientRegistry({
         } catch (retryError) {
           removeClient(restaurantId);
           clearQrCache(restaurantId);
+          releaseProcessLock(processLockPaths.get(restaurantId));
+          processLockPaths.delete(restaurantId);
           await setSessionState(restaurantId, {
             status: "starting",
             qrAvailable: false,
@@ -641,6 +772,8 @@ function createWhatsappClientRegistry({
         lastDisconnectedAt: new Date().toISOString(),
         lastError: "",
       });
+      releaseProcessLock(processLockPaths.get(restaurantId));
+      processLockPaths.delete(restaurantId);
       return;
     }
 
@@ -649,6 +782,8 @@ function createWhatsappClientRegistry({
     } finally {
       removeClient(restaurantId);
       clearQrCache(restaurantId);
+      releaseProcessLock(processLockPaths.get(restaurantId));
+      processLockPaths.delete(restaurantId);
       await setSessionState(restaurantId, {
         status: "disconnected",
         qrAvailable: false,
@@ -737,12 +872,21 @@ function createWhatsappClientRegistry({
   // Cleanup on process exit
   process.on("beforeExit", () => {
     clearInterval(heartbeatTimer);
+    for (const lockPath of processLockPaths.values()) {
+      releaseProcessLock(lockPath);
+    }
   });
   process.on("SIGINT", () => {
     clearInterval(heartbeatTimer);
+    for (const lockPath of processLockPaths.values()) {
+      releaseProcessLock(lockPath);
+    }
   });
   process.on("SIGTERM", () => {
     clearInterval(heartbeatTimer);
+    for (const lockPath of processLockPaths.values()) {
+      releaseProcessLock(lockPath);
+    }
   });
 
   return {
