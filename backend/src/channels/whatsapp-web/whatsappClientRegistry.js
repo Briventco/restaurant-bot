@@ -1,6 +1,12 @@
 const fs = require("fs");
 const path = require("path");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const {
+  resolveWhatsappSessionDataPath,
+  cleanRestaurantSessionLocks,
+  cleanAllWhatsappSessionLocks,
+  clearRuntimeProcessLocks,
+} = require("../../utils/chromiumLockCleanup");
 
 function safeJsonParse(value) {
   try {
@@ -145,32 +151,18 @@ function isStaleLockFile(lockPath, staleMs) {
 
 function clearStaleChromiumLocks(sessionDataPath, restaurantId, logger) {
   const clientDataPath = getSessionClientDataPath(sessionDataPath, restaurantId);
-  const lockFileNames = [
-    "SingletonLock",
-    "SingletonSocket",
-    "SingletonCookie",
-    ".org.chromium.Chromium.*",
-  ];
-
-  if (!fs.existsSync(clientDataPath)) {
-    return;
-  }
-
   try {
-    const entries = fs.readdirSync(clientDataPath);
-    for (const entry of entries) {
-      const fullPath = path.join(clientDataPath, entry);
-      const isKnownLock = lockFileNames.includes(entry);
-      const isChromiumSocket = entry.startsWith(".org.chromium.Chromium.");
-      if (!isKnownLock && !isChromiumSocket) {
-        continue;
-      }
-
-      try {
-        fs.rmSync(fullPath, { force: true, recursive: true });
-      } catch (_error) {
-        // Best effort; failing here should not block startup.
-      }
+    const removed = cleanRestaurantSessionLocks(
+      sessionDataPath,
+      restaurantId,
+      sanitizeClientId
+    );
+    if (removed > 0) {
+      logger.info("Removed stale Chromium profile locks", {
+        restaurantId,
+        clientDataPath,
+        removed,
+      });
     }
   } catch (_error) {
     logger.warn("Failed to inspect WhatsApp session directory for stale locks", {
@@ -239,17 +231,7 @@ function buildRecipientCandidates(to) {
 }
 
 function resolveSessionDataPath() {
-  const explicit = String(process.env.WHATSAPP_SESSION_DATA_PATH || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  const renderDiskPath = String(process.env.RENDER_DISK_PATH || "").trim();
-  if (renderDiskPath) {
-    return path.join(renderDiskPath, "wwebjs_auth");
-  }
-
-  return path.join(process.cwd(), ".wwebjs_auth");
+  return resolveWhatsappSessionDataPath(process.cwd());
 }
 
 function ensureDirectoryExists(directoryPath) {
@@ -289,10 +271,21 @@ function createWhatsappClientRegistry({
   );
   const sessionDataPath = resolveSessionDataPath();
   ensureDirectoryExists(sessionDataPath);
+  const startupLocksRemoved = cleanAllWhatsappSessionLocks(sessionDataPath, {
+    logPrefix: "[whatsapp-startup]",
+    onRemoved: (entryPath) => {
+      logger.warn("Removed stale Chromium lock during startup sweep", {
+        entryPath,
+      });
+    },
+  });
+  const startupRuntimeLocksRemoved = clearRuntimeProcessLocks(sessionDataPath);
   logger.info("WhatsApp session auth storage configured", {
     sessionDataPath,
     usingRenderDiskPath: Boolean(String(process.env.RENDER_DISK_PATH || "").trim()),
     usingExplicitPath: Boolean(String(process.env.WHATSAPP_SESSION_DATA_PATH || "").trim()),
+    startupLocksRemoved,
+    startupRuntimeLocksRemoved,
   });
   const EVENT_SEVERITY_BY_NAME = {
     start_requested: "info",
@@ -599,6 +592,7 @@ function createWhatsappClientRegistry({
             "--disable-accelerated-2d-canvas",
             "--no-first-run",
             "--no-zygote",
+            "--single-process",
             "--disable-gpu",
           ],
         },
@@ -607,6 +601,7 @@ function createWhatsappClientRegistry({
       });
 
     const initializeClient = async () => {
+      clearStaleChromiumLocks(sessionDataPath, restaurantId, logger);
       const client = createClient();
       bindClientEvents(restaurantId, client);
       clients.set(restaurantId, { client, ready: false });
@@ -619,8 +614,6 @@ function createWhatsappClientRegistry({
     } catch (error) {
       removeClient(restaurantId);
       clearQrCache(restaurantId);
-      releaseProcessLock(processLockPaths.get(restaurantId));
-      processLockPaths.delete(restaurantId);
 
       if (isBrowserAlreadyRunningError(error)) {
         logger.warn("WhatsApp browser profile lock detected; attempting stale lock cleanup", {
@@ -637,10 +630,11 @@ function createWhatsappClientRegistry({
           releaseProcessLock(processLockPaths.get(restaurantId));
           processLockPaths.delete(restaurantId);
           await setSessionState(restaurantId, {
-            status: "starting",
+            status: "disconnected",
             qrAvailable: false,
+            lastDisconnectedAt: new Date().toISOString(),
             lastError:
-              "Another WhatsApp browser process is still using this session profile. Wait a moment and retry.",
+              "WhatsApp browser profile is locked. Restart the service or disconnect and reconnect from the admin portal.",
           });
           await createSessionEvent(restaurantId, "start_failed", {
             message: retryError.message || "browser_profile_in_use",
@@ -648,6 +642,8 @@ function createWhatsappClientRegistry({
           return getSessionStatus(restaurantId);
         }
       } else {
+        releaseProcessLock(processLockPaths.get(restaurantId));
+        processLockPaths.delete(restaurantId);
         await setSessionState(restaurantId, {
           status: "disconnected",
           qrAvailable: false,

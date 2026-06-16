@@ -1,49 +1,36 @@
-const fs = require('fs');
-const path = require('path');
+const path = require("path");
 
-const LOCK_FILES = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+require("dotenv").config({
+  path: path.join(__dirname, "..", ".env"),
+});
 
-function cleanLocksInDirectory(dir) {
-  if (!fs.existsSync(dir)) {
-    return 0;
-  }
-
-  let cleaned = 0;
-  const items = fs.readdirSync(dir);
-
-  for (const item of items) {
-    const itemPath = path.join(dir, item);
-    const stat = fs.statSync(itemPath);
-
-    if (stat.isDirectory()) {
-      // Recursively clean subdirectories
-      cleaned += cleanLocksInDirectory(itemPath);
-    } else if (LOCK_FILES.includes(item)) {
-      // Remove lock file
-      try {
-        fs.unlinkSync(itemPath);
-        console.log(`[lock-cleanup] Removed: ${itemPath}`);
-        cleaned += 1;
-      } catch (error) {
-        console.error(`[lock-cleanup] Failed to remove ${itemPath}:`, error.message);
-      }
-    }
-  }
-
-  return cleaned;
-}
+const {
+  resolveWhatsappSessionDataPath,
+  cleanAllWhatsappSessionLocks,
+  clearRuntimeProcessLocks,
+} = require("../src/utils/chromiumLockCleanup");
 
 function main() {
-  console.log('[lock-cleanup] Starting Chromium lock file cleanup...');
+  console.log("[lock-cleanup] Starting Chromium lock file cleanup...");
 
-  const authDir = path.join(__dirname, '..', '.wwebjs_auth');
-  const cacheDir = path.join(__dirname, '..', '.wwebjs_cache');
-  
-  const authCleaned = cleanLocksInDirectory(authDir);
-  const cacheCleaned = cleanLocksInDirectory(cacheDir);
-  const totalCleaned = authCleaned + cacheCleaned;
+  const sessionDataPath = resolveWhatsappSessionDataPath(path.join(__dirname, ".."));
+  const legacyAuthDir = path.join(__dirname, "..", ".wwebjs_auth");
+  const legacyCacheDir = path.join(__dirname, "..", ".wwebjs_cache");
 
-  console.log(`[lock-cleanup] Cleanup complete. Removed ${totalCleaned} lock file(s).`);
+  console.log(`[lock-cleanup] Session data path: ${sessionDataPath}`);
+
+  const sessionLocksRemoved = cleanAllWhatsappSessionLocks(sessionDataPath);
+  const runtimeLocksRemoved = clearRuntimeProcessLocks(sessionDataPath);
+  const legacyAuthRemoved = cleanAllWhatsappSessionLocks(legacyAuthDir);
+  const legacyCacheRemoved = cleanAllWhatsappSessionLocks(legacyCacheDir);
+
+  const totalCleaned =
+    sessionLocksRemoved + runtimeLocksRemoved + legacyAuthRemoved + legacyCacheRemoved;
+
+  console.log(
+    `[lock-cleanup] Cleanup complete. Removed ${totalCleaned} lock file(s) ` +
+      `(session=${sessionLocksRemoved}, runtime=${runtimeLocksRemoved}, legacyAuth=${legacyAuthRemoved}, legacyCache=${legacyCacheRemoved}).`
+  );
 }
 
 main();

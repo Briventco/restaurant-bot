@@ -733,6 +733,10 @@ function createApp() {
       "qr_required",
       "auth_failure",
     ]);
+    const restoreStaggerMs = Math.max(
+      0,
+      Number(process.env.WHATSAPP_RESTORE_STAGGER_MS || 8000)
+    );
     const defaultRestaurantId = String(env.BACKEND_DEFAULT_RESTAURANT_ID || "").trim();
 
     let restoredCount = 0;
@@ -795,6 +799,13 @@ function createApp() {
         logger.warn("Failed to restore WhatsApp session on boot", {
           restaurantId,
           message: error.message,
+        });
+      }
+
+      if (restoreStaggerMs > 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => {
+          setTimeout(resolve, restoreStaggerMs);
         });
       }
     }
