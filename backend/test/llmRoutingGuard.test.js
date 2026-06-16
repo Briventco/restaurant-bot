@@ -62,11 +62,7 @@ function buildService({ llmClassifyCalled, llmOverride = {}, restaurantOverride 
         return {
           intent: "unknown",
           confidence: 0,
-          replyText: "",
-          shouldStartGuidedFlow: false,
-          shouldHandleDirectly: false,
-          suggestedAction: "",
-          entities: {},
+          entities: { items: [], fulfillmentType: "", location: "" },
           ...llmOverride,
         };
       },

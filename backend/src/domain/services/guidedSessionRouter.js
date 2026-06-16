@@ -64,7 +64,15 @@ function createGuidedSessionRouter({
       text === "menuu" ||
       text === "start" ||
       text.includes("order again") ||
-      text.includes("start again")
+      text.includes("start again") ||
+      text.includes("what do you have") ||
+      text.includes("what do u have") ||
+      text.includes("show me the menu") ||
+      text.includes("see the menu") ||
+      text.includes("see menu") ||
+      text.includes("view menu") ||
+      text.includes("your menu") ||
+      text.includes("the menu")
     );
   }
 
@@ -216,7 +224,6 @@ function createGuidedSessionRouter({
       }
 
       const intent = String(decision.intent || "").trim().toLowerCase();
-      const suggestedAction = String(decision.suggestedAction || "").trim().toLowerCase();
       const confidence = Number(decision.confidence || 0);
       const entities = decision.entities && typeof decision.entities === "object" ? decision.entities : {};
       const fulfillmentType = String(entities.fulfillmentType || "").trim().toLowerCase();
@@ -238,10 +245,10 @@ function createGuidedSessionRouter({
       if (intent === "cancel") {
         return "cancel";
       }
-      if (intent === "menu_request" || suggestedAction === "show_menu" || suggestedAction === "start_guided_flow") {
+      if (intent === "menu_request") {
         return "menu";
       }
-      if (intent === "add_item" || intent === "remove_item" || suggestedAction === "update_order") {
+      if (intent === "add_item" || intent === "remove_item") {
         return "edit";
       }
 

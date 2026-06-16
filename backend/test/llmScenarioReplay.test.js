@@ -148,36 +148,17 @@ function buildReplayService({ loggerSink }) {
     llmService: {
       classifyRestaurantMessage: async ({ messageText }) => {
         const text = String(messageText || "").toLowerCase();
-        if (text.includes("payment") && text.includes("confirmed")) {
-          return {
-            intent: "support",
-            confidence: 0.9,
-            replyText: "Your payment has been confirmed.",
-            shouldStartGuidedFlow: false,
-            shouldHandleDirectly: true,
-            suggestedAction: "answer_question",
-            entities: { items: [], quantity: 0, fulfillmentType: "", location: "", budget: 0 },
-          };
-        }
         if (text.includes("delivered") || text.includes("delivery")) {
           return {
-            intent: "delivery_question",
-            confidence: 0.92,
-            replyText: "Delivery is usually 30-45 minutes after confirmation.",
-            shouldStartGuidedFlow: false,
-            shouldHandleDirectly: true,
-            suggestedAction: "answer_question",
-            entities: { items: [], quantity: 0, fulfillmentType: "", location: "Yaba", budget: 0 },
+            intent: "unknown",
+            confidence: 0.7,
+            entities: { items: [], fulfillmentType: "", location: "" },
           };
         }
         return {
           intent: "unknown",
           confidence: 0.2,
-          replyText: "",
-          shouldStartGuidedFlow: false,
-          shouldHandleDirectly: false,
-          suggestedAction: "clarify",
-          entities: { items: [], quantity: 0, fulfillmentType: "", location: "", budget: 0 },
+          entities: { items: [], fulfillmentType: "", location: "" },
         };
       },
     },
@@ -244,29 +225,28 @@ test("scripted 10-turn replay exercises rules, memory, and LLM context logging",
       timestamp: Date.now() + 1000,
     },
   });
-  assert.match(String(paymentStatusAfterFlow.replyText || ""), /cannot confirm payment status|verify/i);
+  // LLM is extraction-only — payment questions get the UNKNOWN template, never a hallucinated confirmation.
+  assert.match(String(paymentStatusAfterFlow.replyText || ""), /didn't understand|HI|order directly/i);
 
   const key = "rest-1:whatsapp-web:234000000200@c.us";
   const finalSession = sessionByKey.get(key) || {};
   const memoryTurns = Array.isArray(finalSession.llmMemoryTurns) ? finalSession.llmMemoryTurns : [];
   assert.ok(memoryTurns.length <= 4);
 
-  const llmContextLogs = loggerSink.filter((entry) => entry.message === "[LLM_CONTEXT]");
+  const llmContextLogs = loggerSink.filter((entry) => entry.message === "[LLM_EXTRACT]");
   assert.ok(llmContextLogs.length >= 1);
 });
 
 test("grounding guard rewrites payment-confirmation hallucination", async () => {
+  // With extraction-only LLM, the bot can never hallucinate payment confirmations because
+  // the LLM never writes customer-facing text. Payment questions land on the UNKNOWN template.
   const sent = [];
   const orchestrator = createChatOrchestrator({
     llmService: {
       classifyRestaurantMessage: async () => ({
-        intent: "support",
-        confidence: 0.95,
-        replyText: "Payment confirmed. Your order is finalized.",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: true,
-        suggestedAction: "answer_question",
-        entities: { items: [], quantity: 0, fulfillmentType: "", location: "", budget: 0 },
+        intent: "unknown",
+        confidence: 0.5,
+        entities: { items: [], fulfillmentType: "", location: "" },
       }),
     },
     resolveRequestedItems: async () => ({ matched: [], unavailable: [] }),
@@ -299,5 +279,7 @@ test("grounding guard rewrites payment-confirmation hallucination", async () => 
   });
 
   assert.ok(result && result.shouldReply === true);
-  assert.match(String(sent[0] || ""), /cannot confirm payment status|verify/i);
+  // UNKNOWN template — no hallucinated payment text possible
+  assert.doesNotMatch(String(sent[0] || ""), /payment.*confirmed|order.*finalized/i);
+  assert.match(String(sent[0] || ""), /didn't understand|HI|order directly/i);
 });

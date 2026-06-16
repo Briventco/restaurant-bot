@@ -14,16 +14,15 @@ function buildOrchestrator(overrides = {}) {
       classifyRestaurantMessage: async () => ({
         intent: "place_order",
         confidence: 0.9,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
-        suggestedAction: "create_order",
         entities: {
-          items: ["Jollof Rice", "Chicken", "Water", "Chapman"],
-          quantity: 6,
+          items: [
+            { name: "Jollof Rice", quantity: 2 },
+            { name: "Chicken", quantity: 1 },
+            { name: "Water", quantity: 2 },
+            { name: "Chapman", quantity: 1 },
+          ],
           fulfillmentType: "",
           location: "",
-          budget: 0,
         },
       }),
       ...(overrides.llmService || {}),
@@ -105,21 +104,22 @@ test("suggested create_order preserves each parsed item quantity", async () => {
 });
 
 test("place_order confirmation never fans a global quantity across all items", async () => {
-  const { orchestrator } = buildOrchestrator({
+  // Each item in the new schema has its own quantity — no global quantity to fan.
+  // This test verifies per-item quantities from LLM entities are preserved correctly.
+  const { orchestrator, sessions } = buildOrchestrator({
     llmService: {
       classifyRestaurantMessage: async () => ({
         intent: "place_order",
         confidence: 0.8,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
-        suggestedAction: "",
         entities: {
-          items: ["Jollof Rice", "Chicken", "Water", "Chapman"],
-          quantity: 6,
+          items: [
+            { name: "Jollof Rice", quantity: 2 },
+            { name: "Chicken", quantity: 1 },
+            { name: "Water", quantity: 2 },
+            { name: "Chapman", quantity: 1 },
+          ],
           fulfillmentType: "delivery",
           location: "",
-          budget: 0,
         },
       }),
     },
@@ -127,12 +127,16 @@ test("place_order confirmation never fans a global quantity across all items", a
 
   const result = await orchestrator.maybeHandleWithLlm(buildLlmContext());
 
-  assert.equal(result.type, "llm_order_entity_confirmation");
+  // delivery path → AWAITING_ADDRESS
+  assert.equal(result.type, "guided_preseed_address");
   assert.match(result.replyText, /2x Jollof Rice/i);
   assert.match(result.replyText, /1x Chicken/i);
   assert.match(result.replyText, /2x Water/i);
   assert.match(result.replyText, /1x Chapman/i);
+  // No item should have had a foreign quantity applied
   assert.doesNotMatch(result.replyText, /6x Jollof Rice/i);
   assert.doesNotMatch(result.replyText, /6x Water/i);
   assert.doesNotMatch(result.replyText, /6x Chapman/i);
+  assert.equal(sessions[0].matched[0].quantity, 2);
+  assert.equal(sessions[0].matched[1].quantity, 1);
 });

@@ -5,6 +5,23 @@ try {
   OpenAI = null;
 }
 
+const ALLOWED_INTENTS = new Set([
+  "greeting",
+  "menu_request",
+  "place_order",
+  "add_item",
+  "remove_item",
+  "confirm",
+  "cancel",
+  "unknown",
+]);
+
+const EMPTY_DECISION = {
+  intent: "unknown",
+  confidence: 0,
+  entities: { items: [], fulfillmentType: "", location: "" },
+};
+
 function extractJsonObject(text) {
   const raw = String(text || "").trim();
   if (!raw) {
@@ -39,35 +56,29 @@ function extractJsonObject(text) {
 
 function normalizeDecision(raw) {
   const safe = raw && typeof raw === "object" ? raw : {};
-  const confidence = Number(safe.confidence);
-  const safeEntities =
-    safe.entities && typeof safe.entities === "object" ? safe.entities : {};
+  const safeEntities = safe.entities && typeof safe.entities === "object" ? safe.entities : {};
+
   const safeItems = Array.isArray(safeEntities.items)
     ? safeEntities.items
-        .filter((item) => item && typeof item === "string")
-        .map((item) => String(item).trim())
-        .filter(Boolean)
+        .filter((item) => item && typeof item === "object" && item.name)
+        .map((item) => ({
+          name: String(item.name || "").trim(),
+          quantity: Math.max(1, Math.round(Number(item.quantity || 1))),
+        }))
+        .filter((item) => item.name)
     : [];
 
+  const rawIntent = String(safe.intent || "unknown").trim().toLowerCase();
+  const intent = ALLOWED_INTENTS.has(rawIntent) ? rawIntent : "unknown";
+  const rawConfidence = Number(safe.confidence);
+
   return {
-    intent: String(safe.intent || "unknown").trim().toLowerCase() || "unknown",
-    confidence: Number.isFinite(confidence) ? confidence : 0,
-    replyText: String(safe.replyText || "").trim(),
-    shouldStartGuidedFlow: Boolean(safe.shouldStartGuidedFlow),
-    shouldHandleDirectly: Boolean(safe.shouldHandleDirectly),
-    suggestedAction: String(safe.suggestedAction || "").trim().toLowerCase() || "",
+    intent,
+    confidence: Number.isFinite(rawConfidence) ? Math.min(1, Math.max(0, rawConfidence)) : 0,
     entities: {
       items: safeItems,
-      quantity: Number.isFinite(Number(safeEntities.quantity))
-        ? Number(safeEntities.quantity)
-        : 0,
-      fulfillmentType: String(safeEntities.fulfillmentType || "")
-        .trim()
-        .toLowerCase(),
+      fulfillmentType: String(safeEntities.fulfillmentType || "").trim().toLowerCase(),
       location: String(safeEntities.location || "").trim(),
-      budget: Number.isFinite(Number(safeEntities.budget))
-        ? Number(safeEntities.budget)
-        : 0,
     },
   };
 }
@@ -77,103 +88,76 @@ function buildSessionMemoryContext(sessionState) {
   const sessionStateLabel = String(state.state || "none").trim() || "none";
   const summary = String(state.conversationSummary || "").trim();
   const lastIntent = String(state.llmLastIntent || "").trim().toLowerCase();
-  const lastEntities =
-    state.llmLastEntities && typeof state.llmLastEntities === "object"
-      ? state.llmLastEntities
-      : null;
 
   const parts = [`Session state: ${sessionStateLabel}`];
   if (summary) {
-    parts.push(`Session memory summary: ${summary}`);
+    parts.push(`Session summary: ${summary}`);
   }
   if (lastIntent) {
-    parts.push(`Last LLM intent: ${lastIntent}`);
-  }
-  if (lastEntities) {
-    const items = Array.isArray(lastEntities.items) ? lastEntities.items.join(", ") : "";
-    const fulfillmentType = String(lastEntities.fulfillmentType || "").trim();
-    const location = String(lastEntities.location || "").trim();
-    const budget = Number(lastEntities.budget || 0);
-    parts.push(
-      `Last entities: items=${items || "none"}; fulfillmentType=${fulfillmentType || "none"}; location=${location || "none"}; budget=${budget > 0 ? budget : 0}`
-    );
+    parts.push(`Last intent: ${lastIntent}`);
   }
 
   return parts.join(" | ");
 }
 
-function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }) {
+function buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, sessionState }) {
   const restaurantName = String((restaurant && restaurant.name) || "the restaurant").trim();
-  const menuText = (menuItems || [])
+
+  // Provide item names only — not prices. The LLM must not state prices.
+  const menuItemNames = (menuItems || [])
     .filter((item) => item.available)
-    .map((item) => `${item.name} (N${item.price})`)
+    .map((item) => String(item.name || "").trim())
+    .filter(Boolean)
     .join(", ");
-  
-  const orderContext = activeOrder 
-    ? `Active order: ${activeOrder.status}, items: ${(activeOrder.items || []).map(i => i.name).join(", ")}, total: N${activeOrder.total || 0}`
-    : "No active order";
-  
-  const sessionContext = sessionState
-    ? buildSessionMemoryContext(sessionState)
-    : "No active session";
+
+  const sessionContext = sessionState ? buildSessionMemoryContext(sessionState) : "";
 
   return [
-    "You are a smart, friendly WhatsApp assistant for a restaurant.",
-    "You are the PRIMARY decision maker. Understand the customer's intent and suggest the best action.",
-    "Return JSON only.",
-    'Return exactly this shape: {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false,"suggestedAction":"string","entities":{"items":[],"quantity":0,"fulfillmentType":"","location":"","budget":0}}',
-    'Allowed intents: greeting, menu_request, stock_request, availability_question, recommendation, price_question, place_order, add_item, remove_item, delivery_question, cancel, confirm, question, support, off_topic, unknown.',
-    'Allowed suggestedAction: show_menu, create_order, update_order, answer_question, start_guided_flow, clarify, cancel_order, handle_greeting.',
-    "Set suggestedAction based on what the customer wants to do next.",
-    "entities.quantity is only a total quantity summary across the whole order, not a per-item quantity.",
-    "Set shouldStartGuidedFlow=true when launching the guided menu flow (same as suggestedAction=start_guided_flow).",
-    "Set shouldHandleDirectly=true when replyText is a complete answer and no further action needed.",
-    "Never claim an order is confirmed, accepted, paid, or finalized in replyText.",
-    "For transactional intents (place_order, add_item, remove_item, confirm, cancel), focus on intent classification and entities, not final outcome text.",
-    "Use concise, warm, business-safe replies.",
-    "Consider the conversation context, active order, and session state to understand what the customer means.",
-    "If customer has an active order, 'add rice' means add to that order, not start new.",
-    "If customer is in a session, continue that flow instead of starting fresh.",
-    "If the customer asks for an item that is not on the available menu, politely say it is not currently available and mention what is available instead.",
-    "If the customer asks for a recommendation, base it only on the available menu.",
-    "If the customer asks something you do not know, do not guess. Briefly say what you do know, offer helpful alternatives, and keep the conversation focused on the restaurant.",
-    "Grounding rule: only use facts present in Available menu, Active order, Session context, or Recent conversation.",
-    "If a fact is missing, ask a short clarification instead of inventing details.",
-    "Only redirect to the menu when the customer clearly wants to order or explicitly asks for the menu.",
-    "For completely off-topic questions, politely stay focused on the restaurant and offer help with the menu, ordering, availability, or delivery.",
+    "You are an extraction tool only. Your single job is to read the customer message and return structured JSON identifying their intent and extracting relevant entities. You do not write responses. You do not make decisions. You do not judge availability. You do not state prices. You only extract.",
     "",
-    "=== EXAMPLES OF HUMAN MESSAGES AND CORRECT CLASSIFICATIONS ===",
-    "'Hi', 'Hello', 'Hey', 'Good morning' → intent: greeting, confidence: 0.9",
-    "'What's up', 'How far', 'How you dey' → intent: greeting (Nigerian casual), confidence: 0.9",
-    "'Menu', 'What do you have', 'What is available' → intent: menu_request, confidence: 0.95",
-    "'I want rice', 'Give me jollof', 'I need amala' → intent: place_order, extract items from message",
-    "'2 amala and 1 rice' → intent: place_order, entities.items: ['amala', 'rice'], entities.quantity: 3",
-    "'Jollof rice and chicken' → intent: place_order, entities.items: ['jollof rice', 'chicken']",
-    "'Rice' (single word) → intent: place_order (assuming they want to order rice), ask for confirmation",
-    "'I'm hungry' → intent: greeting + offer menu, confidence: 0.8",
-    "'What's good?' → intent: recommendation, confidence: 0.85",
-    "'Can I get recommendations', 'Give me recomendations', 'I want recomendation', 'Any recommendations?' → intent: recommendation, confidence: 0.95",
-    "'Can I get rice', 'Give me amala', 'I want jollof' → intent: place_order (these are direct ordering phrases, NOT recommendations)",
-    "'How much is rice' → intent: price_question, confidence: 0.9",
-    "'Do you have amala' → intent: availability_question, confidence: 0.9",
-    "'Do you deliver to Yaba' → intent: delivery_question, confidence: 0.9",
-    "'Send me food' → intent: clarify (ask what specifically), confidence: 0.6",
-    "'Cancel' → intent: cancel, confidence: 0.95",
-    "'Yes', 'Yeah', 'Sure', 'OK' → intent: confirm, confidence: 0.9 (when in flow)",
-    "'No', 'Nope' → intent: cancel/reject, confidence: 0.9 (when in flow)",
-    "'Add more rice' → intent: add_item, confidence: 0.85 (when they have active order)",
-    "'Remove the chicken' → intent: remove_item, confidence: 0.85 (when they have active order)",
-    "'Thanks', 'Thank you' → intent: greeting/acknowledgement, reply warmly, confidence: 0.9",
+    "Return JSON only. Return exactly this shape:",
+    '{"intent":"string","confidence":0.0,"entities":{"items":[{"name":"string","quantity":0}],"fulfillmentType":"string","location":"string"}}',
+    "",
+    "Allowed intents: greeting, menu_request, place_order, add_item, remove_item, confirm, cancel, unknown.",
+    "intent: the single best classification of what the customer wants to do.",
+    "confidence: 0.0 to 1.0 — how certain you are about the intent.",
+    "entities.items: items mentioned by the customer, each as {name, quantity}. Use the name exactly as the customer wrote it. Default quantity is 1 if not stated.",
+    "entities.fulfillmentType: delivery, pickup, or empty string if not mentioned.",
+    "entities.location: delivery area or address mentioned, or empty string.",
+    "",
+    "=== INTENT CLASSIFICATION RULES ===",
+    "greeting       → customer is greeting (hi, hello, hey, good morning, how far, etc.)",
+    "menu_request   → customer wants to see the menu, available items, or recommendations (menu, what do you have, what do you recommend, show me options)",
+    "place_order    → customer wants to order something (I want rice, give me jollof, 2 amala)",
+    "add_item       → customer wants to add to an existing order (add more rice, also give me chicken)",
+    "remove_item    → customer wants to remove from their order (remove the chicken, cancel the rice)",
+    "confirm        → customer is confirming something (yes, yeah, sure, ok, confirm, proceed)",
+    "cancel         → customer wants to cancel (no, cancel, stop, nevermind)",
+    "unknown        → anything else: price questions, delivery questions, availability questions, complaints, off-topic messages",
+    "",
+    "=== EXAMPLES ===",
+    "'Hi' / 'Hello' / 'Hey' / 'Good morning' / 'How far' → intent: greeting, confidence: 0.95",
+    "'Menu' / 'What do you have' / 'What is available' / 'What do you recommend' → intent: menu_request, confidence: 0.95",
+    "'I want rice' → intent: place_order, items: [{name:'rice',quantity:1}]",
+    "'2 amala and 1 rice for delivery to Yaba' → intent: place_order, items: [{name:'amala',quantity:2},{name:'rice',quantity:1}], fulfillmentType: delivery, location: Yaba",
+    "'I want to pick up my order' → intent: place_order, fulfillmentType: pickup",
+    "'Add more chicken' → intent: add_item, items: [{name:'chicken',quantity:1}]",
+    "'Remove the chicken' → intent: remove_item, items: [{name:'chicken',quantity:1}]",
+    "'Yes' / 'Yeah' / 'Sure' / 'Confirm' / 'OK' → intent: confirm, confidence: 0.95",
+    "'No' / 'Cancel' / 'Stop' → intent: cancel, confidence: 0.95",
+    "'Do you deliver to Yaba' / 'How much is rice' / 'Do you have amala' → intent: unknown, confidence: 0.7",
+    "",
+    sessionContext ? `Session context: ${sessionContext}` : "",
     conversationContext ? `Recent conversation: ${conversationContext}` : "",
-    orderContext,
-    sessionContext,
-    `Restaurant name: ${restaurantName}`,
-    `Available menu: ${menuText}`,
+    `Restaurant: ${restaurantName}`,
+    `Menu items (for entity extraction reference only — do NOT state prices or judge availability): ${menuItemNames || "none"}`,
     `Customer message: ${messageText}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }) {
+async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messageText, conversationContext, sessionState }) {
   const response = await openai.responses.create({
     model,
     input: [
@@ -182,9 +166,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
         content: [
           {
             type: "input_text",
-            text:
-              "Classify restaurant customer messages into JSON only. " +
-              'Return exactly {"intent":"string","confidence":0.0,"replyText":"string","shouldStartGuidedFlow":false,"shouldHandleDirectly":false,"suggestedAction":"string","entities":{...}}.',
+            text: "You are an extraction tool. Classify the customer message and extract entities. Return JSON only.",
           },
         ],
       },
@@ -193,7 +175,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
         content: [
           {
             type: "input_text",
-            text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }),
+            text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, sessionState }),
           },
         ],
       },
@@ -201,44 +183,38 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
     text: {
       format: {
         type: "json_schema",
-        name: "restaurant_message_decision",
+        name: "restaurant_message_extraction",
         schema: {
           type: "object",
           additionalProperties: false,
-          required: [
-            "intent",
-            "confidence",
-              "replyText",
-              "shouldStartGuidedFlow",
-              "shouldHandleDirectly",
-              "suggestedAction",
-              "entities",
-            ],
-            properties: {
-              intent: { type: "string" },
-              confidence: { type: "number" },
-              replyText: { type: "string" },
-              shouldStartGuidedFlow: { type: "boolean" },
-              shouldHandleDirectly: { type: "boolean" },
-              suggestedAction: { type: "string" },
-              entities: {
-                type: "object",
-                additionalProperties: false,
-                required: ["items", "quantity", "fulfillmentType", "location", "budget"],
-                properties: {
+          required: ["intent", "confidence", "entities"],
+          properties: {
+            intent: { type: "string" },
+            confidence: { type: "number" },
+            entities: {
+              type: "object",
+              additionalProperties: false,
+              required: ["items", "fulfillmentType", "location"],
+              properties: {
+                items: {
+                  type: "array",
                   items: {
-                    type: "array",
-                    items: { type: "string" },
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["name", "quantity"],
+                    properties: {
+                      name: { type: "string" },
+                      quantity: { type: "number" },
+                    },
                   },
-                  quantity: { type: "number" },
-                  fulfillmentType: { type: "string" },
-                  location: { type: "string" },
-                  budget: { type: "number" },
                 },
+                fulfillmentType: { type: "string" },
+                location: { type: "string" },
               },
             },
           },
         },
+      },
     },
   });
 
@@ -256,7 +232,6 @@ async function classifyWithGemini({
   menuItems,
   messageText,
   conversationContext,
-  activeOrder,
   sessionState,
   requestTimeoutMs,
 }) {
@@ -279,7 +254,7 @@ async function classifyWithGemini({
               role: "user",
               parts: [
                 {
-                  text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, activeOrder, sessionState }),
+                  text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, sessionState }),
                 },
               ],
             },
@@ -323,7 +298,7 @@ async function classifyWithGemini({
 function createLlmService({
   llmProvider = "openai",
   openAIApiKey,
-  openAIModel = "gpt-5-mini",
+  openAIModel = "gpt-4o-mini",
   geminiApiKey,
   geminiModel = "gemini-2.0-flash",
   requestTimeoutMs = 15000,
@@ -363,7 +338,7 @@ function createLlmService({
       lower.includes("i wan") ||
       /\b\d+\b/.test(lower)
     ) {
-      return "order_intent";
+      return "place_order";
     }
     if (
       lower.includes("how are you") ||
@@ -372,7 +347,7 @@ function createLlmService({
       lower.includes("im hungry") ||
       lower.includes("what can i get")
     ) {
-      return "smalltalk";
+      return "greeting";
     }
     return "unknown";
   }
@@ -388,7 +363,7 @@ function createLlmService({
               type: "input_text",
               text:
                 "Classify restaurant chat intent. Return JSON only with one field intent. " +
-                'Allowed intents: greeting, smalltalk, menu_request, order_intent, unknown.',
+                'Allowed intents: greeting, menu_request, place_order, unknown.',
             },
           ],
         },
@@ -413,7 +388,7 @@ function createLlmService({
             properties: {
               intent: {
                 type: "string",
-                enum: ["greeting", "smalltalk", "menu_request", "order_intent", "unknown"],
+                enum: ["greeting", "menu_request", "place_order", "unknown"],
               },
             },
           },
@@ -450,7 +425,7 @@ function createLlmService({
                   {
                     text: [
                       "Classify restaurant chat intent.",
-                      'Return JSON only: {"intent":"greeting|smalltalk|menu_request|order_intent|unknown"}',
+                      'Return JSON only: {"intent":"greeting|menu_request|place_order|unknown"}',
                       `Message: ${String(messageText || "").trim()}`,
                     ].join("\n"),
                   },
@@ -519,24 +494,10 @@ function createLlmService({
     return { intent: fallbackIntentHeuristic(normalizedText), source: "heuristic_fallback" };
   }
 
-  async function classifyRestaurantMessage({ restaurant, menuItems, messageText, conversationContext = "", activeOrder = null, sessionState = null }) {
+  async function classifyRestaurantMessage({ restaurant, menuItems, messageText, conversationContext = "", sessionState = null }) {
     const normalizedText = String(messageText || "").trim();
     if (!normalizedText) {
-      return {
-        intent: "unknown",
-        confidence: 0,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
-        suggestedAction: "",
-        entities: {
-          items: [],
-          quantity: 0,
-          fulfillmentType: "",
-          location: "",
-          budget: 0,
-        },
-      };
+      return { ...EMPTY_DECISION };
     }
 
     try {
@@ -549,29 +510,11 @@ function createLlmService({
             menuItems,
             messageText: normalizedText,
             conversationContext,
-            activeOrder,
             sessionState,
             requestTimeoutMs,
-          })) || {
-            intent: "unknown",
-            confidence: 0,
-            replyText: "",
-            shouldStartGuidedFlow: false,
-            shouldHandleDirectly: false,
-            suggestedAction: "",
-            entities: {
-              items: [],
-              quantity: 0,
-              fulfillmentType: "",
-              location: "",
-              budget: 0,
-            },
-          }
+          })) || { ...EMPTY_DECISION }
         );
       }
-
-      
-
 
       if (normalizedProvider === "openai" && openai) {
         return (
@@ -582,62 +525,18 @@ function createLlmService({
             menuItems,
             messageText: normalizedText,
             conversationContext,
-            activeOrder,
             sessionState,
-          })) || {
-            intent: "unknown",
-            confidence: 0,
-            replyText: "",
-            shouldStartGuidedFlow: false,
-            shouldHandleDirectly: false,
-            suggestedAction: "",
-            entities: {
-              items: [],
-              quantity: 0,
-              fulfillmentType: "",
-              location: "",
-              budget: 0,
-            },
-          }
+          })) || { ...EMPTY_DECISION }
         );
       }
 
-      
-      return {
-        intent: "unknown",
-        confidence: 0,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
-        suggestedAction: "",
-        entities: {
-          items: [],
-          quantity: 0,
-          fulfillmentType: "",
-          location: "",
-          budget: 0,
-        },
-      };
+      return { ...EMPTY_DECISION };
     } catch (error) {
       logger.warn("LLM message classification failed", {
         provider: normalizedProvider,
         message: error.message,
       });
-      return {
-        intent: "unknown",
-        confidence: 0,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
-        suggestedAction: "",
-        entities: {
-          items: [],
-          quantity: 0,
-          fulfillmentType: "",
-          location: "",
-          budget: 0,
-        },
-      };
+      return { ...EMPTY_DECISION };
     }
   }
 

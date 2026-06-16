@@ -63,9 +63,7 @@ function buildService(overrides = {}) {
       classifyRestaurantMessage: async () => ({
         intent: "unknown",
         confidence: 0,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
+        entities: { items: [], fulfillmentType: "", location: "" },
       }),
       ...(overrides.llmService || {}),
     },
@@ -346,14 +344,14 @@ test("decision metadata is attached for cancel flow", async () => {
 });
 
 test("decision metadata is attached for llm direct replies", async () => {
+  // After extraction-only refactor, LLM never writes replies. Questions the LLM cannot
+  // classify as an actionable intent return `unknown`, which triggers the UNKNOWN template.
   const service = buildService({
     llmService: {
       classifyRestaurantMessage: async () => ({
-        intent: "delivery_question",
-        confidence: 0.92,
-        replyText: "Yes, we deliver. Please share your area.",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: true,
+        intent: "unknown",
+        confidence: 0.7,
+        entities: { items: [], fulfillmentType: "", location: "" },
       }),
     },
   });
@@ -370,26 +368,28 @@ test("decision metadata is attached for llm direct replies", async () => {
     },
   });
 
-  assert.equal(result.type, "llm_delivery_question");
-  assert.equal(result.decision.handler, "llm_direct");
-  assert.equal(result.decision.intent, "delivery_question");
+  assert.equal(result.type, "llm_unknown");
+  assert.equal(result.decision.handler, "llm_unknown_template");
+  assert.equal(result.shouldReply, true);
+  assert.match(result.replyText, /didn't understand|HI|order directly/i);
 });
 
 test("llm medium confidence produces clarification reply", async () => {
+  // After extraction-only refactor, "what do you recommend?" is classified as
+  // menu_request (the LLM prompt maps recommendation intent to menu_request).
+  // The backend shows the guided menu instead of an LLM-written clarification.
   const service = buildService({
     llmService: {
       classifyRestaurantMessage: async () => ({
-        intent: "recommendation",
-        confidence: 0.4,
-        replyText: "Try egg.",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
+        intent: "menu_request",
+        confidence: 0.85,
+        entities: { items: [], fulfillmentType: "", location: "" },
       }),
     },
     menuService: {
       listAvailableMenuItems: async () => [
-        { name: "egg", price: 300, available: true },
-        { name: "rice", price: 800, available: true },
+        { id: "e1", name: "egg", price: 300, available: true },
+        { id: "r1", name: "rice", price: 800, available: true },
       ],
     },
   });
@@ -406,10 +406,9 @@ test("llm medium confidence produces clarification reply", async () => {
     },
   });
 
-  assert.equal(result.type, "llm_clarify_recommendation");
-  assert.equal(result.decision.handler, "llm_clarification");
-  assert.equal(result.decision.intent, "recommendation");
-  assert.match(result.replyText, /recommendation by budget or taste/i);
+  assert.equal(result.type, "guided_menu");
+  assert.equal(result.shouldReply, true);
+  assert.match(result.replyText, /egg|rice/i);
 });
 
 test("structured numeric order asks delivery or pickup before creating order", async () => {
@@ -487,21 +486,23 @@ test("structured numeric order with active pending order returns active-order gu
   assert.match(result.replyText, /active order in progress/i);
 });
 
-test("llm clarification uses extracted budget entity", async () => {
+test("llm place_order with location entity routes to delivery pre-seed", async () => {
+  // Verifies that a fulfillmentType entity extracted by the LLM is used by the
+  // backend to pre-seed the guided flow at the correct state.
   const service = buildService({
+    menuService: {
+      listAvailableMenuItems: async () => [
+        { id: "r1", name: "rice", price: 800, available: true },
+      ],
+    },
     llmService: {
       classifyRestaurantMessage: async () => ({
-        intent: "recommendation",
-        confidence: 0.42,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
+        intent: "place_order",
+        confidence: 0.9,
         entities: {
-          items: [],
-          quantity: 0,
-          fulfillmentType: "",
-          location: "",
-          budget: 2500,
+          items: [{ name: "rice", quantity: 1 }],
+          fulfillmentType: "delivery",
+          location: "Yaba",
         },
       }),
     },
@@ -513,39 +514,36 @@ test("llm clarification uses extracted budget entity", async () => {
       channel: "whatsapp-web",
       channelCustomerId: "234000000006@c.us",
       customerPhone: "+234000000006",
-      text: "recommend food under 2500",
+      text: "deliver to Yaba please",
       providerMessageId: "msg-entity-1",
       timestamp: Date.now(),
     },
   });
 
-  assert.equal(result.type, "llm_clarify_recommendation");
-  assert.equal(result.decision.handler, "llm_clarification");
-  assert.equal(result.decision.entities.budget, 2500);
-  assert.match(result.replyText, /under N2500/i);
+  // delivery pre-seed → AWAITING_ADDRESS
+  assert.equal(result.type, "guided_preseed_address");
+  assert.equal(result.shouldReply, true);
+  assert.match(result.replyText, /delivery address/i);
 });
 
 test("llm place_order with entities asks smart confirmation", async () => {
+  // After extraction-only refactor: LLM extracts {name, quantity} items.
+  // Backend matches them to menu, then routes to guided pre-seed flow.
   const service = buildService({
     menuService: {
       listAvailableMenuItems: async () => [
-        { name: "egg", price: 300, available: true },
-        { name: "rice", price: 800, available: true },
+        { id: "e1", name: "egg", price: 300, available: true },
+        { id: "r1", name: "rice", price: 800, available: true },
       ],
     },
     llmService: {
       classifyRestaurantMessage: async () => ({
         intent: "place_order",
-        confidence: 0.77,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
+        confidence: 0.9,
         entities: {
-          items: ["rice"],
-          quantity: 2,
+          items: [{ name: "rice", quantity: 2 }],
           fulfillmentType: "",
           location: "",
-          budget: 0,
         },
       }),
     },
@@ -563,11 +561,11 @@ test("llm place_order with entities asks smart confirmation", async () => {
     },
   });
 
-  assert.equal(result.type, "llm_order_entity_confirmation");
-  assert.equal(result.decision.handler, "llm_order_entity_confirmation");
+  // no fulfillmentType → AWAITING_FULFILLMENT_TYPE
+  assert.equal(result.type, "guided_preseed_fulfillment");
   assert.equal(result.decision.intent, "place_order");
-  assert.match(result.replyText, /2 rice/i);
-  assert.match(result.replyText, /delivery or pickup/i);
+  assert.match(result.replyText, /2x rice/i);
+  assert.match(result.replyText, /Delivery or pickup/i);
 });
 
 test("recent conversation context is passed to llm on follow-up", async () => {
@@ -579,9 +577,7 @@ test("recent conversation context is passed to llm on follow-up", async () => {
         return {
           intent: "unknown",
           confidence: 0,
-          replyText: "",
-          shouldStartGuidedFlow: false,
-          shouldHandleDirectly: false,
+          entities: { items: [], fulfillmentType: "", location: "" },
         };
       },
     },
@@ -623,16 +619,7 @@ test("who are you uses conversational fallback not invalid order", async () => {
       classifyRestaurantMessage: async () => ({
         intent: "unknown",
         confidence: 0.2,
-        replyText: "",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: false,
-        entities: {
-          items: [],
-          quantity: 0,
-          fulfillmentType: "",
-          location: "",
-          budget: 0,
-        },
+        entities: { items: [], fulfillmentType: "", location: "" },
       }),
     },
   });
@@ -650,8 +637,8 @@ test("who are you uses conversational fallback not invalid order", async () => {
   });
 
   assert.equal(result.shouldReply, true);
-  assert.equal(result.type, "llm_fallback_unknown");
-  assert.equal(result.decision.handler, "llm_fallback");
+  assert.equal(result.type, "llm_unknown");
+  assert.equal(result.decision.handler, "llm_unknown_template");
   assert.doesNotMatch(result.replyText, /couldn't detect a valid order/i);
 });
 
@@ -659,11 +646,9 @@ test("parser-only mode bypasses LLM direct-reply path", async () => {
   const service = buildService({
     llmService: {
       classifyRestaurantMessage: async () => ({
-        intent: "delivery_question",
-        confidence: 0.95,
-        replyText: "Yes, we deliver to your area.",
-        shouldStartGuidedFlow: false,
-        shouldHandleDirectly: true,
+        intent: "unknown",
+        confidence: 0.7,
+        entities: { items: [], fulfillmentType: "", location: "" },
       }),
     },
     config: {

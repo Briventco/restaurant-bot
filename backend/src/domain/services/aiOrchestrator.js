@@ -2,22 +2,17 @@ function toSafeEntities(entities) {
   const safe = entities && typeof entities === "object" ? entities : {};
   return {
     items: Array.isArray(safe.items)
-      ? safe.items.map((v) => String(v || "").trim()).filter(Boolean)
+      ? safe.items
+          .filter((item) => item && typeof item === "object" && item.name)
+          .map((item) => ({ name: String(item.name || "").trim(), quantity: Number(item.quantity || 1) }))
+          .filter((item) => item.name)
       : [],
-    quantity: Number.isFinite(Number(safe.quantity)) ? Number(safe.quantity) : 0,
     fulfillmentType: String(safe.fulfillmentType || "").trim().toLowerCase(),
     location: String(safe.location || "").trim(),
-    budget: Number.isFinite(Number(safe.budget)) ? Number(safe.budget) : 0,
   };
 }
 
 function buildFallbackReply(intent) {
-  if (intent === "delivery_question") {
-    return "Please share your area and I will guide delivery options.";
-  }
-  if (intent === "recommendation") {
-    return "Do you want a recommendation by budget or taste?";
-  }
   if (intent === "menu_request") {
     return "Sure, I can show the menu and help you start your order.";
   }
@@ -36,15 +31,11 @@ function buildDraftFromDecision(decision) {
     action = "start_guided";
   } else if (intent === "place_order" && entities.items.length && confidence >= 0.75) {
     action = "create_order_draft";
-  } else if (decision.shouldHandleDirectly && confidence >= 0.7) {
-    action = "reply_only";
   } else if (confidence < 0.6) {
     action = "ask_clarify";
-  } else if (intent === "support" && confidence >= 0.7) {
-    action = "handoff";
   }
 
-  const replyText = String(decision.replyText || "").trim() || buildFallbackReply(intent);
+  const replyText = buildFallbackReply(intent);
 
   return {
     intent,

@@ -1365,16 +1365,10 @@ function createInboundMessageService({
     const emptyDecision = {
       intent: "unknown",
       confidence: 0,
-      replyText: "",
-      shouldStartGuidedFlow: false,
-      shouldHandleDirectly: false,
-      suggestedAction: "",
       entities: {
         items: [],
-        quantity: 0,
         fulfillmentType: "",
         location: "",
-        budget: 0,
       },
     };
     const [restaurant, existingSession] = await Promise.all([
@@ -2327,30 +2321,6 @@ function createInboundMessageService({
       }
     }
 
-    if (
-      !llmParserOnlyMode &&
-      String(llmDecision.intent || "").trim().toLowerCase() === "recommendation" &&
-      Number(llmDecision.confidence || 0) >= 0.45 &&
-      !existingSession
-    ) {
-      const menuItems = await timedDb("listAvailableMenuItemsCached_recommendation", () =>
-        listAvailableMenuItemsCached(restaurantId)
-      );
-      const availableItems = (menuItems || []).filter((item) => item.available);
-      const sorted = [...availableItems].sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
-      const availableText = availableItems.map((item) => `${item.name} (N${item.price})`).join(", ");
-      const replyText = sorted.length
-        ? `I'd recommend ${sorted[0].name} at N${sorted[0].price}. We also have ${availableText}.`
-        : "I don't have any available items listed right now.";
-      await sendText(sendMessage, normalized.channelCustomerId, replyText);
-      return {
-        handled: true,
-        shouldReply: true,
-        type: "recommendation_direct",
-        replyText,
-      };
-    }
-
     if (existingSession) {
       // Staff alert sessions must never be processed by the guided session router.
       // The staff handlers above (lines 868-975 and 977-1055) are the only correct
@@ -2462,6 +2432,7 @@ function createInboundMessageService({
           restaurantId,
           normalized,
           llmDecision,
+          precomputedDecision: llmDecision,
           llmParserOnlyMode,
           hasActiveOrder: Boolean(activeOrder),
           hasBlockingActiveOrder,

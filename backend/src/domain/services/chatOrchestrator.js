@@ -1,70 +1,4 @@
-const { buildMenuWelcome, applyWelcomePlaceholders } = require("../templates/messages");
-
-function getDirectReplyThreshold(intent) {
-  return [
-    "stock_request",
-    "availability_question",
-    "recommendation",
-    "price_question",
-    "delivery_question",
-    "support",
-    "off_topic",
-    "unknown",
-    "greeting",
-  ].includes(String(intent || "").trim())
-    ? 0.35
-    : 0.5;
-}
-
-function getClarificationThreshold(intent) {
-  return getDirectReplyThreshold(intent) * 0.8;
-}
-
-function buildClarificationReply(intent, menuItems) {
-  const availableItems = (menuItems || [])
-    .filter((item) => item.available)
-    .map((item) => item.name)
-    .filter(Boolean);
-  const sample = availableItems.slice(0, 3).join(", ");
-
-  if (intent === "delivery_question") {
-    return "I can help with delivery. Please share your area so I can guide you properly.";
-  }
-  if (intent === "recommendation") {
-    return sample
-      ? `Sure. Do you want a recommendation by budget or taste? For example: ${sample}.`
-      : "Sure. Do you want a recommendation by budget or taste?";
-  }
-  if (intent === "price_question" || intent === "availability_question" || intent === "stock_request") {
-    return "Which item should I check for you?";
-  }
-  if (intent === "support") {
-    return "I can help with menu, ordering, delivery, and payment flow. What do you need right now?";
-  }
-
-  return "I can help with menu, delivery, and ordering. Do you want to place an order now or check availability first?";
-}
-
-function buildAssistantFallbackReply(menuItems) {
-  const available = (menuItems || [])
-    .filter((item) => item.available)
-    .map((item) => `${item.name} (N${item.price})`);
-  if (available.length) {
-    return `I’m here to help. We currently have ${available.join(", ")}. Do you want to order now, ask about delivery, or get a recommendation?`;
-  }
-  return "I’m here to help with menu, delivery, and ordering. Tell me what you’d like.";
-}
-
-function normalizeEntities(entities) {
-  const safe = entities && typeof entities === "object" ? entities : {};
-  return {
-    items: Array.isArray(safe.items) ? safe.items : [],
-    quantity: Number.isFinite(Number(safe.quantity)) ? Number(safe.quantity) : 0,
-    fulfillmentType: String(safe.fulfillmentType || "").trim().toLowerCase(),
-    location: String(safe.location || "").trim(),
-    budget: Number.isFinite(Number(safe.budget)) ? Number(safe.budget) : 0,
-  };
-}
+const { buildMenuWelcome, buildUnknownReply } = require("../templates/messages");
 
 function isMeaningfulText(text) {
   const normalized = String(text || "").trim().toLowerCase();
@@ -114,89 +48,44 @@ function updateSessionMemory({ previousTurns, previousSummary, userText, assista
   };
 }
 
-function enforceGroundedReply({ replyText, intent, menuItems }) {
-  const safeReply = String(replyText || "").trim();
-  if (!safeReply) {
-    return "";
-  }
-
-  const paymentOutcomeClaims = /(payment|transfer).*(confirmed|received|approved|verified)/i;
-  if (paymentOutcomeClaims.test(safeReply)) {
-    return "I cannot confirm payment status here yet. If you have paid, please share your payment reference and the team will verify shortly.";
-  }
-
-  const forbiddenOutcomeClaims = /(order\s+confirmed|order\s+accepted|payment\s+confirmed|paid\s+and\s+confirmed|finalized)/i;
-  if (forbiddenOutcomeClaims.test(safeReply)) {
-    return "";
-  }
-
-  if (["recommendation", "availability_question", "price_question", "stock_request"].includes(String(intent || "").trim())) {
-    const available = (menuItems || [])
-      .filter((item) => item.available)
-      .map((item) => String(item.name || "").trim())
-      .filter(Boolean);
-    if (!available.length) {
-      return "I do not have current stock details right now. Please try again shortly.";
-    }
-
-    // Block hallucinated prices: if the LLM mentions a price not in the real menu, discard the reply.
-    const realPrices = new Set(
-      (menuItems || []).filter((i) => i.available).map((i) => Number(i.price || 0)).filter(Boolean)
-    );
-    const mentionedPrices = Array.from(safeReply.matchAll(/[N₦](\d[\d,]*)/gi)).map(
-      (m) => Number(String(m[1] || "").replace(/,/g, ""))
-    );
-    if (mentionedPrices.length && mentionedPrices.some((p) => p > 0 && !realPrices.has(p))) {
-      return "";
-    }
-  }
-
-  return safeReply;
-}
-
-function buildEntityOrderConfirmation(matchedItems, fulfillmentType) {
-  if (!Array.isArray(matchedItems) || !matchedItems.length) {
-    return "";
-  }
-
-  const itemText =
-    matchedItems.length === 1
-      ? `${Number(matchedItems[0].quantity || 0)} ${matchedItems[0].name}`
-      : matchedItems
-          .map((item) => `${Number(item.quantity || 0)}x ${item.name}`)
-          .join(", ");
-
-  if (fulfillmentType === "delivery") {
-    return `Great, I got ${itemText} for delivery. Should I continue with this order?`;
-  }
-  if (fulfillmentType === "pickup") {
-    return `Great, I got ${itemText} for pickup. Should I continue with this order?`;
-  }
-
-  return `Great, I got ${itemText}. Should this be delivery or pickup?`;
+function normalizeEntities(entities) {
+  const safe = entities && typeof entities === "object" ? entities : {};
+  return {
+    items: Array.isArray(safe.items)
+      ? safe.items
+          .filter((item) => item && typeof item === "object" && item.name)
+          .map((item) => ({
+            name: String(item.name || "").trim(),
+            quantity: Math.max(1, Math.round(Number(item.quantity || 1))),
+          }))
+          .filter((item) => item.name)
+      : [],
+    fulfillmentType: String(safe.fulfillmentType || "").trim().toLowerCase(),
+    location: String(safe.location || "").trim(),
+  };
 }
 
 function matchLlmEntitiesToMenu(menuItems, entities) {
   const available = (menuItems || []).filter((item) => item.available);
-  const matched = [];
-  for (const entityName of entities.items || []) {
-    const lower = String(entityName || "").trim().toLowerCase();
-    if (!lower) continue;
+  return (entities.items || []).reduce((acc, entityItem) => {
+    const lower = String(entityItem.name || "").trim().toLowerCase();
+    if (!lower) return acc;
     const found =
       available.find((item) => String(item.name || "").trim().toLowerCase() === lower) ||
       available.find((item) => String(item.name || "").trim().toLowerCase().includes(lower)) ||
       available.find((item) => lower.includes(String(item.name || "").trim().toLowerCase()));
     if (found) {
-      matched.push({
+      const qty = Math.max(1, Math.round(Number(entityItem.quantity || 1)));
+      acc.push({
         menuItemId: found.id,
         name: found.name,
         price: Number(found.price || 0),
-        quantity: 1,
-        subtotal: Number(found.price || 0),
+        quantity: qty,
+        subtotal: Number(found.price || 0) * qty,
       });
     }
-  }
-  return matched;
+    return acc;
+  }, []);
 }
 
 function createChatOrchestrator({
@@ -271,7 +160,6 @@ function createChatOrchestrator({
     }
 
     if (fulfillmentType === "delivery") {
-      // LLM knows it's delivery but we still need the address — go to AWAITING_ADDRESS
       await conversationSessionRepo.upsertSession(
         restaurantId,
         normalized.channel,
@@ -286,7 +174,7 @@ function createChatOrchestrator({
       };
     }
 
-    // No fulfillment type extracted — ask for it
+    // No fulfillment type — ask for it
     await conversationSessionRepo.upsertSession(
       restaurantId,
       normalized.channel,
@@ -326,7 +214,6 @@ function createChatOrchestrator({
             menuItems,
             messageText: normalized.text,
             conversationContext: String(normalized.conversationContext || ""),
-            activeOrder,
             sessionState,
           }),
           new Promise((_, reject) =>
@@ -343,33 +230,28 @@ function createChatOrchestrator({
             intent: "unknown",
             confidence: 0,
             reason: "llm_timeout",
-            metrics: {
-              llm_ms: Date.now() - llmStartedAt,
-            },
+            metrics: { llm_ms: Date.now() - llmStartedAt },
           },
         };
       }
     }
+
     const entities = normalizeEntities(decision.entities);
+    const intent = String(decision.intent || "unknown").trim().toLowerCase();
     const llmMs = Date.now() - llmStartedAt;
-    let parsedMatchedLoaded = false;
-    let parsedMatchedCache = [];
-    const transactionalIntents = new Set([
-      "place_order",
-      "add_item",
-      "remove_item",
-      "confirm",
-      "cancel",
-    ]);
+
+    if (logger && typeof logger.info === "function") {
+      logger.info("[LLM_EXTRACT]", {
+        session: `${restaurantId}:${normalized.channel}:${normalized.channelCustomerId}`,
+        intent,
+        confidence: decision.confidence,
+        itemCount: entities.items.length,
+        fulfillmentType: entities.fulfillmentType,
+      });
+    }
 
     async function persistLlmMemory(lastReplyText) {
-      if (!conversationSessionRepo) {
-        return;
-      }
-      const safeEntities = {
-        ...entities,
-        items: matchLlmEntitiesToMenu(menuItems, entities).map((item) => item.name),
-      };
+      if (!conversationSessionRepo) return;
       const memory = updateSessionMemory({
         previousTurns: sessionState && sessionState.llmMemoryTurns,
         previousSummary: sessionState && sessionState.conversationSummary,
@@ -381,347 +263,92 @@ function createChatOrchestrator({
         normalized.channel,
         normalized.channelCustomerId,
         {
-          llmLastIntent: String(decision.intent || "unknown"),
+          llmLastIntent: intent,
           llmLastConfidence: Number(decision.confidence || 0),
-          llmLastEntities: safeEntities,
+          llmLastEntities: {
+            items: entities.items.map((i) => i.name),
+            fulfillmentType: entities.fulfillmentType,
+            location: entities.location,
+          },
           llmMemoryTurns: memory.turns,
           conversationSummary: memory.summary,
         }
       );
     }
 
-    if (logger && typeof logger.info === "function") {
-      const turnsCount = Array.isArray(sessionState && sessionState.llmMemoryTurns)
-        ? sessionState.llmMemoryTurns.length
-        : 0;
-      logger.info("[LLM_CONTEXT]", {
-        session: `${restaurantId}:${normalized.channel}:${normalized.channelCustomerId}`,
-        summary: String((sessionState && sessionState.conversationSummary) || ""),
-        intent: String((sessionState && sessionState.llmLastIntent) || ""),
-        entities: sessionState && sessionState.llmLastEntities ? sessionState.llmLastEntities : {},
-        turns: turnsCount,
-      });
-    }
-
     async function getParsedMatchedItems() {
-      if (parsedMatchedLoaded) {
-        return parsedMatchedCache;
-      }
-
-      parsedMatchedLoaded = true;
-
-      if (typeof resolveRequestedItems !== "function") {
-        parsedMatchedCache = [];
-        return parsedMatchedCache;
-      }
-
+      if (typeof resolveRequestedItems !== "function") return [];
       try {
-        const resolved = await resolveRequestedItems({
-          restaurantId,
-          messageText: normalized.text,
-        });
-        parsedMatchedCache =
-          resolved && Array.isArray(resolved.matched) ? resolved.matched : [];
+        const resolved = await resolveRequestedItems({ restaurantId, messageText: normalized.text });
+        return resolved && Array.isArray(resolved.matched) ? resolved.matched : [];
       } catch (_error) {
-        parsedMatchedCache = [];
-      }
-
-      return parsedMatchedCache;
-    }
-
-    // Handle suggestedAction from LLM (AI-first approach)
-    if (decision.suggestedAction) {
-      switch (decision.suggestedAction) {
-        case "show_menu":
-        case "start_guided_flow":
-          if (allowGuidedFlow) {
-            return beginGuidedOrderingFlow({
-              restaurantId,
-              normalized,
-              restaurant,
-              menuItems,
-              sendMessage,
-            });
-          }
-          break;
-        case "answer_question":
-          if (decision.replyText) {
-            const groundedReply = enforceGroundedReply({
-              replyText: decision.replyText,
-              intent: decision.intent,
-              menuItems,
-            });
-            if (!groundedReply) {
-              break;
-            }
-            await sendText(sendMessage, normalized.channelCustomerId, groundedReply);
-            await persistLlmMemory(groundedReply);
-            return {
-              handled: true,
-              shouldReply: true,
-              type: "llm_answer_question",
-              replyText: groundedReply,
-              decision: {
-                handler: "llm_answer_question",
-                intent: decision.intent,
-                confidence: decision.confidence,
-                reason: "llm_suggested_answer",
-                entities,
-                metrics: { llm_ms: llmMs },
-              },
-            };
-          }
-          break;
-        case "handle_greeting": {
-          // Prefer the restaurant's designed welcome message over whatever the LLM generated.
-          const greetingBot =
-            restaurant && restaurant.bot && typeof restaurant.bot === "object" ? restaurant.bot : {};
-          const greetingRestaurantName = String((restaurant && restaurant.name) || "").trim();
-          const greetingCustomerName = String(normalized.displayName || "").trim();
-
-          let greetingReply = "";
-          if (greetingBot.customWelcomeMessage && String(greetingBot.customWelcomeMessage).trim()) {
-            greetingReply = applyWelcomePlaceholders(String(greetingBot.customWelcomeMessage).trim(), {
-              restaurantName: greetingRestaurantName,
-              customerName: greetingCustomerName,
-            });
-          } else if (decision.replyText) {
-            greetingReply = enforceGroundedReply({
-              replyText: decision.replyText,
-              intent: decision.intent,
-              menuItems,
-            });
-          }
-
-          if (!greetingReply) break;
-
-          await sendText(sendMessage, normalized.channelCustomerId, greetingReply);
-          await persistLlmMemory(greetingReply);
-          return {
-            handled: true,
-            shouldReply: true,
-            type: "llm_greeting",
-            replyText: greetingReply,
-            decision: {
-              handler: "llm_greeting",
-              intent: decision.intent,
-              confidence: decision.confidence,
-              reason: greetingBot.customWelcomeMessage ? "custom_welcome" : "llm_suggested_greeting",
-              entities,
-              metrics: { llm_ms: llmMs },
-            },
-          };
-        }
-        case "create_order":
-        case "update_order": {
-          if (allowGuidedFlow) {
-            // Parse the raw message for item-level quantities so pricing always comes from each item.quantity.
-            let prematched = await getParsedMatchedItems();
-            if (!prematched.length) {
-              prematched = matchLlmEntitiesToMenu(menuItems, entities);
-            }
-            if (prematched.length > 0) {
-              return beginGuidedOrderingFlowWithItems({
-                restaurantId,
-                normalized,
-                restaurant,
-                menuItems,
-                sendMessage,
-                matched: prematched,
-                fulfillmentType: entities.fulfillmentType || "",
-              });
-            }
-            return beginGuidedOrderingFlow({
-              restaurantId,
-              normalized,
-              restaurant,
-              menuItems,
-              sendMessage,
-            });
-          }
-          break;
-        }
+        return [];
       }
     }
 
-    // Legacy fallback: handle based on intent if suggestedAction not provided
-    if (
-      allowGuidedFlow &&
-      (decision.shouldStartGuidedFlow ||
-        (decision.intent === "menu_request" && decision.confidence >= 0.5))
-    ) {
-      return beginGuidedOrderingFlow({
-        restaurantId,
-        normalized,
-        restaurant,
-        menuItems,
-        sendMessage,
-      });
-    }
-
-    if (decision.intent === "place_order") {
-      let prematched = await getParsedMatchedItems();
-      if (!prematched.length) {
-        prematched = matchLlmEntitiesToMenu(menuItems, entities);
-        if (prematched.length === 1 && Number(entities.quantity || 0) > 1) {
-          const quantity = Math.max(1, Math.round(Number(entities.quantity || 0)));
-          prematched = prematched.map((item) => ({
-            ...item,
-            quantity,
-            subtotal: Number(item.price || 0) * quantity,
-          }));
-        }
-      }
-
-      if (allowGuidedFlow && prematched.length) {
-        return beginGuidedOrderingFlowWithItems({
-          restaurantId,
-          normalized,
-          restaurant,
-          menuItems,
-          sendMessage,
-          matched: prematched,
-          fulfillmentType: entities.fulfillmentType || "",
-        });
-      }
-
-      if (allowGuidedFlow && decision.confidence >= 0.35) {
-        return beginGuidedOrderingFlow({
-          restaurantId,
-          normalized,
-          restaurant,
-          menuItems,
-          sendMessage,
-        });
-      }
-    }
-
-    if (transactionalIntents.has(String(decision.intent || "").trim().toLowerCase())) {
+    // Transactional intents — defer to deterministic downstream handlers
+    if (["confirm", "cancel", "remove_item"].includes(intent)) {
       return {
         handled: false,
         shouldReply: false,
         type: "llm_transactional_intent_deferred",
         decision: {
           handler: "llm_transactional_intent_deferred",
-          intent: String(decision.intent || "unknown"),
+          intent,
           confidence: Number(decision.confidence || 0),
           reason: "transactional_intents_require_deterministic_flow",
           entities,
-          metrics: {
-            llm_ms: llmMs,
-          },
+          metrics: { llm_ms: llmMs },
         },
       };
     }
 
-    if (
-      decision.shouldHandleDirectly &&
-      decision.replyText &&
-      decision.confidence >= getDirectReplyThreshold(decision.intent) &&
-      [
-        "delivery_question",
-        "support",
-        "unknown",
-        "greeting",
-        "stock_request",
-        "availability_question",
-        "recommendation",
-        "price_question",
-        "off_topic",
-      ].includes(decision.intent)
-    ) {
-      const groundedReply = enforceGroundedReply({
-        replyText: decision.replyText,
-        intent: decision.intent,
-        menuItems,
-      });
-      if (!groundedReply) {
-        return null;
-      }
-      await sendText(sendMessage, normalized.channelCustomerId, groundedReply);
-      await persistLlmMemory(groundedReply);
-      return {
-        handled: true,
-        shouldReply: true,
-        type: `llm_${decision.intent}`,
-        replyText: groundedReply,
-        decision: {
-          handler: "llm_direct",
-          intent: String(decision.intent || "unknown"),
-          confidence: Number(decision.confidence || 0),
-          reason: "llm_confident_direct_reply",
-          entities,
-          metrics: {
-            llm_ms: llmMs,
-          },
-        },
-      };
+    // Menu request → guided flow
+    if (intent === "menu_request" && allowGuidedFlow) {
+      return beginGuidedOrderingFlow({ restaurantId, normalized, restaurant, menuItems, sendMessage });
     }
 
-    if (
-      decision.confidence >= getClarificationThreshold(decision.intent) &&
-      [
-        "delivery_question",
-        "support",
-        "unknown",
-        "stock_request",
-        "availability_question",
-        "recommendation",
-        "price_question",
-      ].includes(decision.intent)
-    ) {
-      let replyText = buildClarificationReply(decision.intent, menuItems);
-      if (entities.budget > 0 && decision.intent === "recommendation") {
-        replyText = `Sure. Should I suggest options under N${entities.budget}?`;
+    // Order intent → match items, then guided flow
+    if ((intent === "place_order" || intent === "add_item") && allowGuidedFlow) {
+      let matched = matchLlmEntitiesToMenu(menuItems, entities);
+      if (!matched.length) {
+        matched = await getParsedMatchedItems();
       }
-      if (entities.location && decision.intent === "delivery_question") {
-        replyText = `Thanks. For delivery to ${entities.location}, do you want to order now or check available items first?`;
+      if (matched.length > 0) {
+        return beginGuidedOrderingFlowWithItems({
+          restaurantId,
+          normalized,
+          restaurant,
+          menuItems,
+          sendMessage,
+          matched,
+          fulfillmentType: entities.fulfillmentType || "",
+        });
       }
-      await sendText(sendMessage, normalized.channelCustomerId, replyText);
-      await persistLlmMemory(replyText);
-      return {
-        handled: true,
-        shouldReply: true,
-        type: `llm_clarify_${decision.intent}`,
-        replyText,
-        decision: {
-          handler: "llm_clarification",
-          intent: String(decision.intent || "unknown"),
-          confidence: Number(decision.confidence || 0),
-          reason: "llm_medium_confidence_needs_clarification",
-          entities,
-          metrics: {
-            llm_ms: llmMs,
-          },
-        },
-      };
+      return beginGuidedOrderingFlow({ restaurantId, normalized, restaurant, menuItems, sendMessage });
     }
 
-    const fallbackReply =
-      decision.replyText ||
-      buildClarificationReply(decision.intent, menuItems) ||
-      buildAssistantFallbackReply(menuItems);
-    const groundedFallback = enforceGroundedReply({
-      replyText: fallbackReply,
-      intent: decision.intent,
-      menuItems,
-    }) || buildClarificationReply(decision.intent, menuItems);
-    await sendText(sendMessage, normalized.channelCustomerId, groundedFallback);
-    await persistLlmMemory(groundedFallback);
+    // Greeting is handled deterministically before LLM; if it somehow arrives here, pass through
+    if (intent === "greeting") {
+      return null;
+    }
+
+    // Unknown / anything else → pre-written template, never LLM text
+    const replyText = buildUnknownReply();
+    await sendText(sendMessage, normalized.channelCustomerId, replyText);
+    await persistLlmMemory(replyText);
     return {
       handled: true,
       shouldReply: true,
-      type: `llm_fallback_${decision.intent || "unknown"}`,
-      replyText: groundedFallback,
+      type: "llm_unknown",
+      replyText,
       decision: {
-        handler: "llm_fallback",
-        intent: String(decision.intent || "unknown"),
+        handler: "llm_unknown_template",
+        intent,
         confidence: Number(decision.confidence || 0),
-        reason: "llm_primary_non_transactional_fallback",
+        reason: "extraction_only_unknown_fallback",
         entities,
-        metrics: {
-          llm_ms: llmMs,
-        },
+        metrics: { llm_ms: llmMs },
       },
     };
   }

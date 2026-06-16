@@ -455,6 +455,10 @@ function buildRestaurantTestAlertMessage(restaurant = {}) {
   return `Test alert from ${restaurantName}.\n\nIf you received this, the restaurant WhatsApp order alert setup is working for this number.`;
 }
 
+function buildUnknownReply() {
+  return "Sorry, I didn't understand that. Reply HI to start a new order, or send your order directly.";
+}
+
 function applyWelcomePlaceholders(template, { restaurantName = "", customerName = "" } = {}) {
   return String(template || "")
     .replace(/\{restaurant_name\}/gi, restaurantName || "our restaurant")
@@ -501,4 +505,5 @@ module.exports = {
   buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
   applyWelcomePlaceholders,
+  buildUnknownReply,
 };
