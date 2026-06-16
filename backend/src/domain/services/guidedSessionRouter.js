@@ -8,6 +8,7 @@ function createGuidedSessionRouter({
   flowStates,
   sendText,
   resolveMenuSelection,
+  resolveMenuNumberSelections,
   looksLikeQuestion,
   extractInlineFulfillmentType,
   extractInlineAddress,
@@ -330,12 +331,16 @@ function createGuidedSessionRouter({
 
       // Primary path: resolve requested items deterministically.
       const {
-        matched: requestedMatched,
+        matched: resolvedByName,
         unavailable: requestedUnavailable,
       } = await orderService.resolveRequestedItems({
         restaurantId,
         messageText: normalized.text,
       });
+      // Fall back to number-based selection ("9 and 11") when name parsing finds nothing.
+      const requestedMatched = resolvedByName.length > 0
+        ? resolvedByName
+        : resolveMenuNumberSelections(menuItems, normalized.text) || [];
       if (Array.isArray(requestedUnavailable) && requestedUnavailable.length) {
         const availableList = (menuItems || [])
           .filter((item) => item && item.available)

@@ -5,42 +5,55 @@ function formatMenu(menuItems) {
     .join("\n");
 }
 
-function buildCategorizedMenuList(menuItems) {
+function getDisplayOrderedMenuItems(menuItems) {
   const available = (menuItems || []).filter((item) => item.available);
-  if (!available.length) return "";
-
   const categoryOrder = [];
   const categoryMap = new Map();
-
   available.forEach((item) => {
     const cat = String(item.category || "").trim().toUpperCase() || "OTHERS";
     if (!categoryMap.has(cat)) {
       categoryMap.set(cat, []);
       categoryOrder.push(cat);
     }
-    categoryMap.get(cat).push({ item });
+    categoryMap.get(cat).push(item);
   });
-
-  let displayNumber = 1;
+  const ordered = [];
   for (const cat of categoryOrder) {
-    for (const entry of categoryMap.get(cat)) {
-      entry.number = displayNumber++;
+    for (const item of categoryMap.get(cat)) {
+      ordered.push(item);
     }
   }
+  return ordered;
+}
+
+function buildCategorizedMenuList(menuItems) {
+  const available = (menuItems || []).filter((item) => item.available);
+  if (!available.length) return "";
+
+  const ordered = getDisplayOrderedMenuItems(menuItems);
+  const categoryOrder = [];
+  const categoryMap = new Map();
+  ordered.forEach((item) => {
+    const cat = String(item.category || "").trim().toUpperCase() || "OTHERS";
+    if (!categoryMap.has(cat)) {
+      categoryMap.set(cat, []);
+      categoryOrder.push(cat);
+    }
+    categoryMap.get(cat).push(item);
+  });
 
   // Single uncategorized group — use flat numbered list without section header
   if (categoryOrder.length === 1 && categoryOrder[0] === "OTHERS") {
-    return available
+    return ordered
       .map((item, index) => `${index + 1}. ${item.name} — ₦${item.price}`)
       .join("\n");
   }
 
+  let displayNumber = 1;
   return categoryOrder
     .map((cat) => {
-      const entries = categoryMap.get(cat);
-      const lines = entries.map(
-        ({ item, number }) => `${number}. ${item.name} — ₦${item.price}`
-      );
+      const items = categoryMap.get(cat);
+      const lines = items.map((item) => `${displayNumber++}. ${item.name} — ₦${item.price}`);
       return `${cat}\n${lines.join("\n")}`;
     })
     .join("\n\n");
@@ -467,6 +480,7 @@ function applyWelcomePlaceholders(template, { restaurantName = "", customerName 
 
 module.exports = {
   formatMenu,
+  getDisplayOrderedMenuItems,
   buildCategorizedMenuList,
   buildGuidedMenuList,
   buildGreetingMessage,

@@ -7,6 +7,7 @@ const {
   buildCategorizedMenuList,
   buildMenuWelcome,
   buildGuidedMenuList,
+  getDisplayOrderedMenuItems,
 } = require("../src/domain/templates/messages");
 
 // ── buildCategorizedMenuList ───────────────────────────────────────────────
@@ -46,11 +47,12 @@ test("global numbering is preserved across categories", () => {
     { name: "Item C", price: 300, available: true, category: "Cat1" },
   ];
   const result = buildCategorizedMenuList(items);
-  // Items are grouped by category; global numbers reflect position in full available list.
-  // Display order: CAT1 → Item A (#1), Item C (#3) | CAT2 → Item B (#2)
+  // Items are grouped by category with sequential numbers across the full display order.
+  // Display order: CAT1 → Item A (#1), Item C (#2) | CAT2 → Item B (#3)
+  // Numbers are sequential in display order so customers can type the number they see.
   assert.match(result, /1\. Item A/, "Item A must be #1");
-  assert.match(result, /2\. Item B/, "Item B must be #2 (global index)");
-  assert.match(result, /3\. Item C/, "Item C must be #3 (global index)");
+  assert.match(result, /2\. Item C/, "Item C must be #2 (2nd in display order)");
+  assert.match(result, /3\. Item B/, "Item B must be #3 (3rd in display order)");
   // CAT1 section contains both A and C
   const cat1Idx = result.indexOf("CAT1");
   const cat2Idx = result.indexOf("CAT2");
@@ -110,13 +112,13 @@ test("buildMenuWelcome contains category sections and reply instruction", () => 
 });
 
 test("menu item numbers map correctly to selection index", () => {
-  // Simulates resolveMenuSelection logic: pick by 1-based index from available list
+  // Simulates resolveMenuSelection logic: pick by 1-based index from getDisplayOrderedMenuItems
   const items = [
     { id: "a", name: "Pancakes", price: 2500, available: true, category: "pancakes" },
     { id: "b", name: "Waffles", price: 2800, available: true, category: "waffles" },
     { id: "c", name: "Zobo", price: 700, available: true, category: "drinks" },
   ];
-  const available = items.filter((i) => i.available);
+  const displayOrdered = getDisplayOrderedMenuItems(items);
   const result = buildCategorizedMenuList(items);
 
   // Find what number Zobo appears as in the output
@@ -124,9 +126,9 @@ test("menu item numbers map correctly to selection index", () => {
   assert.ok(zoboMatch, "Zobo must appear in menu");
   const zoboNumber = Number(zoboMatch[1]);
 
-  // That number minus 1 should index into available array to give Zobo
-  const selected = available[zoboNumber - 1];
-  assert.equal(selected.id, "c", "Item number in menu must map to correct item in available list");
+  // That number minus 1 should index into displayOrdered to give Zobo
+  const selected = displayOrdered[zoboNumber - 1];
+  assert.equal(selected.id, "c", "Item number in menu must map to correct item via display-ordered lookup");
 });
 
 test("categories are case-insensitive — 'Pancakes' and 'pancakes' merge", () => {

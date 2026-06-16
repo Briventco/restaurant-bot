@@ -22,6 +22,7 @@ const {
   buildRestaurantOrderAlertHandledMessage,
   buildRephraseOrderPrompt,
   applyWelcomePlaceholders,
+  getDisplayOrderedMenuItems,
 } = require("../templates/messages");
 const { createChatOrchestrator } = require("./chatOrchestrator");
 const { createRuleBasedRouter } = require("./ruleBasedRouter");
@@ -1228,6 +1229,7 @@ function createInboundMessageService({
     flowStates: FLOW_STATES,
     sendText,
     resolveMenuSelection,
+    resolveMenuNumberSelections,
     looksLikeQuestion,
     extractInlineFulfillmentType,
     extractInlineAddress,
@@ -1256,21 +1258,47 @@ function createInboundMessageService({
   });
 
   function resolveMenuSelection(menuItems, incomingMessage) {
-    const availableItems = (menuItems || []).filter((item) => item.available);
+    const displayItems = getDisplayOrderedMenuItems(menuItems || []);
     const trimmed = String(incomingMessage || "").trim();
     const asNumber = Number(trimmed);
 
-    if (Number.isFinite(asNumber) && asNumber >= 1 && asNumber <= availableItems.length) {
-      return availableItems[Math.round(asNumber) - 1] || null;
+    if (Number.isFinite(asNumber) && asNumber >= 1 && asNumber <= displayItems.length) {
+      return displayItems[Math.round(asNumber) - 1] || null;
     }
 
     const lowered = normalizeText(trimmed);
     return (
-      availableItems.find((item) => normalizeText(item.name) === lowered) ||
-      availableItems.find((item) => normalizeText(item.name).includes(lowered)) ||
-      availableItems.find((item) => lowered.includes(normalizeText(item.name))) ||
+      displayItems.find((item) => normalizeText(item.name) === lowered) ||
+      displayItems.find((item) => normalizeText(item.name).includes(lowered)) ||
+      displayItems.find((item) => lowered.includes(normalizeText(item.name))) ||
       null
     );
+  }
+
+  function resolveMenuNumberSelections(menuItems, message) {
+    const numbers = String(message || "").match(/\d+/g);
+    if (!numbers || numbers.length < 2) return null;
+    const displayItems = getDisplayOrderedMenuItems(menuItems || []);
+    if (!displayItems.length) return null;
+    const matched = [];
+    const seen = new Set();
+    for (const numStr of numbers) {
+      const n = parseInt(numStr, 10);
+      if (n >= 1 && n <= displayItems.length && !seen.has(n)) {
+        seen.add(n);
+        const item = displayItems[n - 1];
+        if (item) {
+          matched.push({
+            menuItemId: item.id,
+            name: item.name,
+            price: Number(item.price) || 0,
+            quantity: 1,
+            subtotal: Number(item.price) || 0,
+          });
+        }
+      }
+    }
+    return matched.length >= 2 ? matched : null;
   }
 
   async function handleGuidedSession(params) {

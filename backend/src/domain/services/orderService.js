@@ -21,6 +21,7 @@ const {
   buildRestaurantOrderAlertMessage,
   buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
+  getDisplayOrderedMenuItems,
 } = require("../templates/messages");
 const { buildShortOrderCode } = require("../utils/orderReference");
 
@@ -843,9 +844,11 @@ function createOrderService({
   }
 
   async function resolveRequestedItems({ restaurantId, messageText }) {
-    const menuItems = await menuRepo.listMenuItems(restaurantId);
-    const parsedItems = await orderParsingService.parseOrder(messageText, menuItems);
-    return matchMenuItems(parsedItems, menuItems);
+    const allMenuItems = await menuRepo.listMenuItems(restaurantId);
+    // Pass items in display order so LLM number references match what customers see on the menu.
+    const displayOrderedItems = getDisplayOrderedMenuItems(allMenuItems);
+    const parsedItems = await orderParsingService.parseOrder(messageText, displayOrderedItems);
+    return matchMenuItems(parsedItems, allMenuItems);
   }
 
   async function createGuidedOrder({
