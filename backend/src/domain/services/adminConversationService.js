@@ -184,15 +184,9 @@ async function buildCustomerMessageTimeline({
       });
     }
   }
-  const hasOrderMessages = orderMessages.length > 0;
 
   const items = [];
-  const threadSourceMessages = hasOrderMessages ? orderMessages : conversationMessages;
-
-  for (const message of threadSourceMessages) {
-    if (effectiveBeforeMs > 0 && Number(message.createdAtMs || 0) >= effectiveBeforeMs) {
-      continue;
-    }
+  for (const message of [...conversationMessages, ...orderMessages]) {
     items.push({
       id: message.id,
       direction: message.direction,
@@ -200,11 +194,11 @@ async function buildCustomerMessageTimeline({
       messageType: message.messageType || "text",
       createdAtMs: message.createdAtMs || 0,
       createdAt: message.createdAt || null,
-      source: hasOrderMessages ? "order" : "conversation",
+      source: message.source || "conversation",
     });
   }
 
-  if (!hasOrderMessages && !hasConversationMessages) {
+  if (!orderMessages.length && !hasConversationMessages) {
     for (const message of outboxMessages) {
       if (!matchesChannelCustomerId(message.recipient, candidates)) {
         continue;
@@ -231,7 +225,7 @@ async function buildCustomerMessageTimeline({
     }
   }
 
-  if (!hasOrderMessages && !hasConversationMessages && !outboxMessages.length) {
+  if (!orderMessages.length && !hasConversationMessages && !outboxMessages.length) {
     for (const audit of routingAudits) {
       if (!matchesChannelCustomerId(audit.channelCustomerId, candidates)) {
         continue;
