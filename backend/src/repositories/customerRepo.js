@@ -16,6 +16,38 @@ function customerDocId(channel, channelCustomerId) {
     .digest("hex");
 }
 
+function normalizePhoneLike(value) {
+  return String(value || "").replace(/[^0-9]/g, "");
+}
+
+function buildPhoneCandidates(value) {
+  const raw = String(value || "").trim();
+  const digits = normalizePhoneLike(raw);
+  const variants = new Set();
+
+  if (raw) {
+    variants.add(raw);
+  }
+  if (digits) {
+    variants.add(digits);
+  }
+
+  if (digits.startsWith("0") && digits.length === 11) {
+    variants.add(`234${digits.slice(1)}`);
+  }
+  if (digits.startsWith("234") && digits.length >= 12) {
+    variants.add(`0${digits.slice(3)}`);
+  }
+
+  const numericForms = Array.from(variants).filter((item) => /^\d+$/.test(item));
+  for (const form of numericForms) {
+    variants.add(`${form}@c.us`);
+    variants.add(`${form}@lid`);
+  }
+
+  return Array.from(variants).filter(Boolean);
+}
+
 async function upsertByChannelIdentity({
   restaurantId,
   channel,
@@ -76,6 +108,26 @@ async function getCustomerById({ restaurantId, customerId }) {
   return serializeDoc(snapshot);
 }
 
+async function findCustomerByPhone({ restaurantId, customerPhone }) {
+  const candidates = buildPhoneCandidates(customerPhone);
+  if (!candidates.length) {
+    return null;
+  }
+
+  for (const candidate of candidates) {
+    const snapshot = await customersCollection(restaurantId)
+      .where("customerPhone", "==", candidate)
+      .limit(1)
+      .get();
+
+    if (!snapshot.empty) {
+      return serializeDoc(snapshot.docs[0]);
+    }
+  }
+
+  return null;
+}
+
 async function listCustomers({ restaurantId, limit = 100 }) {
   const effectiveLimit = Math.max(1, Math.min(500, Number(limit) || 100));
 
@@ -102,5 +154,6 @@ module.exports = {
   customerDocId,
   upsertByChannelIdentity,
   getCustomerById,
+  findCustomerByPhone,
   listCustomers,
 };

@@ -8,6 +8,7 @@ function buildGreetingTestDeps({
   customWelcomeMessage = "",
   restaurantName = "Test Eats",
   displayName = "",
+  savedCustomerDisplayName = "",
   menuItems = [],
 } = {}) {
   const sent = [];
@@ -18,18 +19,33 @@ function buildGreetingTestDeps({
 
   const sendMessage = async (_to, text) => { sent.push(text); };
 
-  return { sent, restaurant, sendMessage, menuItems, displayName };
+  const customerService = {
+    getCustomerByPhone: async () =>
+      savedCustomerDisplayName ? { displayName: savedCustomerDisplayName } : null,
+  };
+
+  return { sent, restaurant, sendMessage, menuItems, displayName, customerService };
 }
 
 // Inline reimplementation of just the greeting branch logic (mirrors inboundMessageService.js)
-async function runGreetingBranch({ restaurant, menuItems, displayName, sendMessage }) {
+async function runGreetingBranch({
+  restaurant,
+  menuItems,
+  displayName,
+  customerService,
+  sendMessage,
+}) {
   const bot =
     restaurant && restaurant.bot && typeof restaurant.bot === "object"
       ? restaurant.bot
       : {};
   const restaurantName =
     String((restaurant && restaurant.name) || "").trim() || "our restaurant";
-  const customerName = String(displayName || "").trim();
+  const liveName = String(displayName || "").trim();
+  const savedCustomer = customerService && typeof customerService.getCustomerByPhone === "function"
+    ? await customerService.getCustomerByPhone({})
+    : null;
+  const customerName = liveName || String((savedCustomer && savedCustomer.displayName) || "").trim();
 
   let replyText;
   if (bot.customWelcomeMessage && String(bot.customWelcomeMessage).trim()) {
@@ -142,6 +158,28 @@ describe("greeting handler — custom welcome message", () => {
     assert.equal(sent.length, 1);
     assert.match(reply, /Hi Ngozi/);
     assert.match(reply, /Welcome to Chops HQ/);
+  });
+
+  it("falls back to saved customer display name when live displayName is missing", async () => {
+    const { sent, restaurant, sendMessage, menuItems, customerService } = buildGreetingTestDeps({
+      customWelcomeMessage: "Hi {customer_name}! Welcome to {restaurant_name}.",
+      restaurantName: "Mama's Spot",
+      displayName: "",
+      savedCustomerDisplayName: "Bola",
+      menuItems: [],
+    });
+
+    const reply = await runGreetingBranch({
+      restaurant,
+      menuItems,
+      displayName: "",
+      customerService,
+      sendMessage,
+    });
+
+    assert.equal(sent.length, 1);
+    assert.match(reply, /Hi Bola/);
+    assert.match(reply, /Welcome to Mama's Spot/);
   });
 
   it("falls back to default greeting when no custom message set", async () => {

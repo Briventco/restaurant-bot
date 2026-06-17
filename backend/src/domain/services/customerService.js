@@ -15,8 +15,16 @@ function createCustomerService({ customerRepo }) {
     });
   }
 
+  async function getCustomerByPhone({ restaurantId, customerPhone }) {
+    return customerRepo.findCustomerByPhone({
+      restaurantId,
+      customerPhone,
+    });
+  }
+
   return {
     upsertCustomerFromChannelMessage,
+    getCustomerByPhone,
   };
 }
 

@@ -415,6 +415,28 @@ function buildPhoneCandidates(value) {
   return Array.from(variants).filter(Boolean);
 }
 
+async function resolveGreetingCustomerName({ customerService, restaurantId, normalized }) {
+  const liveName = String(normalized.displayName || "").trim();
+  if (liveName) {
+    return liveName;
+  }
+
+  const phone = String(normalized.customerPhone || "").trim();
+  if (!phone || !customerService || typeof customerService.getCustomerByPhone !== "function") {
+    return "";
+  }
+
+  try {
+    const savedCustomer = await customerService.getCustomerByPhone({
+      restaurantId,
+      customerPhone: phone,
+    });
+    return String((savedCustomer && savedCustomer.displayName) || "").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
 function looksLikeQuestion(lower, rawText) {
   const text = String(rawText || "").trim();
   const orderEditLike =
@@ -2231,7 +2253,11 @@ function createInboundMessageService({
           : {};
       const restaurantName =
         String((restaurant && restaurant.name) || "").trim() || "our restaurant";
-      const customerName = String(normalized.displayName || "").trim();
+      const customerName = await resolveGreetingCustomerName({
+        customerService,
+        restaurantId,
+        normalized,
+      });
 
       let replyText;
       if (bot.customWelcomeMessage && String(bot.customWelcomeMessage).trim()) {
