@@ -130,6 +130,19 @@ function createGuidedSessionRouter({
     return null;
   }
 
+  function looksLikePureMenuNumberSelection(rawText) {
+    const text = String(rawText || "").trim().toLowerCase();
+    if (!text) {
+      return false;
+    }
+
+    const compact = text.replace(/\s+/g, " ").trim();
+    return (
+      /^\d+(?:\s*(?:,|&|\+|and|or)\s*\d+)+$/.test(compact) ||
+      /^\d+(?:\s+\d+)+$/.test(compact)
+    );
+  }
+
   function applyQuantityToSessionMatched(sessionMatched, session, quantity) {
     if (Array.isArray(sessionMatched) && sessionMatched.length) {
       if (sessionMatched.length === 1) {
@@ -330,17 +343,27 @@ function createGuidedSessionRouter({
       }
 
       // Primary path: resolve requested items deterministically.
-      const {
-        matched: resolvedByName,
-        unavailable: requestedUnavailable,
-      } = await orderService.resolveRequestedItems({
-        restaurantId,
-        messageText: normalized.text,
-      });
-      // Fall back to number-based selection ("9 and 11") when name parsing finds nothing.
-      const requestedMatched = resolvedByName.length > 0
-        ? resolvedByName
-        : resolveMenuNumberSelections(menuItems, normalized.text) || [];
+      const pureNumberSelection = looksLikePureMenuNumberSelection(normalized.text);
+      let requestedMatched = [];
+      let requestedUnavailable = [];
+
+      if (pureNumberSelection) {
+        requestedMatched = resolveMenuNumberSelections(menuItems, normalized.text) || [];
+      } else {
+        const resolved = await orderService.resolveRequestedItems({
+          restaurantId,
+          messageText: normalized.text,
+        });
+        const resolvedByName = Array.isArray(resolved && resolved.matched) ? resolved.matched : [];
+        requestedUnavailable = Array.isArray(resolved && resolved.unavailable)
+          ? resolved.unavailable
+          : [];
+
+        requestedMatched = resolvedByName.length > 0
+          ? resolvedByName
+          : resolveMenuNumberSelections(menuItems, normalized.text) || [];
+      }
+
       if (Array.isArray(requestedUnavailable) && requestedUnavailable.length) {
         const availableList = (menuItems || [])
           .filter((item) => item && item.available)

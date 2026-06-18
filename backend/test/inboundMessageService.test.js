@@ -295,6 +295,132 @@ test("generic order intent starts guided menu instead of invalid order", async (
   assert.equal(result.decision.handler, "guided_flow_start");
 });
 
+test("guided item selection prefers visible menu numbers for pure numeric replies", async () => {
+  const localSessionStore = {};
+  const menuItems = [
+    { id: "m1", name: "Item 1", price: 100, available: true, category: "Breakfast" },
+    { id: "m2", name: "Item 2", price: 200, available: true, category: "Breakfast" },
+    { id: "m3", name: "Item 3", price: 300, available: true, category: "Breakfast" },
+    { id: "m4", name: "Item 4", price: 400, available: true, category: "Breakfast" },
+    { id: "m5", name: "Item 5", price: 500, available: true, category: "Breakfast" },
+    { id: "m6", name: "Item 6", price: 600, available: true, category: "Combos" },
+    { id: "m7", name: "Item 7", price: 700, available: true, category: "Combos" },
+    { id: "m8", name: "Item 8", price: 800, available: true, category: "Combos" },
+    { id: "m9", name: "Item 9", price: 900, available: true, category: "Combos" },
+    { id: "m10", name: "Item 10", price: 1000, available: true, category: "Combos" },
+    { id: "m11", name: "Item 11", price: 1100, available: true, category: "Main" },
+    { id: "m12", name: "Item 12", price: 1200, available: true, category: "Main" },
+    { id: "m13", name: "Item 13", price: 1300, available: true, category: "Main" },
+    { id: "m14", name: "Item 14", price: 1400, available: true, category: "Main" },
+    { id: "m15", name: "Item 15", price: 1500, available: true, category: "Main" },
+  ];
+
+  let resolveRequestedItemsCalls = 0;
+
+  const service = createInboundMessageService({
+    inboundEventRepo: {
+      markInboundEventIfNew: async () => true,
+    },
+    menuService: {
+      listAvailableMenuItems: async () => menuItems,
+    },
+    customerService: {
+      upsertCustomerFromChannelMessage: async () => ({ id: "customer-1" }),
+    },
+    orderService: {
+      findActiveOrderByCustomer: async () => null,
+      listOrders: async () => [],
+      listOrderMessages: async () => ({ messages: [] }),
+      getOrder: async () => {
+        throw new Error("Order not found");
+      },
+      confirmOrder: async ({ orderId }) => ({ id: orderId, status: "confirmed" }),
+      rejectOrder: async ({ orderId }) => ({ id: orderId, status: "cancelled" }),
+      logInboundMessage: async () => ({}),
+      resolveRequestedItems: async () => {
+        resolveRequestedItemsCalls += 1;
+        throw new Error("resolveRequestedItems should not run for pure numeric selection");
+      },
+      handleAwaitingCustomerUpdate: async () => ({ handled: false }),
+      handleAwaitingCustomerEdit: async () => ({ handled: false }),
+      createNewOrderFromInbound: async () => null,
+      transitionOrderStatus: async ({ orderId }) => ({ id: orderId, status: "cancelled" }),
+      sendMessageToOrderCustomer: async () => ({}),
+    },
+    channelGateway: {
+      normalizeInboundMessage: ({ rawEvent }) => rawEvent,
+      sendMessage: async () => ({}),
+    },
+    conversationSessionRepo: {
+      getSession: async (restaurantId, channel, cid) =>
+        localSessionStore[`${restaurantId}:${channel}:${cid}`] || null,
+      upsertSession: async (restaurantId, channel, cid, data) => {
+        localSessionStore[`${restaurantId}:${channel}:${cid}`] = {
+          ...(localSessionStore[`${restaurantId}:${channel}:${cid}`] || {}),
+          ...data,
+        };
+      },
+      clearSession: async (restaurantId, channel, cid) => {
+        delete localSessionStore[`${restaurantId}:${channel}:${cid}`];
+      },
+    },
+    restaurantRepo: {
+      getRestaurantById: async () => ({ id: "rest-1", name: "Test Restaurant", bot: {} }),
+    },
+    paymentService: {
+      appendCustomerPaymentReference: async () => ({ id: "order-1" }),
+      markCustomerPaymentReported: async () => ({ id: "order-1", status: "payment_review" }),
+    },
+    llmService: {
+      classifyRestaurantMessage: async () => ({
+        intent: "unknown",
+        confidence: 0,
+        entities: { items: [], fulfillmentType: "", location: "" },
+      }),
+    },
+    logger: {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    },
+    menuCooldownMs: 60_000,
+  });
+
+  const first = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000099@c.us",
+      customerPhone: "+234000000099",
+      text: "menu",
+      providerMessageId: "msg-guided-number-1",
+      timestamp: Date.now(),
+    },
+  });
+
+  assert.equal(first.type, "guided_menu");
+  const callsAfterMenu = resolveRequestedItemsCalls;
+
+  const second = await service.handleInboundNormalized({
+    restaurantId: "rest-1",
+    message: {
+      channel: "whatsapp-web",
+      channelCustomerId: "234000000099@c.us",
+      customerPhone: "+234000000099",
+      text: "9 and 11",
+      providerMessageId: "msg-guided-number-2",
+      timestamp: Date.now() + 1,
+    },
+  });
+
+  assert.equal(resolveRequestedItemsCalls, callsAfterMenu);
+  assert.equal(second.shouldReply, true);
+  assert.equal(second.type, "guided_multi_item_fulfillment_prompt");
+  assert.match(String(second.replyText || ""), /Item 9/);
+  assert.match(String(second.replyText || ""), /Item 11/);
+  assert.doesNotMatch(String(second.replyText || ""), /Item 10/);
+});
+
 test("decision metadata is attached for guided menu flow", async () => {
   const service = buildService();
 

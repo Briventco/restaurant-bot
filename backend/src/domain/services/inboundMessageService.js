@@ -247,6 +247,19 @@ function looksLikeItemizedOrderAttempt(rawText) {
   return hasQuantity || (hasOrderVerb && hasConnector);
 }
 
+function looksLikePureMenuNumberSelection(rawText) {
+  const text = String(rawText || "").trim().toLowerCase();
+  if (!text) {
+    return false;
+  }
+
+  const compact = text.replace(/\s+/g, " ").trim();
+  return (
+    /^\d+(?:\s*(?:,|&|\+|and|or)\s*\d+)+$/.test(compact) ||
+    /^\d+(?:\s+\d+)+$/.test(compact)
+  );
+}
+
 function isHowAreYouText(lower) {
   return (
     lower === "how are you" ||
@@ -1917,6 +1930,7 @@ function createInboundMessageService({
       }
     }
 
+    const isPureMenuNumberSelection = looksLikePureMenuNumberSelection(incomingMessage);
     const isObviousNonOrderMessage =
       isGreetingText(lower) ||
       isAcknowledgementText(lower) ||
@@ -1949,7 +1963,8 @@ function createInboundMessageService({
 
     const shouldRunEarlyResolve =
       !isObviousNonOrderMessage &&
-      (looksLikeNewOrderAttempt(lower) || /\d/.test(incomingMessage));
+      (looksLikeNewOrderAttempt(lower) || /\d/.test(incomingMessage)) &&
+      !isPureMenuNumberSelection;
 
     const [customer, activeOrder] = await Promise.all([
       timedDb("upsertCustomerFromChannelMessage", () =>
@@ -2125,7 +2140,9 @@ function createInboundMessageService({
 
     let preResolvedRequest = null;
     try {
-      preResolvedRequest = await getResolvedRequestedItemsCached();
+      preResolvedRequest = isPureMenuNumberSelection
+        ? { matched: [] }
+        : await getResolvedRequestedItemsCached();
     } catch (_error) {
       preResolvedRequest = null;
     }
@@ -3002,7 +3019,7 @@ function createInboundMessageService({
     }
 
     let lateResolvedRequest = null;
-    if (!hasBlockingActiveOrder) {
+    if (!hasBlockingActiveOrder && !isPureMenuNumberSelection) {
       try {
         lateResolvedRequest = await getResolvedRequestedItemsCached();
       } catch (_error) {
