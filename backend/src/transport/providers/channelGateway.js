@@ -24,12 +24,13 @@ function createChannelGateway({ providerRegistry, sessionRepo, logger }) {
     return adapter.normalizeInboundMessage(rawEvent);
   }
 
-  async function sendMessage({ channel, restaurantId, to, text, metadata }) {
+  async function sendMessage({ channel, restaurantId, senderId, to, text, metadata }) {
     const normalizedChannel = getChannel(channel);
     const adapter = getAdapter(normalizedChannel);
 
     return adapter.sendMessage({
       restaurantId,
+      senderId,
       to,
       text,
       metadata: metadata || {},

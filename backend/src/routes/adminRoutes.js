@@ -156,6 +156,10 @@ function mapOutboxStatusForAdmin(status) {
   return normalized || "pending";
 }
 
+function getCentralAlertSenderId(env) {
+  return String((env && env.SERVRA_ALERT_SENDER_ID) || "servra_ops_sender").trim() || "servra_ops_sender";
+}
+
 async function buildRestaurantSummary({
   restaurant,
   userRepo,
@@ -279,6 +283,40 @@ async function buildSessionSnapshot({
     messagesDelivered: sentCount,
     messagesFailed: failedCount,
     setupMessage: whatsapp.setupMessage,
+  };
+}
+
+async function buildCentralAlertSenderSnapshot({
+  providerSessionRepo,
+  env,
+}) {
+  const senderId = getCentralAlertSenderId(env);
+  const session = await providerSessionRepo.getSession(senderId, "whatsapp-web");
+
+  return {
+    id: senderId,
+    restaurantId: senderId,
+    restaurant: "Central Alert Sender",
+    phone: (session && session.phone) || "",
+    status: (session && session.status) || "disconnected",
+    provider: "whatsapp-web",
+    configured: true,
+    activationReady: true,
+    bindingMode: "shared",
+    provisioningState: "active",
+    routingMode: "central_sender",
+    routingHint: "This shared session sends order alerts for all restaurants.",
+    lastActive: (session && session.lastConnectedAt) || null,
+    lastConnectedAt: (session && session.lastConnectedAt) || null,
+    lastDisconnectedAt: (session && session.lastDisconnectedAt) || null,
+    qrAvailable: Boolean(session && session.qrAvailable),
+    qrGeneratedAt: (session && session.qrGeneratedAt) || null,
+    qrExpiresAt: (session && session.qrExpiresAt) || null,
+    lastError: String((session && session.lastError) || "").trim(),
+    messagesSent: 0,
+    messagesDelivered: 0,
+    messagesFailed: 0,
+    setupMessage: "Central WhatsApp sender used for alerts.",
   };
 }
 
@@ -1020,6 +1058,10 @@ function createAdminRoutes({
   router.get("/sessions", async (_req, res, next) => {
     try {
       const restaurants = await restaurantRepo.listRestaurants({ limit: 100 });
+      const centralSender = await buildCentralAlertSenderSnapshot({
+        providerSessionRepo,
+        env,
+      });
       const items = await Promise.all(
         restaurants.map((restaurant) =>
           buildSessionSnapshot({
@@ -1030,6 +1072,116 @@ function createAdminRoutes({
           })
         )
       );
+
+      res.status(200).json({
+        success: true,
+        items: [centralSender, ...items],
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/sessions/central-sender", async (_req, res, next) => {
+    try {
+      const session = await buildCentralAlertSenderSnapshot({
+        providerSessionRepo,
+        env,
+      });
+
+      res.status(200).json({
+        success: true,
+        session,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/sessions/central-sender/start", async (_req, res, next) => {
+    try {
+      const senderId = getCentralAlertSenderId(env);
+      const liveSession = await channelSessionService.start({
+        channel: "whatsapp-web",
+        restaurantId: senderId,
+      });
+
+      res.status(200).json({
+        success: true,
+        session: liveSession,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/sessions/central-sender/restart", async (_req, res, next) => {
+    try {
+      const senderId = getCentralAlertSenderId(env);
+      const liveSession = await channelSessionService.restart({
+        channel: "whatsapp-web",
+        restaurantId: senderId,
+        reason: "super_admin_restart",
+      });
+
+      res.status(200).json({
+        success: true,
+        session: liveSession,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/sessions/central-sender/disconnect", async (_req, res, next) => {
+    try {
+      const senderId = getCentralAlertSenderId(env);
+      const liveSession = await channelSessionService.disconnect({
+        channel: "whatsapp-web",
+        restaurantId: senderId,
+        reason: "super_admin_disconnect",
+      });
+
+      res.status(200).json({
+        success: true,
+        session: liveSession,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/sessions/central-sender/qr", async (_req, res, next) => {
+    try {
+      const senderId = getCentralAlertSenderId(env);
+      const qr = await channelSessionService.getQr({
+        channel: "whatsapp-web",
+        restaurantId: senderId,
+        includeImage: false,
+      });
+
+      if (!qr) {
+        res.status(404).json({ error: "No active QR is available" });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        qr,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/sessions/central-sender/events", async (req, res, next) => {
+    try {
+      const senderId = getCentralAlertSenderId(env);
+      const limit = Number(req.query.limit) > 0 ? Number(req.query.limit) : 20;
+      const items = await whatsappSessionEventRepo.listRecentSessionEvents({
+        restaurantId: senderId,
+        limit,
+      });
 
       res.status(200).json({
         success: true,

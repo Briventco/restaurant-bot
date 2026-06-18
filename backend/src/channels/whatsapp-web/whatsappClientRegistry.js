@@ -690,18 +690,19 @@ function createWhatsappClientRegistry({
     }
   }
 
-  async function sendMessage({ restaurantId, to, text }) {
-    let entry = clients.get(restaurantId);
+  async function sendMessage({ restaurantId, senderId, to, text }) {
+    const sessionOwnerId = String(senderId || restaurantId || "").trim();
+    let entry = clients.get(sessionOwnerId);
     if (!entry) {
       // Kick off session start in the background so retries can find a ready client.
-      void startSession(restaurantId).catch((err) => {
+      void startSession(sessionOwnerId).catch((err) => {
         logger.warn("Background session start failed", {
-          restaurantId,
+          restaurantId: sessionOwnerId,
           error: err && err.message,
         });
       });
       const notInitialized = new Error(
-        `WhatsApp session for ${restaurantId} is not initialized — session start triggered`
+        `WhatsApp session for ${sessionOwnerId} is not initialized — session start triggered`
       );
       notInitialized.code = "SESSION_NOT_INITIALIZED";
       notInitialized.retryable = true;
@@ -710,7 +711,7 @@ function createWhatsappClientRegistry({
 
     if (!entry.ready) {
       const notReady = new Error(
-        `WhatsApp session for ${restaurantId} is starting up — not ready to send yet`
+        `WhatsApp session for ${sessionOwnerId} is starting up — not ready to send yet`
       );
       notReady.code = "SESSION_NOT_READY";
       notReady.retryable = true;
@@ -750,7 +751,7 @@ function createWhatsappClientRegistry({
 
     if (lastError) {
       logger.warn("WhatsApp send failed for all candidate formats", {
-        restaurantId,
+        restaurantId: sessionOwnerId,
         to,
         attempted: attemptedCandidates,
         finalError: lastError.message,

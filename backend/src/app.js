@@ -355,8 +355,7 @@ function createApp() {
     orderParsingService,
     outboxService,
     conversationSessionRepo,
-    servraOpsRestaurantId: env.SERVRA_OPS_RESTAURANT_ID,
-    servraOpsPhone: env.SERVRA_CENTRAL_ALERT_NUMBERS[0] || "",
+    servraAlertSenderId: env.SERVRA_ALERT_SENDER_ID,
     logger,
   });
 
@@ -383,8 +382,7 @@ function createApp() {
     aiShadowMode: env.AI_SHADOW_MODE,
     aiShadowTimeoutMs: env.AI_SHADOW_TIMEOUT_MS,
     llmParserOnlyMode: env.LLM_PARSER_ONLY_MODE,
-    servraOpsRestaurantId: env.SERVRA_OPS_RESTAURANT_ID,
-    servraOpsPhone: env.SERVRA_CENTRAL_ALERT_NUMBERS[0] || "",
+    servraAlertSenderId: env.SERVRA_ALERT_SENDER_ID,
   });
   const healthAlertService = createHealthAlertService({
     env,
@@ -737,11 +735,45 @@ function createApp() {
       0,
       Number(process.env.WHATSAPP_RESTORE_STAGGER_MS || 8000)
     );
+    const alertSenderId = String(env.SERVRA_ALERT_SENDER_ID || "servra_ops_sender").trim();
     const defaultRestaurantId = String(env.BACKEND_DEFAULT_RESTAURANT_ID || "").trim();
 
     let restoredCount = 0;
     let skippedCount = 0;
     let totalCandidates = 0;
+
+    if (alertSenderId) {
+      try {
+        const storedAlertSenderSession = await providerSessionRepo.getSession(
+          alertSenderId,
+          "whatsapp-web"
+        );
+
+        const storedAlertSenderStatus = String(
+          storedAlertSenderSession &&
+            (storedAlertSenderSession.providerStatus || storedAlertSenderSession.status || "")
+        )
+          .trim()
+          .toLowerCase();
+
+        if (
+          !storedAlertSenderSession ||
+          restorableStatuses.has(storedAlertSenderStatus)
+        ) {
+          await channelSessionService.start({
+            channel: "whatsapp-web",
+            restaurantId: alertSenderId,
+          });
+          restoredCount += 1;
+        }
+      } catch (error) {
+        skippedCount += 1;
+        logger.warn("Failed to auto-start central alert sender on boot", {
+          senderId: alertSenderId,
+          message: error.message,
+        });
+      }
+    }
 
     for (const restaurant of restaurants) {
       const restaurantId = String(

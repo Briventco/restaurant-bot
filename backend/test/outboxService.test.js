@@ -49,6 +49,7 @@ function createInMemoryOutboxRepo() {
         idempotencyHash: payload.idempotencyHash,
         payloadHash: payload.payloadHash,
         restaurantId: payload.restaurantId,
+        senderId: payload.senderId || "",
         channel: payload.channel,
         recipient: payload.recipient,
         text: payload.text,
@@ -234,8 +235,9 @@ function createInMemoryOutboxRepo() {
 
 function buildPayload(overrides = {}) {
   return {
-    restaurantId: "rest-1",
-    channel: "whatsapp-web",
+      restaurantId: "rest-1",
+      senderId: "",
+      channel: "whatsapp-web",
     recipient: "234000000000@c.us",
     text: "Your order has been confirmed",
     messageType: "order_confirmed",
@@ -319,6 +321,7 @@ test("outbox dispatch always uses the message's own restaurantId for delivery", 
   assert.equal(sends.length, 1);
   // restaurantId must be the message's own restaurantId, never overridden by metadata
   assert.equal(sends[0].restaurantId, "rest-1");
+  assert.equal(sends[0].senderId, "");
   assert.equal(sends[0].to, "08099990001");
 });
 

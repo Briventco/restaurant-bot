@@ -16,6 +16,7 @@ function clamp(value, min, max) {
 function normalizePayload(payload = {}) {
   return {
     restaurantId: String(payload.restaurantId || "").trim(),
+    senderId: String(payload.senderId || "").trim(),
     channel: String(payload.channel || "").trim(),
     recipient: String(payload.recipient || payload.to || "").trim(),
     text: String(payload.text || ""),
@@ -60,6 +61,7 @@ function buildFallbackIdempotencyKey(payload) {
 function buildPayloadHash(payload) {
   const source = {
     restaurantId: payload.restaurantId,
+    senderId: payload.senderId,
     channel: payload.channel,
     recipient: payload.recipient,
     text: payload.text,
@@ -116,6 +118,7 @@ function createOutboxService({
       idempotencyHash,
       payloadHash: buildPayloadHash(payload),
       restaurantId: payload.restaurantId,
+      senderId: payload.senderId,
       channel: payload.channel,
       recipient: payload.recipient,
       text: payload.text,
@@ -156,6 +159,7 @@ function createOutboxService({
       const response = await channelGateway.sendMessage({
         channel: claimedMessage.channel,
         restaurantId: claimedMessage.restaurantId,
+        senderId: String(claimedMessage.senderId || "").trim(),
         to: claimedMessage.recipient,
         text: claimedMessage.text,
         metadata: {

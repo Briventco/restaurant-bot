@@ -146,7 +146,7 @@ function createWhatsappRuntimeHttpAdapter({
     }
   }
 
-  async function sendMessage({ restaurantId, to, text, metadata = {} }) {
+  async function sendMessage({ restaurantId, senderId, to, text, metadata = {} }) {
     const payload = await runtimeRequest(
       `/runtime/v1/tenants/${encodeURIComponent(restaurantId)}/outbound/send`,
       {
@@ -160,6 +160,7 @@ function createWhatsappRuntimeHttpAdapter({
           sourceAction: String(metadata.sourceAction || "unknown"),
           sourceRef: String(metadata.sourceRef || ""),
           attempt: Number(metadata.outboxAttempt || 0),
+          senderId: String(senderId || "").trim(),
           metadata: metadata || {},
         },
       }

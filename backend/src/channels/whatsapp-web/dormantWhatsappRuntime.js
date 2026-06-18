@@ -14,9 +14,10 @@ function createDormantWhatsappAdapter({ logger }) {
         "Backend internal WhatsApp runtime is disabled. Use whatsapp-bot as the transport runtime."
       );
     },
-    sendMessage: async ({ restaurantId, to }) => {
+    sendMessage: async ({ restaurantId, senderId, to }) => {
+      const ownerId = String(senderId || restaurantId || "").trim();
       logger.warn("Skipped backend outbound WhatsApp send (runtime disabled)", {
-        restaurantId,
+        restaurantId: ownerId,
         to,
       });
       throw createRuntimeDisabledError(

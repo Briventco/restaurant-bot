@@ -830,42 +830,10 @@ function createInboundMessageService({
   aiShadowMode = false,
   aiShadowTimeoutMs = 700,
   llmParserOnlyMode = false,
-  servraOpsRestaurantId = "",
-  servraOpsPhone = "",
+  servraAlertSenderId = "",
 }) {
-  // Resolve Servra ops restaurant ID once from phone if not explicitly given.
-  let _resolvedOpsId = String(servraOpsRestaurantId || "").trim();
-  let _opsResolvePromise = null;
-
-  async function getOpsRestaurantId() {
-    if (_resolvedOpsId) return _resolvedOpsId;
-    const phone = String(servraOpsPhone || "").trim();
-    if (!phone) return "";
-    if (!_opsResolvePromise) {
-      _opsResolvePromise = (async () => {
-        const digits = phone.replace(/\D/g, "");
-        const candidates = [phone, digits];
-        if (digits.startsWith("234") && digits.length === 13) {
-          candidates.push(`0${digits.slice(3)}`);
-        }
-        for (const candidate of candidates) {
-          try {
-            const r = await restaurantRepo.findRestaurantByWhatsappBinding({ phone: candidate });
-            if (r) {
-              const id = String(r.id || r.restaurantId || "").trim();
-              if (id) {
-                _resolvedOpsId = id;
-                if (logger) logger.info("Resolved Servra ops restaurant from phone", { phone, restaurantId: id });
-                return id;
-              }
-            }
-          } catch (_) {}
-        }
-        if (logger) logger.warn("Could not resolve Servra ops restaurant from phone", { phone });
-        return "";
-      })();
-    }
-    return _opsResolvePromise;
+  function getAlertSenderId() {
+    return String(servraAlertSenderId || "servra_ops_sender").trim() || "servra_ops_sender";
   }
   const menuCooldownByChat = new Map();
   const recentConversationByChat = new Map();
@@ -1442,13 +1410,13 @@ function createInboundMessageService({
     ]);
     const isStaffAlertSender = isRestaurantStaffAlertSender(restaurant, normalized);
 
-    // True when this message arrived on the centralised Servra ops WhatsApp
+    // True when this message arrived on the centralised Servra alert sender
     // session rather than a restaurant's own bot session.
-    const opsRestaurantId = await getOpsRestaurantId();
-    const isServraOpsSession = Boolean(opsRestaurantId) && restaurantId === opsRestaurantId;
+    const alertSenderId = getAlertSenderId();
+    const isServraOpsSession = Boolean(alertSenderId) && restaurantId === alertSenderId;
 
     // The restaurant that owns the order being approved/rejected may differ from
-    // the session's restaurantId (which is the Servra ops account when centralised
+    // the session owner's ID (which is the central alert sender when centralised
     // alerts are enabled). Prefer the orderRestaurantId stored in the session.
     const effectiveOrderRestaurantId =
       isServraOpsSession && existingSession && existingSession.orderRestaurantId

@@ -121,6 +121,7 @@ async function createOutboxMessageIfAbsent(payload) {
       idempotencyHash: payload.idempotencyHash,
       payloadHash: payload.payloadHash,
       restaurantId: payload.restaurantId,
+      senderId: payload.senderId || "",
       channel: payload.channel,
       recipient: payload.recipient,
       text: payload.text,

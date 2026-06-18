@@ -136,7 +136,7 @@ function createWhatsappMetaAdapter({
     }
   }
 
-  async function sendMessage({ restaurantId, to, text }) {
+  async function sendMessage({ restaurantId, senderId, to, text }) {
     const config = await resolveRestaurantConfig(restaurantId);
     if (!config.configured || config.provider !== "meta-whatsapp-cloud-api") {
       throw createMetaHttpError(
@@ -171,6 +171,7 @@ function createWhatsappMetaAdapter({
 
     logger.info("Meta outbound send accepted", {
       restaurantId,
+      senderId: String(senderId || "").trim(),
       to: normalizedTo,
       phoneNumberId: effectivePhoneNumberId,
       messageId:

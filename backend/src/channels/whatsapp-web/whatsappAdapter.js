@@ -33,8 +33,8 @@ function createWhatsappAdapter({
     inboundHandler = handler;
   }
 
-  async function sendMessage({ restaurantId, to, text }) {
-    return clientRegistry.sendMessage({ restaurantId, to, text });
+  async function sendMessage({ restaurantId, senderId, to, text }) {
+    return clientRegistry.sendMessage({ restaurantId, senderId, to, text });
   }
 
   async function getSessionStatus({ restaurantId }) {

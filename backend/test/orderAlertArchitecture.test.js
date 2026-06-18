@@ -52,6 +52,7 @@ function buildOrderServiceDeps({
   restaurantPhone = "",
   orderAlertRecipients = [],
   notifyOnOrder = true,
+  servraAlertSenderId = "servra_ops_sender",
   outboxImpl = null,
 } = {}) {
   const sentAlerts = [];
@@ -155,6 +156,7 @@ function buildOrderServiceDeps({
     orderRepo,
     menuRepo: { listMenuItems: async () => [] },
     orderParsingService: { parseOrder: async () => [] },
+    servraAlertSenderId,
   });
 
   return { orderService, sentAlerts, sessions, orderMessages, logs };
@@ -174,7 +176,7 @@ async function placeOrder(orderService, restaurantId = "rest1") {
 }
 
 describe("restaurant order alert direction", () => {
-  it("sends alert to bot.orderAlertRecipients when configured", async () => {
+  it("sends alert through the central sender while keeping the target restaurant on the outbox", async () => {
     const deps = buildOrderServiceDeps({
       restaurantPhone: "08099990000",
       orderAlertRecipients: ["08099990001"],
@@ -184,16 +186,11 @@ describe("restaurant order alert direction", () => {
 
     assert.equal(deps.sentAlerts.length, 1);
     assert.equal(deps.sentAlerts[0].recipient, "08099990001");
-    // alert is sent through the restaurant's own session, never a sender override
     assert.equal(deps.sentAlerts[0].restaurantId, "rest1");
-    // no senderRestaurantId override in metadata
-    assert.ok(
-      !deps.sentAlerts[0].metadata.senderRestaurantId,
-      "senderRestaurantId must not be injected into metadata"
-    );
+    assert.equal(deps.sentAlerts[0].senderId, "servra_ops_sender");
   });
 
-  it("falls back to restaurant.phone when orderAlertRecipients is empty", async () => {
+  it("falls back to restaurant.phone for the recipient while still sending centrally", async () => {
     const deps = buildOrderServiceDeps({
       restaurantPhone: "08099990002",
       orderAlertRecipients: [],
@@ -204,9 +201,10 @@ describe("restaurant order alert direction", () => {
     assert.equal(deps.sentAlerts.length, 1);
     assert.equal(deps.sentAlerts[0].recipient, "08099990002");
     assert.equal(deps.sentAlerts[0].restaurantId, "rest1");
+    assert.equal(deps.sentAlerts[0].senderId, "servra_ops_sender");
   });
 
-  it("routes each restaurant's alert through its own session independently", async () => {
+  it("routes each restaurant's alert through the same central session", async () => {
     const deps = buildOrderServiceDeps({
       restaurantPhone: "08055550001",
       orderAlertRecipients: ["08055550001"],
@@ -220,11 +218,13 @@ describe("restaurant order alert direction", () => {
     assert.equal(deps.sentAlerts.length, 2);
     assert.equal(deps.sentAlerts[0].restaurantId, "rest1");
     assert.equal(deps.sentAlerts[1].restaurantId, "tacos_joint");
+    assert.equal(deps.sentAlerts[0].senderId, "servra_ops_sender");
+    assert.equal(deps.sentAlerts[1].senderId, "servra_ops_sender");
     assert.equal(deps.sentAlerts[0].recipient, "08055550001");
     assert.equal(deps.sentAlerts[1].recipient, "08055550001");
   });
 
-  it("creates a staff action session for the alert recipient", async () => {
+  it("creates a staff action session under the central ops account", async () => {
     const deps = buildOrderServiceDeps({
       restaurantPhone: "08099990001",
       orderAlertRecipients: ["08099990001"],
@@ -236,6 +236,10 @@ describe("restaurant order alert direction", () => {
     assert.ok(
       sessionRecipients.some((r) => r.includes("08099990001")),
       "alert recipient should get a staff action session"
+    );
+    assert.ok(
+      deps.sessions.every((s) => s.restaurantId === "servra_ops_sender"),
+      "staff action sessions should be stored under the central sender session owner"
     );
   });
 
