@@ -189,6 +189,8 @@ function createRestaurantOnboardingService({
     adminDisplayName,
     restaurantId,
     phone = "",
+    orderAlertRecipient = "",
+    orderAlertRecipients = [],
     address = "",
     timezone = "Africa/Lagos",
     openingHours = "08:00",
@@ -204,7 +206,19 @@ function createRestaurantOnboardingService({
     const normalizedRestaurantName = String(restaurantName || "").trim();
     const normalizedAdminEmail = String(adminEmail || "").trim().toLowerCase();
     const normalizedAdminPassword = String(adminPassword || "");
-    const normalizedProfilePhone = String(phone || alertPhone || "").trim();
+    const normalizedProfilePhone = String(phone || "").trim();
+    const normalizedOrderAlertRecipients = Array.from(
+      new Set(
+        []
+          .concat(
+            Array.isArray(orderAlertRecipients) ? orderAlertRecipients : [],
+            orderAlertRecipient,
+            alertPhone
+          )
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )
+    );
     const resolvedRestaurantId = await buildUniqueRestaurantId(
       restaurantId,
       normalizedRestaurantName,
@@ -246,6 +260,7 @@ function createRestaurantOnboardingService({
           enabled: true,
           autoConfirm: false,
           notifyOnOrder: true,
+          orderAlertRecipients: normalizedOrderAlertRecipients,
         },
         onboarding: createInitialOnboardingState({
           source,

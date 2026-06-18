@@ -23,6 +23,9 @@ function serializeSettings(restaurant) {
           .map((value) => String(value || "").trim())
           .filter(Boolean)
       : [],
+    orderAlertRecipient: Array.isArray(bot.orderAlertRecipients) && bot.orderAlertRecipients.length
+      ? String(bot.orderAlertRecipients[0] || "").trim()
+      : "",
     paymentAlertRecipients: Array.isArray(bot.paymentAlertRecipients)
       ? bot.paymentAlertRecipients
           .map((value) => String(value || "").trim())
@@ -72,6 +75,7 @@ function createSettingsRoutes({
       acceptOrders: { type: "boolean", required: false },
       autoConfirm: { type: "boolean", required: false },
       notifyOnOrder: { type: "boolean", required: false },
+      orderAlertRecipient: { type: "string", required: false },
       customWelcomeMessage: {
         type: "string",
         required: false,
@@ -124,6 +128,25 @@ function createSettingsRoutes({
       try {
         const currentRestaurant = req.restaurant || {};
         const currentBot = currentRestaurant.bot || {};
+        const hasOrderAlertRecipient = Object.prototype.hasOwnProperty.call(
+          req.body,
+          "orderAlertRecipient"
+        );
+        const normalizedOrderAlertRecipient =
+          typeof req.body.orderAlertRecipient === "string"
+            ? req.body.orderAlertRecipient.trim()
+            : "";
+        const nextOrderAlertRecipients = hasOrderAlertRecipient
+          ? normalizedOrderAlertRecipient
+            ? [normalizedOrderAlertRecipient]
+            : []
+          : Array.isArray(req.body.orderAlertRecipients)
+            ? req.body.orderAlertRecipients
+                .map((value) => String(value || "").trim())
+                .filter(Boolean)
+            : Array.isArray(currentBot.orderAlertRecipients)
+              ? currentBot.orderAlertRecipients
+              : [];
 
         const restaurant = await restaurantRepo.upsertRestaurant(req.restaurantId, {
           name: req.body.name.trim(),
@@ -161,11 +184,7 @@ function createSettingsRoutes({
               typeof req.body.customWelcomeMessage === "string"
                 ? req.body.customWelcomeMessage.trim()
                 : String(currentBot.customWelcomeMessage || "").trim(),
-            orderAlertRecipients: Array.isArray(req.body.orderAlertRecipients)
-              ? req.body.orderAlertRecipients
-                  .map((value) => String(value || "").trim())
-                  .filter(Boolean)
-              : [],
+            orderAlertRecipients: nextOrderAlertRecipients,
             paymentAlertRecipients: Array.isArray(req.body.paymentAlertRecipients)
               ? req.body.paymentAlertRecipients
                   .map((value) => String(value || "").trim())

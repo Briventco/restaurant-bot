@@ -1639,6 +1639,8 @@ function createAdminRoutes({
       adminDisplayName: { type: "string", required: false },
       restaurantId: { type: "string", required: false },
       phone: { type: "string", required: false },
+      alertPhone: { type: "string", required: false },
+      orderAlertRecipient: { type: "string", required: false },
       address: { type: "string", required: false },
       timezone: { type: "string", required: false },
       openingHours: { type: "string", required: false },
@@ -1654,6 +1656,8 @@ function createAdminRoutes({
           adminDisplayName: req.body.adminDisplayName,
           restaurantId: req.body.restaurantId,
           phone: req.body.phone,
+          alertPhone: req.body.alertPhone,
+          orderAlertRecipient: req.body.orderAlertRecipient,
           address: req.body.address,
           timezone: req.body.timezone,
           openingHours: req.body.openingHours,
@@ -1966,6 +1970,8 @@ function createAdminRoutes({
       adminPassword:     { type: "string", required: true,  minLength: 6 },
       adminDisplayName:  { type: "string", required: true,  minLength: 2 },
       phone:             { type: "string", required: false },
+      alertPhone:        { type: "string", required: false },
+      orderAlertRecipient: { type: "string", required: false },
       address:           { type: "string", required: false },
     }),
     async (req, res, next) => {
@@ -1976,12 +1982,13 @@ function createAdminRoutes({
           adminPassword,
           adminDisplayName,
           phone        = "",
+          alertPhone   = "",
+          orderAlertRecipient = "",
           address      = "",
           timezone     = "Africa/Lagos",
           openingHours = "08:00",
           closingHours = "22:00",
           currency     = "NGN",
-          alertPhone   = "",
           menuItems    = [],
           deliveryZones = [],
         } = req.body;
@@ -1994,6 +2001,8 @@ function createAdminRoutes({
             adminPassword,
             adminDisplayName,
             phone,
+            alertPhone,
+            orderAlertRecipient,
             address,
             timezone,
             openingHours,
@@ -2002,7 +2011,6 @@ function createAdminRoutes({
             createdBy:          req.user ? req.user.uid : "super_admin",
             verificationStatus: "approved",
             currency,
-            alertPhone,
           });
 
         const restaurantId = restaurant.id;
