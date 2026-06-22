@@ -59,3 +59,70 @@ test("buildChecklistProgress no longer requires subscription", () => {
     "/payments"
   );
 });
+
+
+test("createRestaurantWorkspace sends activation link instead of a password", async () => {
+  const createdUsers = [];
+  const sentEmails = [];
+
+  const { createRestaurantOnboardingService } = require("../src/domain/services/restaurantOnboardingService");
+
+  const service = createRestaurantOnboardingService({
+    admin: {
+      auth: () => ({
+        createUser: async (payload) => {
+          createdUsers.push(payload);
+          return { uid: "auth_uid_123" };
+        },
+        deleteUser: async () => {},
+      }),
+    },
+    restaurantRepo: {
+      getRestaurantById: async () => null,
+      upsertRestaurant: async (_restaurantId, data) => ({ id: "lead_mall", onboarding: data.onboarding || {}, ...data }),
+    },
+    userRepo: {
+      upsertUser: async (uid, data) => ({ uid, ...data }),
+    },
+    menuRepo: {
+      createMenuItem: async () => {},
+      listMenuItems: async () => [],
+    },
+    deliveryZoneRepo: {
+      listDeliveryZones: async () => [],
+    },
+    providerSessionRepo: {
+      getSession: async () => null,
+    },
+    resolveWhatsappChannelStatus: () => ({ configured: false }),
+    env: {
+      PORTAL_APP_URL: "https://portal.example.com",
+    },
+    restaurantHealthService: {
+      evaluateAndPersistRestaurantHealth: async () => {},
+    },
+    sendRestaurantActivationEmail: async (email) => {
+      sentEmails.push({ email });
+    },
+  });
+
+  const created = await service.createRestaurantWorkspace({
+    restaurantName: "Lead Mall",
+    adminEmail: "owner@example.com",
+    adminDisplayName: "Lead Mall Owner",
+    sendActivationEmail: true,
+    createdBy: "super_admin_1",
+    source: "admin_onboarding",
+  });
+
+  assert.equal(createdUsers.length, 1);
+  assert.deepEqual(createdUsers[0], {
+    email: "owner@example.com",
+    displayName: "Lead Mall Owner",
+    disabled: false,
+  });
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].email, "owner@example.com");
+  assert.equal(created.portalAccess.activationLink, undefined);
+  assert.equal(created.portalAccess.activationEmailSent, true);
+});

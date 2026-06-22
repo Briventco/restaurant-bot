@@ -117,6 +117,17 @@ const env = {
   META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN || "",
   META_WEBHOOK_DEFAULT_RESTAURANT_ID:
     process.env.META_WEBHOOK_DEFAULT_RESTAURANT_ID || "",
+  FIREBASE_WEB_API_KEY:
+    process.env.FIREBASE_WEB_API_KEY ||
+    process.env.FIREBASE_API_KEY ||
+    process.env.VITE_FIREBASE_API_KEY ||
+    "",
+  PORTAL_APP_URL:
+    process.env.PORTAL_APP_URL ||
+    process.env.APP_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.VITE_APP_URL ||
+    "",
   OUTBOX_INLINE_SEND_ENABLED: toBoolean(
     process.env.OUTBOX_INLINE_SEND_ENABLED,
     true

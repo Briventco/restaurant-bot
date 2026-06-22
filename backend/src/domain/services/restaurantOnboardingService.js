@@ -55,6 +55,19 @@ function createInitialOnboardingState({ source = "self_serve_signup", actorId = 
   };
 }
 
+function buildPortalActivationContinueUrl(env = {}) {
+  const baseUrl = String((env && env.PORTAL_APP_URL) || "").trim().replace(/\/$/, "");
+  if (!baseUrl) {
+    return "";
+  }
+
+  try {
+    return new URL("/reset-password", baseUrl).toString();
+  } catch (_error) {
+    return "";
+  }
+}
+
 function normalizeOnboardingState(onboarding = {}) {
   const safeOnboarding =
     onboarding && typeof onboarding === "object" ? onboarding : {};
@@ -181,11 +194,12 @@ function createRestaurantOnboardingService({
   resolveWhatsappChannelStatus,
   env,
   restaurantHealthService,
+  sendRestaurantActivationEmail,
 }) {
   async function createRestaurantWorkspace({
     restaurantName,
     adminEmail,
-    adminPassword,
+    adminPassword = "",
     adminDisplayName,
     restaurantId,
     phone = "",
@@ -198,6 +212,7 @@ function createRestaurantOnboardingService({
     seedSampleMenu = false,
     createdBy = "",
     source = "self_serve_signup",
+    sendActivationEmail = false,
     // Admin-onboarding overrides
     verificationStatus = "pending",
     currency = "NGN",
@@ -225,17 +240,33 @@ function createRestaurantOnboardingService({
       restaurantRepo
     );
     const resolvedAdminDisplayName =
-      String(adminDisplayName || "").trim() || `${normalizedRestaurantName} Admin`;
+      String(adminDisplayName || "").trim() || (normalizedRestaurantName + " Admin");
     const actorId = String(createdBy || source || "system").trim();
+    const inviteMode = Boolean(sendActivationEmail) || !normalizedAdminPassword;
+    const shouldSendActivationEmail = Boolean(sendActivationEmail) || inviteMode;
+    const now = new Date().toISOString();
+    const portalAccess = {
+      mode: inviteMode ? "activation_link" : "password",
+      status: inviteMode ? "awaiting_activation" : "active",
+      inviteeEmail: normalizedAdminEmail,
+      invitedAt: now,
+      invitedBy: actorId,
+    };
 
     let authUser;
     try {
-      authUser = await admin.auth().createUser({
-        email: normalizedAdminEmail,
-        password: normalizedAdminPassword,
-        displayName: resolvedAdminDisplayName,
-        disabled: false,
-      });
+      authUser = inviteMode
+        ? await admin.auth().createUser({
+            email: normalizedAdminEmail,
+            displayName: resolvedAdminDisplayName,
+            disabled: false,
+          })
+        : await admin.auth().createUser({
+            email: normalizedAdminEmail,
+            password: normalizedAdminPassword,
+            displayName: resolvedAdminDisplayName,
+            disabled: false,
+          });
     } catch (error) {
       if (error && error.code === "auth/email-already-exists") {
         const conflict = new Error("A portal user with that admin email already exists.");
@@ -267,16 +298,18 @@ function createRestaurantOnboardingService({
           actorId,
         }),
         verificationStatus: String(verificationStatus || "pending"),
-        verificationSubmittedAt: new Date().toISOString(),
+        verificationSubmittedAt: now,
         verificationRejectionReason: "",
         activation: {
           state: "draft",
-          note: source === "admin_onboarding"
-            ? "Restaurant created by super admin — auto-approved."
-            : "Restaurant created and waiting for configuration.",
+          note:
+            source === "admin_onboarding"
+              ? "Restaurant created by super admin - awaiting portal activation."
+              : "Restaurant created and waiting for configuration.",
           updatedBy: actorId,
-          updatedAt: new Date().toISOString(),
+          updatedAt: now,
         },
+        portalAccess,
         createdBy: actorId,
         whatsapp: {
           configured: false,
@@ -306,6 +339,41 @@ function createRestaurantOnboardingService({
         seededMenuCount = sampleMenu.length;
       }
 
+      let activationEmailSent = false;
+      let activationEmailError = "";
+
+      if (inviteMode) {
+        try {
+          await sendRestaurantActivationEmail(normalizedAdminEmail);
+          activationEmailSent = true;
+          portalAccess.status = "activation_email_sent";
+          await restaurantRepo.upsertRestaurant(resolvedRestaurantId, {
+            portalAccess: {
+              ...portalAccess,
+              status: "activation_email_sent",
+              emailedAt: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          activationEmailError = String(error.message || "Unable to send activation email.");
+          portalAccess.status = "activation_email_failed";
+          portalAccess.lastError = activationEmailError;
+          await restaurantRepo.upsertRestaurant(resolvedRestaurantId, {
+            portalAccess: {
+              ...portalAccess,
+              status: "activation_email_failed",
+              lastError: activationEmailError,
+            },
+          });
+          try {
+            await admin.auth().deleteUser(authUser.uid);
+          } catch (_cleanupError) {
+            // Best effort cleanup for partially created auth users.
+          }
+          throw error;
+        }
+      }
+
       if (restaurantHealthService) {
         await restaurantHealthService.evaluateAndPersistRestaurantHealth({
           restaurantId: resolvedRestaurantId,
@@ -325,6 +393,11 @@ function createRestaurantOnboardingService({
         onboarding: {
           ...normalizeOnboardingState(restaurant.onboarding),
           seededMenuCount,
+        },
+        portalAccess: {
+          ...portalAccess,
+          activationEmailSent,
+          activationEmailError,
         },
       };
     } catch (error) {

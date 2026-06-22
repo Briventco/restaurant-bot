@@ -1635,7 +1635,7 @@ function createAdminRoutes({
     validateBody({
       restaurantName: { type: "string", required: true, minLength: 2 },
       adminEmail: { type: "string", required: true, minLength: 5 },
-      adminPassword: { type: "string", required: true, minLength: 6 },
+      adminPassword: { type: "string", required: false, minLength: 6 },
       adminDisplayName: { type: "string", required: false },
       restaurantId: { type: "string", required: false },
       phone: { type: "string", required: false },
@@ -1967,7 +1967,7 @@ function createAdminRoutes({
     validateBody({
       restaurantName:    { type: "string", required: true,  minLength: 2 },
       adminEmail:        { type: "string", required: true,  minLength: 5 },
-      adminPassword:     { type: "string", required: true,  minLength: 6 },
+      adminPassword:     { type: "string", required: false, minLength: 6 },
       adminDisplayName:  { type: "string", required: true,  minLength: 2 },
       phone:             { type: "string", required: false },
       alertPhone:        { type: "string", required: false },
@@ -2011,6 +2011,7 @@ function createAdminRoutes({
             createdBy:          req.user ? req.user.uid : "super_admin",
             verificationStatus: "approved",
             currency,
+            sendActivationEmail: true,
           });
 
         const restaurantId = restaurant.id;

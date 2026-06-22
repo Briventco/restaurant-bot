@@ -62,6 +62,7 @@ const {
   createHealthAlertService,
 } = require("./domain/services/healthAlertService");
 const { createAuthService } = require("./auth/authService");
+const { sendRestaurantActivationEmail } = require("./domain/services/emailService");
 
 const { ProviderRegistry } = require("./transport/providers/providerRegistry");
 const { createChannelGateway } = require("./transport/providers/channelGateway");
@@ -418,6 +419,7 @@ function createApp() {
     resolveWhatsappChannelStatus,
     env,
     restaurantHealthService,
+    sendRestaurantActivationEmail,
   });
 
   if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
