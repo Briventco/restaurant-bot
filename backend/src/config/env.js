@@ -216,6 +216,24 @@ const env = {
     process.env.SERVRA_CENTRAL_ALERT_NUMBERS,
     []
   ),
+  RESTAURANT_TRIAL_DAYS: toNumber(process.env.RESTAURANT_TRIAL_DAYS, 15),
+  RESTAURANT_PAID_PERIOD_DAYS: toNumber(process.env.RESTAURANT_PAID_PERIOD_DAYS, 30),
+  SERVRA_BILLING_BANK_NAME: String(process.env.SERVRA_BILLING_BANK_NAME || "").trim(),
+  SERVRA_BILLING_ACCOUNT_NAME: String(process.env.SERVRA_BILLING_ACCOUNT_NAME || "").trim(),
+  SERVRA_BILLING_ACCOUNT_NUMBER: String(process.env.SERVRA_BILLING_ACCOUNT_NUMBER || "").trim(),
+  SERVRA_BILLING_AMOUNT: toNumber(process.env.SERVRA_BILLING_AMOUNT, 0),
+  SERVRA_BILLING_CURRENCY: String(process.env.SERVRA_BILLING_CURRENCY || "NGN").trim(),
+  SERVRA_BILLING_CONTACT_EMAIL: String(
+    process.env.SERVRA_BILLING_CONTACT_EMAIL || "hello@servra.io"
+  ).trim(),
+  SMTP_HOST: String(process.env.SMTP_HOST || "").trim(),
+  SMTP_PORT: toNumber(process.env.SMTP_PORT, 587),
+  SMTP_SECURE: toBoolean(process.env.SMTP_SECURE, false),
+  SMTP_USER: String(process.env.SMTP_USER || "").trim(),
+  SMTP_PASS: String(process.env.SMTP_PASS || "").trim(),
+  SMTP_FROM_EMAIL: String(process.env.SMTP_FROM_EMAIL || "hello@servra.io").trim(),
+  SMTP_FROM_NAME: String(process.env.SMTP_FROM_NAME || "Servra").trim(),
+  SMTP_REPLY_TO: String(process.env.SMTP_REPLY_TO || "hello@servra.io").trim(),
 };
 
 module.exports = {

@@ -344,6 +344,7 @@ function createAdminRoutes({
   env,
   subscriptionPlanRepo,
   restaurantSubscriptionRepo,
+  restaurantBillingService,
 }) {
   const router = Router();
   const requireSuperAdmin = requireRole("super_admin");
@@ -2011,7 +2012,7 @@ function createAdminRoutes({
             createdBy:          req.user ? req.user.uid : "super_admin",
             verificationStatus: "approved",
             currency,
-            sendActivationEmail: true,
+            sendActivationEmail: !String(adminPassword || "").trim(),
           });
 
         const restaurantId = restaurant.id;
@@ -2075,6 +2076,76 @@ function createAdminRoutes({
         });
       } catch (error) {
         console.error("[admin/onboard] failed", { message: error.message });
+        next(error);
+      }
+    }
+  );
+
+  // ── Platform billing approvals ──
+
+  router.get("/billing/pending", async (_req, res, next) => {
+    try {
+      const pending = await restaurantBillingService.listPendingApprovals();
+      res.status(200).json({
+        success: true,
+        pending,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/billing/restaurants/:restaurantId", async (req, res, next) => {
+    try {
+      const billing = await restaurantBillingService.getBillingStatus(req.params.restaurantId);
+      res.status(200).json({
+        success: true,
+        ...billing,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post(
+    "/billing/restaurants/:restaurantId/approve",
+    validateBody({
+      note: { type: "string", required: false },
+    }),
+    async (req, res, next) => {
+      try {
+        const billing = await restaurantBillingService.approvePayment({
+          restaurantId: req.params.restaurantId,
+          approvedBy: req.user ? req.user.uid : "super_admin",
+          note: req.body.note || "",
+        });
+        res.status(200).json({
+          success: true,
+          billing,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/billing/restaurants/:restaurantId/reject",
+    validateBody({
+      reason: { type: "string", required: false },
+    }),
+    async (req, res, next) => {
+      try {
+        const billing = await restaurantBillingService.rejectPayment({
+          restaurantId: req.params.restaurantId,
+          rejectedBy: req.user ? req.user.uid : "super_admin",
+          reason: req.body.reason || "",
+        });
+        res.status(200).json({
+          success: true,
+          billing,
+        });
+      } catch (error) {
         next(error);
       }
     }

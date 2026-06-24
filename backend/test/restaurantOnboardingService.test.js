@@ -101,8 +101,8 @@ test("createRestaurantWorkspace sends activation link instead of a password", as
     restaurantHealthService: {
       evaluateAndPersistRestaurantHealth: async () => {},
     },
-    sendRestaurantActivationEmail: async (email) => {
-      sentEmails.push({ email });
+    sendRestaurantActivationEmail: async (payload) => {
+      sentEmails.push(payload);
     },
   });
 
@@ -123,6 +123,8 @@ test("createRestaurantWorkspace sends activation link instead of a password", as
   });
   assert.equal(sentEmails.length, 1);
   assert.equal(sentEmails[0].email, "owner@example.com");
+  assert.equal(sentEmails[0].displayName, "Lead Mall Owner");
+  assert.equal(sentEmails[0].restaurantName, "Lead Mall");
   assert.equal(created.portalAccess.activationLink, undefined);
   assert.equal(created.portalAccess.activationEmailSent, true);
 });

@@ -62,7 +62,8 @@ const {
   createHealthAlertService,
 } = require("./domain/services/healthAlertService");
 const { createAuthService } = require("./auth/authService");
-const { sendRestaurantActivationEmail } = require("./domain/services/emailService");
+const { createEmailService } = require("./domain/services/emailService");
+const { createRestaurantBillingService } = require("./domain/services/restaurantBillingService");
 
 const { ProviderRegistry } = require("./transport/providers/providerRegistry");
 const { createChannelGateway } = require("./transport/providers/channelGateway");
@@ -409,6 +410,7 @@ function createApp() {
     env,
     logger,
   });
+  const emailService = createEmailService({ admin, env });
   const restaurantOnboardingService = createRestaurantOnboardingService({
     admin,
     restaurantRepo,
@@ -419,7 +421,11 @@ function createApp() {
     resolveWhatsappChannelStatus,
     env,
     restaurantHealthService,
-    sendRestaurantActivationEmail,
+    sendRestaurantActivationEmail: emailService.sendRestaurantActivationEmail,
+  });
+  const restaurantBillingService = createRestaurantBillingService({
+    restaurantRepo,
+    env,
   });
 
   if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
@@ -520,6 +526,7 @@ function createApp() {
       env,
       subscriptionPlanRepo,
       restaurantSubscriptionRepo,
+      restaurantBillingService,
     })
   );
   // Unversioned aliases for deployment probes and simple uptime checks.
@@ -549,6 +556,7 @@ function createApp() {
       providerSessionRepo,
       restaurantOnboardingService,
       restaurantHealthService,
+      restaurantBillingService,
       env,
       subscriptionPlanRepo,
       restaurantSubscriptionRepo,

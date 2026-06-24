@@ -29,6 +29,7 @@ const { createRuleBasedRouter } = require("./ruleBasedRouter");
 const { createGuidedSessionRouter } = require("./guidedSessionRouter");
 const { createAiOrchestrator } = require("./aiOrchestrator");
 const { buildShortOrderCode, isShortOrderCode } = require("../utils/orderReference");
+const { getBotAccess } = require("./restaurantBillingService");
 
 const FLOW_STATES = {
   AWAITING_ITEM: "awaiting_item",
@@ -1414,6 +1415,36 @@ function createInboundMessageService({
     // session rather than a restaurant's own bot session.
     const alertSenderId = getAlertSenderId();
     const isServraOpsSession = Boolean(alertSenderId) && restaurantId === alertSenderId;
+
+    if (!isStaffAlertSender && !isServraOpsSession && restaurant) {
+      const billingAccess = getBotAccess(restaurant);
+      if (!billingAccess.allowed) {
+        const billingChatKey = buildChatKey({
+          restaurantId,
+          channel: normalized.channel,
+          channelCustomerId: normalized.channelCustomerId,
+        });
+        const billingCooldownKey = `${billingChatKey}:billing_paused`;
+        const lastBillingReplyAt = menuCooldownByChat.get(billingCooldownKey) || 0;
+        const billingCooldownMs = 30 * 60 * 1000;
+
+        if (Date.now() - lastBillingReplyAt >= billingCooldownMs) {
+          menuCooldownByChat.set(billingCooldownKey, Date.now());
+          return {
+            handled: true,
+            shouldReply: true,
+            type: "billing_paused",
+            replyText: billingAccess.message,
+          };
+        }
+
+        return {
+          handled: true,
+          shouldReply: false,
+          type: "billing_paused_silent",
+        };
+      }
+    }
 
     // The restaurant that owns the order being approved/rejected may differ from
     // the session owner's ID (which is the central alert sender when centralised

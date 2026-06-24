@@ -20,6 +20,7 @@ function createRestaurantRoutes({
   providerSessionRepo,
   restaurantOnboardingService,
   restaurantHealthService,
+  restaurantBillingService,
   env,
   subscriptionPlanRepo,
   restaurantSubscriptionRepo,
@@ -446,6 +447,43 @@ function createRestaurantRoutes({
   );
 
   // ── Subscription Routes for Restaurant Admins ──
+
+  router.get(
+    "/billing",
+    requireApiKey(["restaurants.read"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const billing = await restaurantBillingService.getBillingStatus(req.restaurantId);
+        res.status(200).json({
+          success: true,
+          ...billing,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/billing/report-payment",
+    requireApiKey(["restaurants.write"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const billing = await restaurantBillingService.reportPayment({
+          restaurantId: req.restaurantId,
+          reportedBy: req.user ? req.user.uid : "",
+        });
+        res.status(200).json({
+          success: true,
+          billing,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
 
   // List available subscription plans
   router.get(

@@ -1,4 +1,5 @@
 const { ROLES, getDefaultPermissionsForRole } = require("../../auth/permissions");
+const { createInitialBillingState } = require("./restaurantBillingService");
 
 function slugifyRestaurantId(value) {
   return String(value || "")
@@ -285,6 +286,12 @@ function createRestaurantOnboardingService({
         timezone: String(timezone || "Africa/Lagos").trim(),
         currency: String(currency || "NGN").trim(),
         plan: null,
+        billing: createInitialBillingState({
+          trialDays:
+            Number(env && env.RESTAURANT_TRIAL_DAYS) > 0
+              ? Number(env.RESTAURANT_TRIAL_DAYS)
+              : 15,
+        }),
         openingHours: String(openingHours || "08:00").trim(),
         closingHours: String(closingHours || "22:00").trim(),
         bot: {
@@ -344,7 +351,11 @@ function createRestaurantOnboardingService({
 
       if (inviteMode) {
         try {
-          await sendRestaurantActivationEmail(normalizedAdminEmail);
+          await sendRestaurantActivationEmail({
+            email: normalizedAdminEmail,
+            displayName: resolvedAdminDisplayName,
+            restaurantName: normalizedRestaurantName,
+          });
           activationEmailSent = true;
           portalAccess.status = "activation_email_sent";
           await restaurantRepo.upsertRestaurant(resolvedRestaurantId, {
