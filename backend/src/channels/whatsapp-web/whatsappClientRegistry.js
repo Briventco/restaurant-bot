@@ -204,30 +204,44 @@ function buildRecipientCandidates(to) {
     return [];
   }
 
-  const candidates = new Set();
+  const candidates = [];
+  const seen = new Set();
+  const add = (value) => {
+    const normalized = String(value || "").trim();
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      candidates.push(normalized);
+    }
+  };
+
   const digits = raw.split("@")[0].replace(/\D/g, "");
+  const intl = digits ? toInternationalDigits(digits) : null;
 
-  // Always try the normalised form first
-  candidates.add(normalizeOutboundRecipient(raw));
-
+  // Prefer @c.us for outbound — whatsapp-web.js sendMessage is more reliable with it.
   if (digits) {
-    candidates.add(`${digits}@c.us`);
-    candidates.add(`${digits}@lid`);
-
-    // Add international format variant so local numbers (e.g. 08XXXXXXXXX)
-    // resolve to the correct WhatsApp contact ID (2348XXXXXXXXX@c.us).
-    const intl = toInternationalDigits(digits);
+    add(`${digits}@c.us`);
     if (intl) {
-      candidates.add(`${intl}@c.us`);
-      candidates.add(`${intl}@lid`);
+      add(`${intl}@c.us`);
     }
   }
 
-  if (raw.includes("@")) {
-    candidates.add(raw);
+  if (raw.includes("@lid")) {
+    add(raw);
   }
 
-  return Array.from(candidates).filter(Boolean);
+  if (digits) {
+    add(`${digits}@lid`);
+    if (intl) {
+      add(`${intl}@lid`);
+    }
+  }
+
+  add(normalizeOutboundRecipient(raw));
+  if (raw.includes("@") && !raw.includes("@lid")) {
+    add(raw);
+  }
+
+  return candidates.filter(Boolean);
 }
 
 function resolveSessionDataPath() {
@@ -248,6 +262,17 @@ function isBrowserAlreadyRunningError(error) {
     message.includes("browser is already running for") ||
     message.includes("profile appears to be in use by another chromium process") ||
     message.includes("process_singleton_posix")
+  );
+}
+
+function isStaleWhatsappClientError(error) {
+  const message = String(error && error.message ? error.message : "").toLowerCase();
+  return (
+    message.includes("getchat") ||
+    message.includes("wwwebjs") ||
+    message.includes("cannot read properties of undefined") ||
+    message.includes("execution context was destroyed") ||
+    message.includes("session closed")
   );
 }
 
@@ -301,6 +326,36 @@ function createWhatsappClientRegistry({
 
   function removeClient(restaurantId) {
     clients.delete(restaurantId);
+  }
+
+  async function recoverStaleSession(restaurantId, reason) {
+    const entry = clients.get(restaurantId);
+    logger.warn("WhatsApp client stale; scheduling session recovery", {
+      restaurantId,
+      reason,
+    });
+
+    if (entry) {
+      try {
+        await entry.client.destroy();
+      } catch (_error) {
+        // Best-effort cleanup before restart.
+      }
+      removeClient(restaurantId);
+    }
+
+    await setSessionState(restaurantId, {
+      status: "disconnected",
+      qrAvailable: false,
+      lastError: reason || "client_stale",
+    });
+
+    void startSession(restaurantId).catch((err) => {
+      logger.warn("Session recovery start failed", {
+        restaurantId,
+        error: err && err.message,
+      });
+    });
   }
 
   async function setSessionState(restaurantId, patch) {
@@ -729,6 +784,17 @@ function createWhatsappClientRegistry({
       } catch (error) {
         const rawMessage = String(error && error.message ? error.message : "");
         attemptedCandidates.push({ candidate, error: rawMessage || "(empty)" });
+
+        if (isStaleWhatsappClientError(error)) {
+          await recoverStaleSession(sessionOwnerId, rawMessage || "client_stale");
+          const stale = new Error(
+            `WhatsApp session for ${sessionOwnerId} became stale during send — recovery triggered`
+          );
+          stale.code = "SESSION_NOT_READY";
+          stale.retryable = true;
+          throw stale;
+        }
+
         const isFormatMismatch =
           rawMessage === "t" ||
           rawMessage === "" ||
@@ -898,4 +964,6 @@ function createWhatsappClientRegistry({
 module.exports = {
   createWhatsappClientRegistry,
   normalizeOutboundRecipient,
+  buildRecipientCandidates,
+  isStaleWhatsappClientError,
 };
