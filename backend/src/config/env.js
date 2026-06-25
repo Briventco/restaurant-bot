@@ -234,6 +234,7 @@ const env = {
   SMTP_FROM_EMAIL: String(process.env.SMTP_FROM_EMAIL || "hello@servra.io").trim(),
   SMTP_FROM_NAME: String(process.env.SMTP_FROM_NAME || "Servra").trim(),
   SMTP_REPLY_TO: String(process.env.SMTP_REPLY_TO || "hello@servra.io").trim(),
+  RESEND_API_KEY: String(process.env.RESEND_API_KEY || "").trim(),
 };
 
 module.exports = {

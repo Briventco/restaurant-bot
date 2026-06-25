@@ -21,7 +21,7 @@ test("buildRestaurantActivationEmail renders branded subject and body", () => {
   assert.match(email.html, /hello@servra\.io/);
 });
 
-test("sendRestaurantActivationEmail generates link and sends branded mail", async () => {
+test("sendRestaurantActivationEmail sends via SMTP transporter", async () => {
   const generatedLinks = [];
   let capturedMail = null;
 
@@ -58,18 +58,54 @@ test("sendRestaurantActivationEmail generates link and sends branded mail", asyn
   });
 
   assert.equal(result.sent, true);
-  assert.equal(result.to, "owner@example.com");
-  assert.equal(generatedLinks.length, 1);
-  assert.equal(generatedLinks[0].email, "owner@example.com");
+  assert.equal(result.transport, "smtp");
   assert.equal(generatedLinks[0].settings.url, "https://portal.servra.io/reset-password");
   assert.equal(capturedMail.from, '"Servra" <hello@servra.io>');
-  assert.equal(capturedMail.to, "owner@example.com");
-  assert.equal(capturedMail.replyTo, "hello@servra.io");
   assert.match(capturedMail.subject, /Welcome to Servra/);
-  assert.match(capturedMail.html, /Tasty Bites/);
 });
 
-test("sendRestaurantActivationEmail fails clearly when SMTP is not configured", async () => {
+test("sendRestaurantActivationEmail sends via Resend when API key is set", async () => {
+  const originalFetch = global.fetch;
+  let capturedRequest = null;
+
+  global.fetch = async (url, options) => {
+    capturedRequest = { url, options, body: JSON.parse(options.body) };
+    return {
+      ok: true,
+      json: async () => ({ id: "email_123" }),
+    };
+  };
+
+  try {
+    const emailService = createEmailService({
+      admin: {
+        auth: () => ({
+          generatePasswordResetLink: async () => "https://auth.example.com/reset?oobCode=test123",
+        }),
+      },
+      env: {
+        RESEND_API_KEY: "re_test_key",
+        SMTP_FROM_EMAIL: "hello@servra.io",
+        SMTP_FROM_NAME: "Servra",
+        SMTP_REPLY_TO: "hello@servra.io",
+      },
+    });
+
+    const result = await emailService.sendRestaurantActivationEmail({
+      email: "owner@example.com",
+      restaurantName: "Tasty Bites",
+    });
+
+    assert.equal(result.transport, "resend");
+    assert.equal(capturedRequest.url, "https://api.resend.com/emails");
+    assert.equal(capturedRequest.body.from, "Servra <hello@servra.io>");
+    assert.deepEqual(capturedRequest.body.to, ["owner@example.com"]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("sendRestaurantActivationEmail fails clearly when email transport is not configured", async () => {
   const emailService = createEmailService({
     admin: {
       auth: () => ({

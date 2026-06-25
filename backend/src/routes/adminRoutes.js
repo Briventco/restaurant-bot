@@ -1653,7 +1653,6 @@ function createAdminRoutes({
         const created = await restaurantOnboardingService.createRestaurantWorkspace({
           restaurantName: req.body.restaurantName,
           adminEmail: req.body.adminEmail,
-          adminPassword: req.body.adminPassword,
           adminDisplayName: req.body.adminDisplayName,
           restaurantId: req.body.restaurantId,
           phone: req.body.phone,
@@ -1666,6 +1665,7 @@ function createAdminRoutes({
           seedSampleMenu: req.body.seedSampleMenu === true,
           createdBy: req.user.uid,
           source: "super_admin_onboarding",
+          sendActivationEmail: true,
         });
 
         res.status(201).json({
@@ -1999,7 +1999,6 @@ function createAdminRoutes({
           await restaurantOnboardingService.createRestaurantWorkspace({
             restaurantName,
             adminEmail,
-            adminPassword,
             adminDisplayName,
             phone,
             alertPhone,
@@ -2012,7 +2011,7 @@ function createAdminRoutes({
             createdBy:          req.user ? req.user.uid : "super_admin",
             verificationStatus: "approved",
             currency,
-            sendActivationEmail: !String(adminPassword || "").trim(),
+            sendActivationEmail: true,
           });
 
         const restaurantId = restaurant.id;

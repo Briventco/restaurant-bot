@@ -411,6 +411,7 @@ function createApp() {
     logger,
   });
   const emailService = createEmailService({ admin, env });
+  logger.info("Email delivery configured", emailService.resolveEmailConfig());
   const restaurantOnboardingService = createRestaurantOnboardingService({
     admin,
     restaurantRepo,

@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const logger = require("../../infra/logger");
 const {
   buildRestaurantActivationEmail,
 } = require("../templates/restaurantActivationEmail");
@@ -26,7 +27,10 @@ function buildPortalContinueUrl(env = {}) {
   }
 }
 
-function resolveSmtpConfig(env = {}) {
+function resolveEmailConfig(env = {}) {
+  const resendApiKey = String(
+    (env && env.RESEND_API_KEY) || process.env.RESEND_API_KEY || ""
+  ).trim();
   const host = String((env && env.SMTP_HOST) || process.env.SMTP_HOST || "").trim();
   const port = Number((env && env.SMTP_PORT) || process.env.SMTP_PORT || 587);
   const user = String((env && env.SMTP_USER) || process.env.SMTP_USER || "").trim();
@@ -48,7 +52,16 @@ function resolveSmtpConfig(env = {}) {
       fromEmail
   ).trim();
 
+  let transport = "none";
+  if (resendApiKey) {
+    transport = "resend";
+  } else if (host && user && pass) {
+    transport = "smtp";
+  }
+
   return {
+    transport,
+    resendApiKey,
     host,
     port: Number.isFinite(port) ? port : 587,
     user,
@@ -57,38 +70,86 @@ function resolveSmtpConfig(env = {}) {
     fromEmail,
     fromName,
     replyTo,
-    configured: Boolean(host && user && pass),
+    configured: transport !== "none",
   };
 }
 
 function createEmailService({ admin, env = {}, transporter = null } = {}) {
-  const smtpConfig = resolveSmtpConfig(env);
+  const emailConfig = resolveEmailConfig(env);
   let cachedTransporter = transporter;
 
-  function getTransporter() {
+  function getSmtpTransporter() {
     if (cachedTransporter) {
       return cachedTransporter;
     }
 
-    if (!smtpConfig.configured) {
+    if (emailConfig.transport !== "smtp") {
       const error = new Error(
-        "Email delivery is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS."
+        "SMTP is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS, or use RESEND_API_KEY."
       );
       error.statusCode = 500;
       throw error;
     }
 
     cachedTransporter = nodemailer.createTransport({
-      host: smtpConfig.host,
-      port: smtpConfig.port,
-      secure: smtpConfig.secure,
+      host: emailConfig.host,
+      port: emailConfig.port,
+      secure: emailConfig.secure,
+      requireTLS: !emailConfig.secure && emailConfig.port === 587,
       auth: {
-        user: smtpConfig.user,
-        pass: smtpConfig.pass,
+        user: emailConfig.user,
+        pass: emailConfig.pass,
       },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
     });
 
     return cachedTransporter;
+  }
+
+  async function sendViaResend({ to, subject, text, html }) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${emailConfig.resendApiKey}`,
+        "Content-Type": "application/json",
+        "User-Agent": "servra-backend/1.0",
+      },
+      body: JSON.stringify({
+        from: `${emailConfig.fromName} <${emailConfig.fromEmail}>`,
+        to: [to],
+        subject,
+        html,
+        text,
+        reply_to: emailConfig.replyTo,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(
+        String(payload?.message || payload?.error || "Resend rejected the email.")
+      );
+      error.statusCode = response.status || 502;
+      error.payload = payload;
+      throw error;
+    }
+
+    return payload;
+  }
+
+  async function sendViaSmtp({ to, subject, text, html }) {
+    const mailOptions = {
+      from: `"${emailConfig.fromName}" <${emailConfig.fromEmail}>`,
+      to,
+      replyTo: emailConfig.replyTo,
+      subject,
+      text,
+      html,
+    };
+
+    await getSmtpTransporter().sendMail(mailOptions);
   }
 
   async function generatePasswordResetLink(email) {
@@ -99,22 +160,45 @@ function createEmailService({ admin, env = {}, transporter = null } = {}) {
     }
 
     const continueUrl = buildPortalContinueUrl(env);
-    const actionCodeSettings = continueUrl ? { url: continueUrl, handleCodeInApp: false } : undefined;
+    const actionCodeSettings = continueUrl
+      ? { url: continueUrl, handleCodeInApp: false }
+      : undefined;
 
     return admin.auth().generatePasswordResetLink(email, actionCodeSettings);
   }
 
-  async function sendBrandedEmail({ to, subject, text, html }) {
-    const mailOptions = {
-      from: `"${smtpConfig.fromName}" <${smtpConfig.fromEmail}>`,
+  async function sendBrandedEmail({ to, subject, text, html, context = {} }) {
+    const logContext = {
       to,
-      replyTo: smtpConfig.replyTo,
       subject,
-      text,
-      html,
+      transport: emailConfig.transport,
+      ...context,
     };
 
-    await getTransporter().sendMail(mailOptions);
+    logger.info("Sending restaurant activation email", logContext);
+
+    try {
+      if (emailConfig.transport === "resend") {
+        await sendViaResend({ to, subject, text, html });
+      } else if (emailConfig.transport === "smtp") {
+        await sendViaSmtp({ to, subject, text, html });
+      } else {
+        const error = new Error(
+          "Email delivery is not configured. Set RESEND_API_KEY (recommended on Render) or SMTP_HOST/SMTP_USER/SMTP_PASS."
+        );
+        error.statusCode = 500;
+        throw error;
+      }
+
+      logger.info("Restaurant activation email sent", logContext);
+    } catch (error) {
+      logger.error("Restaurant activation email failed", {
+        ...logContext,
+        message: error.message,
+        code: error.code || "",
+      });
+      throw error;
+    }
   }
 
   async function sendRestaurantActivationEmail({
@@ -133,7 +217,7 @@ function createEmailService({ admin, env = {}, transporter = null } = {}) {
     const supportEmail = String(
       (env && env.SERVRA_BILLING_CONTACT_EMAIL) ||
         process.env.SERVRA_BILLING_CONTACT_EMAIL ||
-        smtpConfig.fromEmail
+        emailConfig.fromEmail
     ).trim();
 
     const { subject, text, html } = buildRestaurantActivationEmail({
@@ -148,11 +232,16 @@ function createEmailService({ admin, env = {}, transporter = null } = {}) {
       subject,
       text,
       html,
+      context: {
+        restaurantName,
+        displayName,
+      },
     });
 
     return {
       sent: true,
       to: normalizedEmail,
+      transport: emailConfig.transport,
     };
   }
 
@@ -168,7 +257,15 @@ function createEmailService({ admin, env = {}, transporter = null } = {}) {
     sendWaitlistConfirmation,
     generatePasswordResetLink,
     buildPortalContinueUrl: () => buildPortalContinueUrl(env),
-    resolveSmtpConfig: () => ({ ...smtpConfig, pass: undefined }),
+    resolveEmailConfig: () => ({
+      transport: emailConfig.transport,
+      fromEmail: emailConfig.fromEmail,
+      fromName: emailConfig.fromName,
+      replyTo: emailConfig.replyTo,
+      host: emailConfig.host,
+      port: emailConfig.port,
+      configured: emailConfig.configured,
+    }),
   };
 }
 
