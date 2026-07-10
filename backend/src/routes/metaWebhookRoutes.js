@@ -17,6 +17,8 @@ function createMetaWebhookRoutes({
   routingAuditRepo,
   inboundMessageService,
   channelGateway,
+  whatsappMetaAdapter,
+  voiceTranscriptionService,
 }) {
   const router = Router();
   const callbackPath = env.META_WEBHOOK_PATH || "/webhooks/meta/whatsapp";
@@ -87,7 +89,7 @@ function createMetaWebhookRoutes({
     });
   }
 
-  function normalizeMetaMessage(changeValue, message) {
+  function normalizeMetaMessage(changeValue, message, transcribedText) {
     const contacts = toArray(changeValue && changeValue.contacts);
     const contact = contacts[0] || {};
     const channelCustomerId = String(message.from || "").trim();
@@ -95,7 +97,7 @@ function createMetaWebhookRoutes({
     const textBody =
       message && message.type === "text" && message.text && message.text.body
         ? String(message.text.body)
-        : "";
+        : String(transcribedText || "");
 
     return {
       channel: "whatsapp-web",
@@ -106,11 +108,51 @@ function createMetaWebhookRoutes({
       text: textBody,
       providerMessageId: String(message.id || "").trim(),
       timestamp: timestampMs,
-      type: message && message.type === "text" ? "chat" : String(message.type || "chat"),
+      type:
+        (message && message.type === "text") || transcribedText
+          ? "chat"
+          : String(message.type || "chat"),
       isFromMe: false,
       isStatus: false,
       isBroadcast: false,
     };
+  }
+
+  const voiceNotesEnabled = Boolean(
+    voiceTranscriptionService &&
+      voiceTranscriptionService.isEnabled &&
+      whatsappMetaAdapter &&
+      typeof whatsappMetaAdapter.downloadMedia === "function"
+  );
+
+  async function transcribeAudioMessageOrNull({ restaurantId, message }) {
+    if (!voiceNotesEnabled) {
+      return null;
+    }
+
+    const mediaId = String((message.audio && message.audio.id) || "").trim();
+    if (!mediaId) {
+      return null;
+    }
+
+    try {
+      const media = await whatsappMetaAdapter.downloadMedia({ mediaId, restaurantId });
+      if (!media || !media.buffer || !media.buffer.length) {
+        return null;
+      }
+
+      return await voiceTranscriptionService.transcribeBufferOrNull({
+        buffer: media.buffer,
+        mimeType: media.mimeType,
+      });
+    } catch (error) {
+      logger.warn("Meta voice note download/transcription failed", {
+        restaurantId,
+        mediaId,
+        message: error && error.message ? error.message : "meta_voice_transcription_failed",
+      });
+      return null;
+    }
   }
 
   router.get(callbackPath, (req, res) => {
@@ -180,15 +222,27 @@ function createMetaWebhookRoutes({
           const messages = toArray(value.messages);
 
           for (const message of messages) {
-            if (String(message.type || "") !== "text") {
+            const messageType = String(message.type || "");
+            let transcribedText = null;
+
+            if (messageType === "audio") {
+              transcribedText = await transcribeAudioMessageOrNull({ restaurantId, message });
+              if (!transcribedText) {
+                logger.info("Meta webhook ignored audio message (no transcript)", {
+                  restaurantId,
+                  voiceNotesEnabled,
+                });
+                continue;
+              }
+            } else if (messageType !== "text") {
               logger.info("Meta webhook ignored non-text message", {
                 restaurantId,
-                messageType: String(message.type || ""),
+                messageType,
               });
               continue;
             }
 
-            const inbound = normalizeMetaMessage(value, message);
+            const inbound = normalizeMetaMessage(value, message, transcribedText);
             await logRoutingAudit({
               entry,
               change,

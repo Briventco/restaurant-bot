@@ -196,6 +196,83 @@ function createWhatsappMetaAdapter({
     };
   }
 
+  async function downloadMedia({ mediaId, restaurantId }) {
+    const config = await resolveRestaurantConfig(restaurantId);
+    ensureConfigured(config);
+
+    const effectiveAccessToken = config.accessToken || accessToken;
+    const authHeader = { Authorization: `Bearer ${effectiveAccessToken}` };
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+
+    try {
+      const metaResponse = await fetch(`${baseUrl}/${mediaId}`, {
+        method: "GET",
+        headers: authHeader,
+        signal: controller.signal,
+      });
+
+      if (!metaResponse.ok) {
+        throw createMetaHttpError(
+          `HTTP_${metaResponse.status}`,
+          `Failed to resolve Meta media URL (status ${metaResponse.status})`,
+          metaResponse.status >= 500,
+          metaResponse.status
+        );
+      }
+
+      const metaPayload = await metaResponse.json();
+      const mediaUrl = metaPayload && metaPayload.url ? metaPayload.url : "";
+      if (!mediaUrl) {
+        throw createMetaHttpError("META_MEDIA_URL_MISSING", "Meta media URL missing from response", false, 502);
+      }
+
+      const mediaResponse = await fetch(mediaUrl, {
+        method: "GET",
+        headers: authHeader,
+        signal: controller.signal,
+      });
+
+      if (!mediaResponse.ok) {
+        throw createMetaHttpError(
+          `HTTP_${mediaResponse.status}`,
+          `Failed to download Meta media (status ${mediaResponse.status})`,
+          mediaResponse.status >= 500,
+          mediaResponse.status
+        );
+      }
+
+      const arrayBuffer = await mediaResponse.arrayBuffer();
+      return {
+        buffer: Buffer.from(arrayBuffer),
+        mimeType: metaPayload.mime_type || mediaResponse.headers.get("content-type") || "",
+      };
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw createMetaHttpError(
+          "META_REQUEST_TIMEOUT",
+          `Meta media download timed out after ${requestTimeoutMs}ms`,
+          true,
+          504
+        );
+      }
+
+      if (error && error.code) {
+        throw error;
+      }
+
+      throw createMetaHttpError(
+        "META_MEDIA_DOWNLOAD_FAILED",
+        error && error.message ? error.message : "Meta media download failed",
+        true,
+        503
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function getSessionStatus({ restaurantId }) {
     const config = await resolveRestaurantConfig(restaurantId);
     if (!config.configured || config.provider !== "meta-whatsapp-cloud-api") {
@@ -260,6 +337,7 @@ function createWhatsappMetaAdapter({
   return {
     channel,
     sendMessage,
+    downloadMedia,
     getSessionStatus,
     startSession,
     disconnectSession,

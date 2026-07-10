@@ -25,6 +25,34 @@ function createVoiceTranscriptionService({
     return type === "ptt" || type === "audio" || mimetype.startsWith("audio/");
   }
 
+  function extensionForMimeType(mimeType) {
+    const normalized = String(mimeType || "audio/ogg").trim() || "audio/ogg";
+    if (normalized.includes("ogg")) return "ogg";
+    if (normalized.includes("mpeg")) return "mp3";
+    if (normalized.includes("mp4")) return "mp4";
+    return "wav";
+  }
+
+  async function transcribeBuffer({ buffer, mimeType, filename }) {
+    if (!enabled || !openai || !buffer || !buffer.length) {
+      return null;
+    }
+
+    const effectiveMimeType = String(mimeType || "audio/ogg").trim() || "audio/ogg";
+    const effectiveFilename = filename || `voice-note.${extensionForMimeType(effectiveMimeType)}`;
+
+    const file = await OpenAI.toFile(buffer, effectiveFilename, {
+      type: effectiveMimeType,
+    });
+    const result = await openai.audio.transcriptions.create({
+      file,
+      model,
+    });
+
+    const transcript = String((result && result.text) || "").trim();
+    return transcript || null;
+  }
+
   async function maybeTranscribeWhatsappMessage(rawEvent) {
     if (!enabled || !openai) {
       return null;
@@ -44,26 +72,9 @@ function createVoiceTranscriptionService({
     }
 
     const mimeType = String(media.mimetype || "audio/ogg").trim() || "audio/ogg";
-    const extension = mimeType.includes("ogg")
-      ? "ogg"
-      : mimeType.includes("mpeg")
-        ? "mp3"
-        : mimeType.includes("mp4")
-          ? "mp4"
-          : "wav";
-    const filename = media.filename || `voice-note.${extension}`;
     const audioBuffer = Buffer.from(String(media.data || ""), "base64");
 
-    const file = await OpenAI.toFile(audioBuffer, filename, {
-      type: mimeType,
-    });
-    const result = await openai.audio.transcriptions.create({
-      file,
-      model,
-    });
-
-    const transcript = String((result && result.text) || "").trim();
-    return transcript || null;
+    return transcribeBuffer({ buffer: audioBuffer, mimeType, filename: media.filename });
   }
 
   async function transcribeOrNull(rawEvent) {
@@ -77,10 +88,22 @@ function createVoiceTranscriptionService({
     }
   }
 
+  async function transcribeBufferOrNull({ buffer, mimeType, filename }) {
+    try {
+      return await transcribeBuffer({ buffer, mimeType, filename });
+    } catch (error) {
+      logger.warn("Voice transcription failed", {
+        message: error && error.message ? error.message : "voice_transcription_failed",
+      });
+      return null;
+    }
+  }
+
   return {
     isEnabled: Boolean(enabled && openai),
     isAudioMessage,
     transcribeOrNull,
+    transcribeBufferOrNull,
   };
 }
 

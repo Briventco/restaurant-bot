@@ -540,6 +540,8 @@ function createApp() {
       routingAuditRepo,
       inboundMessageService,
       channelGateway,
+      whatsappMetaAdapter: whatsappProvider === "meta" ? whatsappAdapter : null,
+      voiceTranscriptionService,
     })
   );
 
