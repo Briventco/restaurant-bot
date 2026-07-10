@@ -1,4 +1,5 @@
 const { normalizeText } = require("../utils/text");
+const { generateGeminiText } = require("./geminiClient");
 
 let OpenAI = null;
 try {
@@ -696,137 +697,41 @@ async function interpretWithOpenAI({ openai, model, messageText, menuItems }) {
 }
 
 async function parseWithGemini({
-  apiKey,
+  apiKeys,
   model,
   messageText,
   menuItems,
   requestTimeoutMs,
+  logger,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  const text = await generateGeminiText({
+    apiKeys,
+    model,
+    promptText: buildPrompt(messageText, menuItems),
+    requestTimeoutMs,
+    logger,
+  });
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: buildPrompt(messageText, menuItems),
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      }
-    );
-
-    const payload = await response.json();
-    if (!response.ok) {
-      const message =
-        payload &&
-        payload.error &&
-        payload.error.message
-          ? payload.error.message
-          : `Gemini request failed with status ${response.status}`;
-      throw new Error(message);
-    }
-
-    const text =
-      payload &&
-      Array.isArray(payload.candidates) &&
-      payload.candidates[0] &&
-      payload.candidates[0].content &&
-      Array.isArray(payload.candidates[0].content.parts) &&
-      payload.candidates[0].content.parts[0] &&
-      payload.candidates[0].content.parts[0].text
-        ? payload.candidates[0].content.parts[0].text
-        : "";
-
-    return parseStructuredItems(extractJsonObject(text));
-  } finally {
-    clearTimeout(timeout);
-  }
+  return parseStructuredItems(extractJsonObject(text));
 }
 
 async function interpretWithGemini({
-  apiKey,
+  apiKeys,
   model,
   messageText,
   menuItems,
   requestTimeoutMs,
+  logger,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  const text = await generateGeminiText({
+    apiKeys,
+    model,
+    promptText: buildInterpretationPrompt(messageText, menuItems),
+    requestTimeoutMs,
+    logger,
+  });
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: buildInterpretationPrompt(messageText, menuItems),
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      }
-    );
-
-    const payload = await response.json();
-    if (!response.ok) {
-      const message =
-        payload &&
-        payload.error &&
-        payload.error.message
-          ? payload.error.message
-          : `Gemini request failed with status ${response.status}`;
-      throw new Error(message);
-    }
-
-    const text =
-      payload &&
-      Array.isArray(payload.candidates) &&
-      payload.candidates[0] &&
-      payload.candidates[0].content &&
-      Array.isArray(payload.candidates[0].content.parts) &&
-      payload.candidates[0].content.parts[0] &&
-      payload.candidates[0].content.parts[0].text
-        ? payload.candidates[0].content.parts[0].text
-        : "";
-
-    return extractJsonObject(text);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return extractJsonObject(text);
 }
 
 function createOrderParsingService({
@@ -834,6 +739,7 @@ function createOrderParsingService({
   openAIApiKey,
   openAIModel = "gpt-5-mini",
   geminiApiKey,
+  geminiApiKeys,
   geminiModel = "gemini-2.0-flash",
   logger,
   requestTimeoutMs = 15000,
@@ -846,18 +752,24 @@ function createOrderParsingService({
 
   const openai =
     openAIApiKey && OpenAI ? new OpenAI({ apiKey: openAIApiKey }) : null;
+  const resolvedGeminiApiKeys = (
+    Array.isArray(geminiApiKeys) && geminiApiKeys.length ? geminiApiKeys : [geminiApiKey]
+  )
+    .map((key) => String(key || "").trim())
+    .filter(Boolean);
 
   async function parseOrder(messageText, menuItems) {
     const fallback = parseWithRegex(messageText, menuItems);
 
     try {
-      if (normalizedProvider === "gemini" && geminiApiKey) {
+      if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         const parsed = await parseWithGemini({
-          apiKey: geminiApiKey,
+          apiKeys: resolvedGeminiApiKeys,
           model: geminiModel,
           messageText,
           menuItems,
           requestTimeoutMs,
+          logger,
         });
         return parsed.length ? parsed : fallback;
       }
@@ -872,7 +784,7 @@ function createOrderParsingService({
         return parsed.length ? parsed : fallback;
       }
 
-      if (normalizedProvider === "gemini" && !geminiApiKey) {
+      if (normalizedProvider === "gemini" && !resolvedGeminiApiKeys.length) {
         logger.warn("Gemini provider selected but GEMINI_API_KEY is missing; using regex fallback");
       } else if (normalizedProvider === "openai" && !openai) {
         logger.warn("OpenAI provider selected but OpenAI is unavailable; using regex fallback");
@@ -899,13 +811,14 @@ function createOrderParsingService({
       let interpreted = null;
       let source = "fallback";
 
-      if (normalizedProvider === "gemini" && geminiApiKey) {
+      if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         interpreted = await interpretWithGemini({
-          apiKey: geminiApiKey,
+          apiKeys: resolvedGeminiApiKeys,
           model: geminiModel,
           messageText,
           menuItems,
           requestTimeoutMs,
+          logger,
         });
         source = "gemini";
       }
@@ -944,7 +857,7 @@ function createOrderParsingService({
         });
       }
 
-      if (normalizedProvider === "gemini" && !geminiApiKey) {
+      if (normalizedProvider === "gemini" && !resolvedGeminiApiKeys.length) {
         logger.warn(
           "Gemini provider selected but GEMINI_API_KEY is missing; using structured fallback"
         );

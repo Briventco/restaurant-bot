@@ -5,6 +5,8 @@ try {
   OpenAI = null;
 }
 
+const { generateGeminiText } = require("./geminiClient");
+
 const ALLOWED_INTENTS = new Set([
   "greeting",
   "menu_request",
@@ -226,7 +228,7 @@ async function classifyWithOpenAI({ openai, model, restaurant, menuItems, messag
 }
 
 async function classifyWithGemini({
-  apiKey,
+  apiKeys,
   model,
   restaurant,
   menuItems,
@@ -234,65 +236,17 @@ async function classifyWithGemini({
   conversationContext,
   sessionState,
   requestTimeoutMs,
+  logger,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  const text = await generateGeminiText({
+    apiKeys,
+    model,
+    promptText: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, sessionState }),
+    requestTimeoutMs,
+    logger,
+  });
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, sessionState }),
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      }
-    );
-
-    const payload = await response.json();
-    if (!response.ok) {
-      const message =
-        payload &&
-        payload.error &&
-        payload.error.message
-          ? payload.error.message
-          : `Gemini request failed with status ${response.status}`;
-      throw new Error(message);
-    }
-
-    const text =
-      payload &&
-      Array.isArray(payload.candidates) &&
-      payload.candidates[0] &&
-      payload.candidates[0].content &&
-      Array.isArray(payload.candidates[0].content.parts) &&
-      payload.candidates[0].content.parts[0] &&
-      payload.candidates[0].content.parts[0].text
-        ? payload.candidates[0].content.parts[0].text
-        : "";
-
-    return normalizeDecision(extractJsonObject(text));
-  } finally {
-    clearTimeout(timeout);
-  }
+  return normalizeDecision(extractJsonObject(text));
 }
 
 function createLlmService({
@@ -300,6 +254,7 @@ function createLlmService({
   openAIApiKey,
   openAIModel = "gpt-4o-mini",
   geminiApiKey,
+  geminiApiKeys,
   geminiModel = "gemini-2.0-flash",
   requestTimeoutMs = 15000,
   logger,
@@ -307,6 +262,11 @@ function createLlmService({
   const normalizedProvider = String(llmProvider || "openai").trim().toLowerCase();
   const openai =
     openAIApiKey && OpenAI ? new OpenAI({ apiKey: openAIApiKey }) : null;
+  const resolvedGeminiApiKeys = (
+    Array.isArray(geminiApiKeys) && geminiApiKeys.length ? geminiApiKeys : [geminiApiKey]
+  )
+    .map((key) => String(key || "").trim())
+    .filter(Boolean);
 
   function fallbackIntentHeuristic(text) {
     const lower = String(text || "").trim().toLowerCase();
@@ -404,69 +364,20 @@ function createLlmService({
   }
 
   async function classifyIntentWithGemini(messageText) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    const text = await generateGeminiText({
+      apiKeys: resolvedGeminiApiKeys,
+      model: geminiModel,
+      promptText: [
+        "Classify restaurant chat intent.",
+        'Return JSON only: {"intent":"greeting|menu_request|place_order|unknown"}',
+        `Message: ${String(messageText || "").trim()}`,
+      ].join("\n"),
+      requestTimeoutMs,
+      logger,
+    });
 
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          geminiModel
-        )}:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  {
-                    text: [
-                      "Classify restaurant chat intent.",
-                      'Return JSON only: {"intent":"greeting|menu_request|place_order|unknown"}',
-                      `Message: ${String(messageText || "").trim()}`,
-                    ].join("\n"),
-                  },
-                ],
-              },
-            ],
-            generationConfig: {
-              responseMimeType: "application/json",
-            },
-          }),
-          signal: controller.signal,
-        }
-      );
-
-      const payload = await response.json();
-      if (!response.ok) {
-        const message =
-          payload &&
-          payload.error &&
-          payload.error.message
-            ? payload.error.message
-            : `Gemini request failed with status ${response.status}`;
-        throw new Error(message);
-      }
-
-      const text =
-        payload &&
-        Array.isArray(payload.candidates) &&
-        payload.candidates[0] &&
-        payload.candidates[0].content &&
-        Array.isArray(payload.candidates[0].content.parts) &&
-        payload.candidates[0].content.parts[0] &&
-        payload.candidates[0].content.parts[0].text
-          ? payload.candidates[0].content.parts[0].text
-          : "";
-
-      const extracted = extractJsonObject(text);
-      return String((extracted && extracted.intent) || "").trim().toLowerCase() || "unknown";
-    } finally {
-      clearTimeout(timeout);
-    }
+    const extracted = extractJsonObject(text);
+    return String((extracted && extracted.intent) || "").trim().toLowerCase() || "unknown";
   }
 
   async function classifyIntent({ messageText }) {
@@ -476,7 +387,7 @@ function createLlmService({
     }
 
     try {
-      if (normalizedProvider === "gemini" && geminiApiKey) {
+      if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         const intent = await classifyIntentWithGemini(normalizedText);
         return { intent, source: "llm_gemini" };
       }
@@ -501,10 +412,10 @@ function createLlmService({
     }
 
     try {
-      if (normalizedProvider === "gemini" && geminiApiKey) {
+      if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         return (
           (await classifyWithGemini({
-            apiKey: geminiApiKey,
+            apiKeys: resolvedGeminiApiKeys,
             model: geminiModel,
             restaurant,
             menuItems,
@@ -512,6 +423,7 @@ function createLlmService({
             conversationContext,
             sessionState,
             requestTimeoutMs,
+            logger,
           })) || { ...EMPTY_DECISION }
         );
       }

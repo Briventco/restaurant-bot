@@ -50,6 +50,7 @@ const env = {
   OPENAI_TRANSCRIPTION_MODEL:
     process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
+  GEMINI_API_KEYS: process.env.GEMINI_API_KEYS || "",
   GEMINI_MODEL: process.env.GEMINI_MODEL || "gemini-2.0-flash",
   BACKEND_DEFAULT_RESTAURANT_ID:
     process.env.BACKEND_DEFAULT_RESTAURANT_ID || "",

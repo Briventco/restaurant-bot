@@ -178,11 +178,21 @@ function createApp() {
     requireRestaurantScope,
   });
 
+  const geminiApiKeys = [
+    ...String(env.GEMINI_API_KEY || "").split(","),
+    ...String(env.GEMINI_API_KEYS || "").split(","),
+  ]
+    .map((key) => key.trim())
+    .filter(Boolean)
+    .filter((key, index, all) => all.indexOf(key) === index);
+
+  logger.info("Gemini API key pool configured", { keyCount: geminiApiKeys.length });
+
   const orderParsingService = createOrderParsingService({
     llmProvider: env.LLM_PROVIDER,
     openAIApiKey: env.OPENAI_API_KEY,
     openAIModel: env.OPENAI_MODEL,
-    geminiApiKey: env.GEMINI_API_KEY,
+    geminiApiKeys,
     geminiModel: env.GEMINI_MODEL,
     requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
     logger,
@@ -191,7 +201,7 @@ function createApp() {
     llmProvider: env.LLM_PROVIDER,
     openAIApiKey: env.OPENAI_API_KEY,
     openAIModel: env.OPENAI_MODEL,
-    geminiApiKey: env.GEMINI_API_KEY,
+    geminiApiKeys,
     geminiModel: env.GEMINI_MODEL,
     requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
     logger,
