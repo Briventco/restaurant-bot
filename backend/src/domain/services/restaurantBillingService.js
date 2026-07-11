@@ -158,6 +158,10 @@ function buildBillingSnapshot(restaurant = {}, config = {}) {
     paymentRejectionReason: billing.paymentRejectionReason || "",
     botPausedMessage: botAllowed ? "" : buildBotPausedMessage(restaurant, effectiveStatus),
     paymentInstructions: config.paymentInstructions || null,
+    lastPaymentProvider: billing.lastPaymentProvider || "",
+    lastPaymentAmount: billing.lastPaymentAmount || null,
+    lastPaymentCurrency: billing.lastPaymentCurrency || "",
+    lastPaymentTransactionId: billing.lastPaymentTransactionId || "",
     legacy: false,
   };
 }
@@ -323,6 +327,10 @@ function createRestaurantBillingService({ restaurantRepo, env = {} }) {
         subscriptionEndsAt,
         paymentRejectedAt: null,
         paymentRejectionReason: "",
+        lastPaymentProvider: "manual",
+        lastPaymentAmount: Number(env.SERVRA_BILLING_AMOUNT) || null,
+        lastPaymentCurrency: String(env.SERVRA_BILLING_CURRENCY || "NGN").trim(),
+        lastPaymentTransactionId: "",
         statusUpdatedAt: toIsoNow(now),
       },
     });
@@ -430,6 +438,26 @@ function createRestaurantBillingService({ restaurantRepo, env = {} }) {
     return pending.slice(0, limit);
   }
 
+  async function listAllBillingStatuses(options = {}) {
+    const limit = Number(options.limit) > 0 ? Number(options.limit) : 200;
+    const restaurants = await restaurantRepo.listRestaurants({ limit: 200 });
+    const rows = [];
+
+    for (const restaurant of restaurants) {
+      const synced = await syncStoredStatus(restaurant.id, restaurant);
+      const snapshot = buildBillingSnapshot(synced, getConfig());
+      rows.push({
+        restaurantId: synced.id,
+        restaurantName: synced.name || "",
+        email: synced.email || "",
+        phone: synced.phone || "",
+        billing: snapshot,
+      });
+    }
+
+    return rows.slice(0, limit);
+  }
+
   return {
     BILLING_STATUSES,
     createInitialBillingState,
@@ -443,6 +471,7 @@ function createRestaurantBillingService({ restaurantRepo, env = {} }) {
     rejectPayment,
     confirmAutomaticPayment,
     listPendingApprovals,
+    listAllBillingStatuses,
   };
 }
 

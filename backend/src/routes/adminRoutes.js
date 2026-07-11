@@ -2094,6 +2094,18 @@ function createAdminRoutes({
     }
   });
 
+  router.get("/billing/all", async (_req, res, next) => {
+    try {
+      const restaurants = await restaurantBillingService.listAllBillingStatuses();
+      res.status(200).json({
+        success: true,
+        restaurants,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/billing/restaurants/:restaurantId", async (req, res, next) => {
     try {
       const billing = await restaurantBillingService.getBillingStatus(req.params.restaurantId);
