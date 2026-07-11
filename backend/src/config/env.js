@@ -240,6 +240,7 @@ const env = {
   SERVRA_BILLING_REDIRECT_URL: String(
     process.env.SERVRA_BILLING_REDIRECT_URL || ""
   ).trim(),
+  SERVRA_ORDER_FEE_PERCENT: toNumber(process.env.SERVRA_ORDER_FEE_PERCENT, 5),
   SMTP_HOST: String(process.env.SMTP_HOST || "").trim(),
   SMTP_PORT: toNumber(process.env.SMTP_PORT, 587),
   SMTP_SECURE: toBoolean(process.env.SMTP_SECURE, false),

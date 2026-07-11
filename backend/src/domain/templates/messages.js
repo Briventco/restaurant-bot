@@ -169,6 +169,10 @@ function buildManualPaymentInstructionsMessage({
   return text;
 }
 
+function buildAutomaticPaymentInstructionsMessage({ total, paymentLink }) {
+  return `Your order has been accepted.\n\nTotal: N${total}\n\nPay securely online to confirm your order:\n${paymentLink}`;
+}
+
 function buildUnavailableItemsMessage(items, note) {
   let message = "Sorry.\n\n";
   message += "The following items are currently unavailable:\n";
@@ -493,6 +497,7 @@ module.exports = {
   buildOrderUpdatedMessage,
   buildConfirmMessage,
   buildManualPaymentInstructionsMessage,
+  buildAutomaticPaymentInstructionsMessage,
   buildUnavailableItemsMessage,
   buildAwaitingCustomerUpdatePrompt,
   buildAwaitingCustomerEditPrompt,

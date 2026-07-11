@@ -11,6 +11,8 @@ const {
   buildOrderUpdatedMessage,
   buildConfirmMessage,
   buildManualPaymentInstructionsMessage,
+  buildAutomaticPaymentInstructionsMessage,
+  buildPaymentConfirmedMessage,
   buildUnavailableItemsMessage,
   buildAwaitingCustomerUpdatePrompt,
   buildAwaitingCustomerEditPrompt,
@@ -172,6 +174,9 @@ function createOrderService({
   outboxService,
   conversationSessionRepo,
   servraAlertSenderId = "",
+  flutterwaveService = null,
+  orderFeePercent = 5,
+  portalAppUrl = "",
   logger = null,
 }) {
   function getAlertSenderId() {
@@ -237,6 +242,20 @@ function createOrderService({
       accountName: String(payment.accountName || "").trim(),
       accountNumber: String(payment.accountNumber || "").trim(),
       paymentInstructions: String(payment.paymentInstructions || "").trim(),
+    };
+  }
+
+  function getAutomaticPaymentConfig(restaurant) {
+    const payment =
+      restaurant && restaurant.payment && typeof restaurant.payment === "object"
+        ? restaurant.payment
+        : {};
+    const automatic =
+      payment.automatic && typeof payment.automatic === "object" ? payment.automatic : {};
+
+    return {
+      enabled: automatic.enabled === true,
+      subaccountId: String(automatic.subaccountId || "").trim(),
     };
   }
 
@@ -1299,6 +1318,66 @@ function createOrderService({
       throw createHttpError(404, "Restaurant not found");
     }
 
+    const automaticPaymentConfig = getAutomaticPaymentConfig(restaurant);
+
+    if (automaticPaymentConfig.enabled && automaticPaymentConfig.subaccountId) {
+      if (!flutterwaveService || !flutterwaveService.isConfigured) {
+        throw createHttpError(
+          503,
+          "Automatic payment is enabled, but the payment provider is not configured."
+        );
+      }
+
+      const order = await getOrderOrThrow(restaurantId, orderId);
+      const txRef = `servra-order-${restaurantId}-${orderId}-${Date.now()}`;
+      const customerPhone = String(order.customerPhone || "").trim();
+      const redirectUrl = `${String(portalAppUrl || "").trim().replace(/\/+$/, "")}/orders`;
+
+      const payment = await flutterwaveService.initializeOrderPayment({
+        restaurantId,
+        orderId,
+        txRef,
+        amount: order.total,
+        currency: "NGN",
+        customerEmail: `${customerPhone || orderId}@guest.servra.io`,
+        customerName: String(order.customerName || "Customer").trim(),
+        customerPhone,
+        redirectUrl,
+        subaccountId: automaticPaymentConfig.subaccountId,
+        platformFeePercent: orderFeePercent,
+      });
+
+      const updatedOrder = await transitionOrderStatus({
+        restaurantId,
+        orderId,
+        toStatus: ORDER_STATUSES.AWAITING_PAYMENT,
+        actor,
+        reason: "order_accepted_awaiting_payment",
+      });
+
+      const orderAfterPaymentState = await orderRepo.updateOrder(restaurantId, orderId, {
+        paymentState: "pending_online_payment",
+        paymentMethod: "flutterwave_automatic",
+        paymentLink: payment.link,
+        paymentTxRef: payment.txRef,
+      });
+
+      await sendMessageToOrderCustomer(
+        orderAfterPaymentState || updatedOrder,
+        buildAutomaticPaymentInstructionsMessage({
+          total: updatedOrder.total,
+          paymentLink: payment.link,
+        }),
+        {
+          type: "payment_prompt",
+          sourceAction: "confirmOrderAwaitingPayment",
+          sourceRef: orderId,
+        }
+      );
+
+      return orderAfterPaymentState || updatedOrder;
+    }
+
     const paymentConfig = getManualPaymentConfig(restaurant);
 
     if (paymentConfig.manualTransferEnabled) {
@@ -1366,6 +1445,52 @@ function createOrderService({
     );
 
     return updatedOrder;
+  }
+
+  async function confirmAutomaticOrderPayment({
+    restaurantId,
+    orderId,
+    provider,
+    transactionId,
+    amount,
+    currency,
+    txRef,
+  }) {
+    const order = await getOrderOrThrow(restaurantId, orderId);
+
+    if (order.status === ORDER_STATUSES.CONFIRMED) {
+      return order;
+    }
+
+    const updatedOrder = await transitionOrderStatus({
+      restaurantId,
+      orderId,
+      toStatus: ORDER_STATUSES.CONFIRMED,
+      actor: { type: "system", id: `${provider}_webhook` },
+      reason: "automatic_payment_confirmed",
+    });
+
+    const orderAfterPaymentState = await orderRepo.updateOrder(restaurantId, orderId, {
+      paymentState: "paid",
+      paymentConfirmedAt: new Date().toISOString(),
+      paymentProvider: provider,
+      paymentTransactionId: String(transactionId || ""),
+      paymentAmount: Number(amount) || null,
+      paymentCurrency: String(currency || ""),
+      paymentTxRef: String(txRef || ""),
+    });
+
+    const finalOrder = orderAfterPaymentState || updatedOrder;
+
+    await sendMessageToOrderCustomer(finalOrder, buildPaymentConfirmedMessage(), {
+      type: "payment_confirmed",
+      sourceAction: "confirmAutomaticOrderPayment",
+      sourceRef: orderId,
+    });
+
+    await notifyRestaurantPaymentAlert(finalOrder);
+
+    return finalOrder;
   }
 
   async function rejectOrder({ restaurantId, orderId, actor, note = "" }) {

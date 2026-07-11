@@ -110,10 +110,121 @@ function createFlutterwaveService({
     return payload && payload.data ? payload.data : null;
   }
 
+  async function listBanks() {
+    const payload = await request("/banks/NG");
+    return Array.isArray(payload.data) ? payload.data : [];
+  }
+
+  async function resolveAccountName({ accountNumber, bankCode }) {
+    const payload = await request("/accounts/resolve", {
+      method: "POST",
+      body: {
+        account_number: accountNumber,
+        account_bank: bankCode,
+      },
+    });
+
+    return payload && payload.data && payload.data.account_name
+      ? payload.data.account_name
+      : "";
+  }
+
+  async function createSubaccount({
+    accountBank,
+    accountNumber,
+    businessName,
+    businessEmail,
+    businessMobile,
+    splitValue,
+  }) {
+    const payload = await request("/subaccounts", {
+      method: "POST",
+      body: {
+        account_bank: accountBank,
+        account_number: accountNumber,
+        business_name: businessName,
+        business_email: businessEmail,
+        business_mobile: businessMobile,
+        country: "NG",
+        split_type: "percentage",
+        split_value: splitValue,
+      },
+    });
+
+    if (!payload || !payload.data || !payload.data.subaccount_id) {
+      throw createFlutterwaveHttpError("Flutterwave did not return a subaccount id", 502);
+    }
+
+    return {
+      subaccountId: String(payload.data.subaccount_id),
+      fullName: payload.data.full_name || "",
+    };
+  }
+
+  async function initializeOrderPayment({
+    restaurantId,
+    orderId,
+    txRef,
+    amount,
+    currency = "NGN",
+    customerEmail,
+    customerName,
+    customerPhone,
+    redirectUrl,
+    subaccountId,
+    platformFeePercent,
+  }) {
+    const payload = await request("/payments", {
+      method: "POST",
+      body: {
+        tx_ref: txRef,
+        amount,
+        currency,
+        redirect_url: redirectUrl,
+        customer: {
+          email: customerEmail,
+          name: customerName,
+          phonenumber: customerPhone,
+        },
+        meta: {
+          restaurantId,
+          orderId,
+          purpose: "order_payment",
+        },
+        subaccounts: subaccountId
+          ? [
+              {
+                id: subaccountId,
+                transaction_charge_type: "percentage",
+                transaction_charge: platformFeePercent,
+              },
+            ]
+          : undefined,
+        customizations: {
+          title: "Order Payment",
+          description: `Payment for order ${orderId}`,
+        },
+      },
+    });
+
+    const link = payload && payload.data && payload.data.link ? payload.data.link : "";
+    if (!link) {
+      throw createFlutterwaveHttpError("Flutterwave did not return a checkout link", 502);
+    }
+
+    logger && logger.info("Flutterwave order payment initialized", { restaurantId, orderId, txRef });
+
+    return { link, txRef };
+  }
+
   return {
     isConfigured: Boolean(secretKey),
     initializeSubscriptionPayment,
     verifyTransaction,
+    listBanks,
+    resolveAccountName,
+    createSubaccount,
+    initializeOrderPayment,
   };
 }
 
