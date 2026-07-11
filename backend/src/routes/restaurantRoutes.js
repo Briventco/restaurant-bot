@@ -511,7 +511,7 @@ function createRestaurantRoutes({
         const txRef = `servra-sub-${req.restaurantId}-${Date.now()}`;
         const redirectUrl =
           String(env.SERVRA_BILLING_REDIRECT_URL || "").trim() ||
-          `${String(env.PORTAL_APP_URL || "").trim().replace(/\/+$/, "")}/billing`;
+          `${String(env.PORTAL_APP_URL || "").trim().replace(/\/+$/, "")}/subscription`;
 
         const payment = await flutterwaveService.initializeSubscriptionPayment({
           restaurantId: req.restaurantId,
