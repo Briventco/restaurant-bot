@@ -573,6 +573,8 @@ function createApp() {
       logger,
       flutterwaveService,
       restaurantBillingService,
+      orderService,
+      orderRepo,
       billingTransactionRepo,
     })
   );
