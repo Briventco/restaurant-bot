@@ -278,6 +278,170 @@ function createSettingsRoutes({
     }
   );
 
+  router.get(
+    "/settings/payment/banks",
+    requireApiKey(["settings.read"]),
+    requireRestaurantAccess,
+    async (_req, res, next) => {
+      try {
+        if (!flutterwaveService || !flutterwaveService.isConfigured) {
+          return res.status(503).json({
+            error: "Automatic payment is not configured yet.",
+          });
+        }
+
+        const banks = await flutterwaveService.listBanks();
+        res.status(200).json({
+          banks: banks.map((bank) => ({
+            code: String(bank.code || ""),
+            name: String(bank.name || ""),
+          })),
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/settings/payment/resolve-account",
+    requireApiKey(["settings.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      bankCode: { type: "string", required: true },
+      accountNumber: { type: "string", required: true },
+    }),
+    async (req, res, next) => {
+      try {
+        if (!flutterwaveService || !flutterwaveService.isConfigured) {
+          return res.status(503).json({
+            error: "Automatic payment is not configured yet.",
+          });
+        }
+
+        const accountName = await flutterwaveService.resolveAccountName({
+          bankCode: req.body.bankCode.trim(),
+          accountNumber: req.body.accountNumber.trim(),
+        });
+
+        if (!accountName) {
+          return res.status(422).json({
+            error: "Could not resolve an account name for those details. Please double-check the bank and account number.",
+          });
+        }
+
+        res.status(200).json({ accountName });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/settings/payment/automatic-setup",
+    requireApiKey(["settings.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      bankCode: { type: "string", required: true },
+      bankName: { type: "string", required: true },
+      accountNumber: { type: "string", required: true },
+      businessName: { type: "string", required: true },
+    }),
+    async (req, res, next) => {
+      try {
+        if (!flutterwaveService || !flutterwaveService.isConfigured) {
+          return res.status(503).json({
+            error: "Automatic payment is not configured yet.",
+          });
+        }
+
+        const bankCode = req.body.bankCode.trim();
+        const bankName = req.body.bankName.trim();
+        const accountNumber = req.body.accountNumber.trim();
+        const businessName = req.body.businessName.trim();
+        const restaurant = req.restaurant || {};
+
+        const accountName = await flutterwaveService.resolveAccountName({
+          bankCode,
+          accountNumber,
+        });
+
+        if (!accountName) {
+          return res.status(422).json({
+            error: "Could not verify that account number with the selected bank. Please double-check the details.",
+          });
+        }
+
+        const subaccount = await flutterwaveService.createSubaccount({
+          accountBank: bankCode,
+          accountNumber,
+          businessName,
+          businessEmail: String(restaurant.email || "").trim() || "hello@servra.io",
+          businessMobile: String(restaurant.phone || "").trim(),
+          splitValue: 1,
+        });
+
+        const updated = await restaurantRepo.upsertRestaurant(req.restaurantId, {
+          payment: {
+            ...(restaurant.payment || {}),
+            automatic: {
+              enabled: true,
+              bankCode,
+              bankName,
+              accountNumber,
+              accountName,
+              businessName,
+              subaccountId: subaccount.subaccountId,
+            },
+          },
+        });
+
+        res.status(200).json({
+          settings: serializeSettings(updated),
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/settings/payment/automatic-toggle",
+    requireApiKey(["settings.write"]),
+    requireRestaurantAccess,
+    validateBody({
+      enabled: { type: "boolean", required: true },
+    }),
+    async (req, res, next) => {
+      try {
+        const restaurant = req.restaurant || {};
+        const currentAutomatic = (restaurant.payment && restaurant.payment.automatic) || {};
+
+        if (req.body.enabled && !currentAutomatic.subaccountId) {
+          return res.status(409).json({
+            error: "Set up your payout bank details before enabling automatic payment.",
+          });
+        }
+
+        const updated = await restaurantRepo.upsertRestaurant(req.restaurantId, {
+          payment: {
+            ...(restaurant.payment || {}),
+            automatic: {
+              ...currentAutomatic,
+              enabled: req.body.enabled === true,
+            },
+          },
+        });
+
+        res.status(200).json({
+          settings: serializeSettings(updated),
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   return router;
 }
 

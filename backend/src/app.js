@@ -615,6 +615,7 @@ function createApp() {
       restaurantOnboardingService,
       restaurantHealthService,
       orderService,
+      flutterwaveService,
     })
   );
   app.use(
