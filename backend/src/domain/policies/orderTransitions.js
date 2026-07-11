@@ -52,7 +52,10 @@ function getAllowedTransitions(fromStatus, restaurantConfig) {
       ((restaurantConfig.flow &&
         restaurantConfig.flow.allowDirectAwaitingPaymentFromPending) ||
         (restaurantConfig.payment &&
-          restaurantConfig.payment.manualTransferEnabled === true))
+          restaurantConfig.payment.manualTransferEnabled === true) ||
+        (restaurantConfig.payment &&
+          restaurantConfig.payment.automatic &&
+          restaurantConfig.payment.automatic.enabled === true))
   );
 
   if (
