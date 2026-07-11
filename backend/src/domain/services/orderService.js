@@ -20,6 +20,7 @@ const {
   buildOrderRejectedMessage,
   buildOrderCancelledMessage,
   buildOrderReadyMessage,
+  buildOrderDeliveredMessage,
   buildRestaurantOrderAlertMessage,
   buildRestaurantPaymentAlertMessage,
   buildRestaurantTestAlertMessage,
@@ -1613,6 +1614,36 @@ function createOrderService({
     return updatedOrder;
   }
 
+  async function markOrderDelivered({ restaurantId, orderId, actor }) {
+    const order = await getOrderOrThrow(restaurantId, orderId);
+
+    if (
+      order.status !== ORDER_STATUSES.RIDER_DISPATCHED &&
+      order.status !== ORDER_STATUSES.READY_FOR_PICKUP
+    ) {
+      throw createHttpError(
+        400,
+        `Order cannot be marked delivered from status ${order.status}`
+      );
+    }
+
+    const updatedOrder = await transitionOrderStatus({
+      restaurantId,
+      orderId,
+      toStatus: ORDER_STATUSES.DELIVERED,
+      actor,
+      reason: "order_delivered",
+    });
+
+    await sendMessageToOrderCustomer(updatedOrder, buildOrderDeliveredMessage(), {
+      type: "order_delivered",
+      sourceAction: "markOrderDelivered",
+      sourceRef: orderId,
+    });
+
+    return updatedOrder;
+  }
+
   async function cancelCurrentOrdersForCustomer({
     restaurantId,
     channelCustomerId,
@@ -1711,6 +1742,7 @@ function createOrderService({
     rejectOrder,
     cancelOrder,
     markOrderReady,
+    markOrderDelivered,
     confirmAutomaticOrderPayment,
     cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,

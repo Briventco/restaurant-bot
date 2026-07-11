@@ -258,6 +258,32 @@ function createOrderRoutes({ requireApiKey, requireRestaurantAccess, orderServic
   );
 
   router.post(
+    "/orders/:orderId/delivered",
+    requireApiKey(["orders.write"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        const order = await orderService.markOrderDelivered({
+          restaurantId: req.restaurantId,
+          orderId: req.params.orderId,
+          actor: {
+            type: "staff",
+            id: req.auth.keyId,
+          },
+        });
+
+        res.status(200).json({
+          success: true,
+          message: "Order marked delivered and customer notified",
+          order,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
     "/orders/:orderId/unavailable-items",
     requireApiKey(["orders.write"]),
     requireRestaurantAccess,

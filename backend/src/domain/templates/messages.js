@@ -320,6 +320,10 @@ function buildOrderReadyMessage({ fulfillmentType }) {
   return "Your order is ready for pickup. You can place another order anytime.";
 }
 
+function buildOrderDeliveredMessage() {
+  return "Your order has been marked as completed. Thank you for ordering with us! You can place a new order anytime.";
+}
+
 function buildPaymentConfirmedMessage() {
   return "Payment received successfully. We have started preparing your order.";
 }
@@ -514,6 +518,7 @@ module.exports = {
   buildOrderRejectedMessage,
   buildOrderCancelledMessage,
   buildOrderReadyMessage,
+  buildOrderDeliveredMessage,
   buildPaymentConfirmedMessage,
   buildPaymentRejectedMessage,
   buildPaymentReviewAcknowledgedMessage,
