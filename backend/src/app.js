@@ -22,8 +22,6 @@ const activationJobRepo = require("./repositories/activationJobRepo");
 const outboxRepo = require("./repositories/outboxRepo");
 const conversationSessionRepo = require("./repositories/conversationSessionRepo");
 const conversationMessageRepo = require("./repositories/conversationMessageRepo");
-const subscriptionPlanRepo = require("./repositories/subscriptionPlanRepo");
-const restaurantSubscriptionRepo = require("./repositories/restaurantSubscriptionRepo");
 const billingTransactionRepo = require("./repositories/billingTransactionRepo");
 
 const { createRequireApiKey } = require("./middleware/requireApiKey");
@@ -548,8 +546,6 @@ function createApp() {
       restaurantActivationService,
       restaurantOnboardingService,
       env,
-      subscriptionPlanRepo,
-      restaurantSubscriptionRepo,
       restaurantBillingService,
     })
   );
@@ -594,8 +590,6 @@ function createApp() {
       restaurantBillingService,
       flutterwaveService,
       env,
-      subscriptionPlanRepo,
-      restaurantSubscriptionRepo,
     })
   );
   app.use(
