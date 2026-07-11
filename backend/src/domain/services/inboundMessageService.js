@@ -2194,7 +2194,7 @@ function createInboundMessageService({
       lower === "cancel" ||
       lower.startsWith("cancel ") ||
       lower === "cancel order";
-    if (isExplicitCancelCommand && !existingSession) {
+    if (isExplicitCancelCommand) {
       if (activeOrder) {
         const updatedOrder = await orderService.transitionOrderStatus({
           restaurantId,
