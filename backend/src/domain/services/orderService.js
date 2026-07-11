@@ -1711,6 +1711,7 @@ function createOrderService({
     rejectOrder,
     cancelOrder,
     markOrderReady,
+    confirmAutomaticOrderPayment,
     cancelCurrentOrdersForCustomer,
     sendMessageToOrderCustomer,
     sendRestaurantAlertMessage,
