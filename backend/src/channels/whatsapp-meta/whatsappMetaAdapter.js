@@ -59,7 +59,21 @@ function createWhatsappMetaAdapter({
       };
     }
 
-    const resolved = await resolveConfigForRestaurant({ restaurantId });
+    const resolved = await Promise.race([
+      resolveConfigForRestaurant({ restaurantId }),
+      new Promise((_resolve, reject) => {
+        setTimeout(
+          () => reject(createMetaHttpError(
+            "META_CONFIG_LOOKUP_TIMEOUT",
+            `Timed out resolving Meta WhatsApp config for restaurant ${restaurantId}`,
+            true,
+            504
+          )),
+          requestTimeoutMs
+        );
+      }),
+    ]);
+
     return resolved || {
       configured: false,
       provider: "",

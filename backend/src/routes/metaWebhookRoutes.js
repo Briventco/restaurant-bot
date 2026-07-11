@@ -269,7 +269,7 @@ function createMetaWebhookRoutes({
               providerMessageId: inbound.providerMessageId,
             });
 
-            await inboundMessageService.handleInboundNormalized({
+            const processingPromise = inboundMessageService.handleInboundNormalized({
               restaurantId,
               message: inbound,
               sendMessage: ({ to, text }) =>
@@ -280,6 +280,28 @@ function createMetaWebhookRoutes({
                   text,
                 }),
             });
+
+            const ackTimeoutMs = 8000;
+            const timedOut = Symbol("meta_inbound_processing_timeout");
+            const raced = await Promise.race([
+              processingPromise,
+              new Promise((resolve) => setTimeout(() => resolve(timedOut), ackTimeoutMs)),
+            ]);
+
+            if (raced === timedOut) {
+              logger.warn("Meta inbound processing exceeded ack timeout; acking webhook while it continues in background", {
+                restaurantId,
+                providerMessageId: inbound.providerMessageId,
+                ackTimeoutMs,
+              });
+              processingPromise.catch((error) => {
+                logger.error("Meta inbound processing failed after ack timeout", {
+                  restaurantId,
+                  providerMessageId: inbound.providerMessageId,
+                  message: error && error.message,
+                });
+              });
+            }
 
             handledCount += 1;
           }
