@@ -365,6 +365,12 @@ function createApp() {
   const menuService = createMenuService({ menuRepo });
   const customerService = createCustomerService({ customerRepo });
 
+  const flutterwaveService = createFlutterwaveService({
+    secretKey: env.FLUTTERWAVE_SECRET_KEY,
+    baseUrl: env.FLUTTERWAVE_BASE_URL,
+    logger,
+  });
+
   const orderService = createOrderService({
     menuRepo,
     orderRepo,
@@ -373,6 +379,9 @@ function createApp() {
     outboxService,
     conversationSessionRepo,
     servraAlertSenderId: env.SERVRA_ALERT_SENDER_ID,
+    flutterwaveService,
+    orderFeePercent: env.SERVRA_ORDER_FEE_PERCENT,
+    portalAppUrl: env.PORTAL_APP_URL,
     logger,
   });
 
@@ -443,11 +452,6 @@ function createApp() {
   const restaurantBillingService = createRestaurantBillingService({
     restaurantRepo,
     env,
-  });
-  const flutterwaveService = createFlutterwaveService({
-    secretKey: env.FLUTTERWAVE_SECRET_KEY,
-    baseUrl: env.FLUTTERWAVE_BASE_URL,
-    logger,
   });
 
   if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
