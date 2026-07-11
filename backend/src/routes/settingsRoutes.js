@@ -56,6 +56,7 @@ function createSettingsRoutes({
   restaurantOnboardingService,
   restaurantHealthService,
   orderService,
+  flutterwaveService,
 }) {
   const router = Router({ mergeParams: true });
 
