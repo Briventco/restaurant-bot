@@ -365,6 +365,45 @@ function createRestaurantBillingService({ restaurantRepo, env = {} }) {
     return buildBillingSnapshot(updated, getConfig());
   }
 
+  async function confirmAutomaticPayment({ restaurantId, provider, transactionId, amount, currency, txRef }) {
+    const restaurant = await syncStoredStatus(restaurantId);
+    if (!restaurant) {
+      const error = new Error("Restaurant not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const now = new Date();
+    const currentBilling = restaurant.billing || {};
+    const currentEndsAt = currentBilling.subscriptionEndsAt
+      ? new Date(currentBilling.subscriptionEndsAt)
+      : null;
+    const renewalBase = currentEndsAt && currentEndsAt > now ? currentEndsAt : now;
+    const subscriptionEndsAt = addDays(renewalBase, paidPeriodDays).toISOString();
+
+    const updated = await restaurantRepo.upsertRestaurant(restaurantId, {
+      plan: restaurant.plan || "Standard",
+      billing: {
+        ...currentBilling,
+        status: BILLING_STATUSES.ACTIVE,
+        paymentApprovedAt: toIsoNow(now),
+        paymentApprovedBy: `auto:${provider}`,
+        paymentApprovalNote: `Automatic payment via ${provider}`,
+        subscriptionEndsAt,
+        paymentRejectedAt: null,
+        paymentRejectionReason: "",
+        lastPaymentProvider: provider,
+        lastPaymentTransactionId: String(transactionId || ""),
+        lastPaymentReference: String(txRef || ""),
+        lastPaymentAmount: Number(amount) || null,
+        lastPaymentCurrency: String(currency || ""),
+        statusUpdatedAt: toIsoNow(now),
+      },
+    });
+
+    return buildBillingSnapshot(updated, getConfig());
+  }
+
   async function listPendingApprovals(options = {}) {
     const limit = Number(options.limit) > 0 ? Number(options.limit) : 100;
     const restaurants = await restaurantRepo.listRestaurants({ limit: 200 });
@@ -402,6 +441,7 @@ function createRestaurantBillingService({ restaurantRepo, env = {} }) {
     reportPayment,
     approvePayment,
     rejectPayment,
+    confirmAutomaticPayment,
     listPendingApprovals,
   };
 }

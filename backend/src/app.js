@@ -24,6 +24,7 @@ const conversationSessionRepo = require("./repositories/conversationSessionRepo"
 const conversationMessageRepo = require("./repositories/conversationMessageRepo");
 const subscriptionPlanRepo = require("./repositories/subscriptionPlanRepo");
 const restaurantSubscriptionRepo = require("./repositories/restaurantSubscriptionRepo");
+const billingTransactionRepo = require("./repositories/billingTransactionRepo");
 
 const { createRequireApiKey } = require("./middleware/requireApiKey");
 const { createRequireRestaurantAccess } = require("./middleware/requireRestaurantAccess");
@@ -64,6 +65,7 @@ const {
 const { createAuthService } = require("./auth/authService");
 const { createEmailService } = require("./domain/services/emailService");
 const { createRestaurantBillingService } = require("./domain/services/restaurantBillingService");
+const { createFlutterwaveService } = require("./domain/services/flutterwaveService");
 
 const { ProviderRegistry } = require("./transport/providers/providerRegistry");
 const { createChannelGateway } = require("./transport/providers/channelGateway");
@@ -101,6 +103,7 @@ const {
 const { createLegacyCompatRoutes } = require("./routes/legacyCompatRoutes");
 const { createMessageRoutes } = require("./routes/messageRoutes");
 const { createMetaWebhookRoutes } = require("./routes/metaWebhookRoutes");
+const { createFlutterwaveWebhookRoutes } = require("./routes/flutterwaveWebhookRoutes");
 const { createRuntimeRegistryRoutes } = require("./routes/runtimeRegistryRoutes");
 const { createWaitlistRoutes } = require("./routes/waitlistRoutes");
 const { createStaffRoutes } = require("./routes/staffRoutes");
@@ -376,6 +379,7 @@ function createApp() {
     orderRepo,
     orderService,
   });
+  
 
   const inboundMessageService = createInboundMessageService({
     inboundEventRepo,
@@ -437,6 +441,11 @@ function createApp() {
   const restaurantBillingService = createRestaurantBillingService({
     restaurantRepo,
     env,
+  });
+  const flutterwaveService = createFlutterwaveService({
+    secretKey: env.FLUTTERWAVE_SECRET_KEY,
+    baseUrl: env.FLUTTERWAVE_BASE_URL,
+    logger,
   });
 
   if (usingWebjsProvider || internalWhatsappRuntimeEnabled) {
@@ -554,6 +563,15 @@ function createApp() {
       voiceTranscriptionService,
     })
   );
+  app.use(
+    createFlutterwaveWebhookRoutes({
+      env,
+      logger,
+      flutterwaveService,
+      restaurantBillingService,
+      billingTransactionRepo,
+    })
+  );
 
   const restaurantApiBase = `${API_BASE}/restaurants/:restaurantId`;
 
@@ -570,6 +588,7 @@ function createApp() {
       restaurantOnboardingService,
       restaurantHealthService,
       restaurantBillingService,
+      flutterwaveService,
       env,
       subscriptionPlanRepo,
       restaurantSubscriptionRepo,

@@ -227,6 +227,17 @@ const env = {
   SERVRA_BILLING_CONTACT_EMAIL: String(
     process.env.SERVRA_BILLING_CONTACT_EMAIL || "hello@servra.io"
   ).trim(),
+  FLUTTERWAVE_SECRET_KEY: String(process.env.FLUTTERWAVE_SECRET_KEY || "").trim(),
+  FLUTTERWAVE_PUBLIC_KEY: String(process.env.FLUTTERWAVE_PUBLIC_KEY || "").trim(),
+  FLUTTERWAVE_WEBHOOK_SECRET_HASH: String(
+    process.env.FLUTTERWAVE_WEBHOOK_SECRET_HASH || ""
+  ).trim(),
+  FLUTTERWAVE_BASE_URL: String(
+    process.env.FLUTTERWAVE_BASE_URL || "https://api.flutterwave.com/v3"
+  ).trim(),
+  SERVRA_BILLING_REDIRECT_URL: String(
+    process.env.SERVRA_BILLING_REDIRECT_URL || ""
+  ).trim(),
   SMTP_HOST: String(process.env.SMTP_HOST || "").trim(),
   SMTP_PORT: toNumber(process.env.SMTP_PORT, 587),
   SMTP_SECURE: toBoolean(process.env.SMTP_SECURE, false),

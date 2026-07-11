@@ -21,6 +21,7 @@ function createRestaurantRoutes({
   restaurantOnboardingService,
   restaurantHealthService,
   restaurantBillingService,
+  flutterwaveService,
   env,
   subscriptionPlanRepo,
   restaurantSubscriptionRepo,
@@ -478,6 +479,55 @@ function createRestaurantRoutes({
         res.status(200).json({
           success: true,
           billing,
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/billing/pay",
+    requireApiKey(["restaurants.write"]),
+    requireRestaurantAccess,
+    async (req, res, next) => {
+      try {
+        if (!flutterwaveService || !flutterwaveService.isConfigured) {
+          return res.status(503).json({
+            success: false,
+            error: "Automatic payment is not configured yet. Please pay via bank transfer instead.",
+          });
+        }
+
+        const restaurant = req.restaurant;
+        const amount = Number(env.SERVRA_BILLING_AMOUNT) || 0;
+        if (!amount) {
+          return res.status(503).json({
+            success: false,
+            error: "Subscription amount is not configured.",
+          });
+        }
+
+        const txRef = `servra-sub-${req.restaurantId}-${Date.now()}`;
+        const redirectUrl =
+          String(env.SERVRA_BILLING_REDIRECT_URL || "").trim() ||
+          `${String(env.PORTAL_APP_URL || "").trim().replace(/\/+$/, "")}/billing`;
+
+        const payment = await flutterwaveService.initializeSubscriptionPayment({
+          restaurantId: req.restaurantId,
+          txRef,
+          amount,
+          currency: String(env.SERVRA_BILLING_CURRENCY || "NGN").trim(),
+          customerEmail: restaurant.email || env.SERVRA_BILLING_CONTACT_EMAIL,
+          customerName: restaurant.name || "Restaurant",
+          customerPhone: restaurant.phone || "",
+          redirectUrl,
+        });
+
+        res.status(200).json({
+          success: true,
+          paymentLink: payment.link,
+          txRef: payment.txRef,
         });
       } catch (error) {
         next(error);
