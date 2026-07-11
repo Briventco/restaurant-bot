@@ -384,6 +384,7 @@ function createSettingsRoutes({
         const updated = await restaurantRepo.upsertRestaurant(req.restaurantId, {
           payment: {
             ...(restaurant.payment || {}),
+            manualTransferEnabled: false,
             automatic: {
               enabled: true,
               bankCode,
@@ -426,6 +427,8 @@ function createSettingsRoutes({
         const updated = await restaurantRepo.upsertRestaurant(req.restaurantId, {
           payment: {
             ...(restaurant.payment || {}),
+            manualTransferEnabled:
+              req.body.enabled === true ? false : restaurant.payment?.manualTransferEnabled === true,
             automatic: {
               ...currentAutomatic,
               enabled: req.body.enabled === true,
