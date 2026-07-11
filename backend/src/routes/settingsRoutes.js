@@ -5,6 +5,7 @@ function serializeSettings(restaurant) {
   const safeRestaurant = restaurant || {};
   const bot = safeRestaurant.bot || {};
   const payment = safeRestaurant.payment || {};
+  const automatic = payment.automatic || {};
 
   return {
     name: String(safeRestaurant.name || "").trim(),
@@ -36,6 +37,15 @@ function serializeSettings(restaurant) {
     accountName: String(payment.accountName || "").trim(),
     accountNumber: String(payment.accountNumber || "").trim(),
     paymentInstructions: String(payment.paymentInstructions || "").trim(),
+    automaticPayment: {
+      enabled: automatic.enabled === true,
+      bankCode: String(automatic.bankCode || "").trim(),
+      bankName: String(automatic.bankName || "").trim(),
+      accountNumber: String(automatic.accountNumber || "").trim(),
+      accountName: String(automatic.accountName || "").trim(),
+      businessName: String(automatic.businessName || "").trim(),
+      configured: Boolean(automatic.subaccountId),
+    },
   };
 }
 
