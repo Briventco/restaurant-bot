@@ -746,6 +746,12 @@ function createApp() {
         message: error.message,
         stack: error.stack,
       });
+    } else {
+      logger.warn("Request failed", {
+        statusCode,
+        message: error.message,
+        details: error.details,
+      });
     }
 
     res.status(statusCode).json({
