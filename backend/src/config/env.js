@@ -52,6 +52,8 @@ const env = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || "",
   GEMINI_API_KEYS: process.env.GEMINI_API_KEYS || "",
   GEMINI_MODEL: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+  GROQ_API_KEY: process.env.GROQ_API_KEY || "",
+  GROQ_MODEL: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
   BACKEND_DEFAULT_RESTAURANT_ID:
     process.env.BACKEND_DEFAULT_RESTAURANT_ID || "",
   WHATSAPP_QR_TTL_SECONDS: toNumber(

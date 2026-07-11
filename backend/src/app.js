@@ -197,6 +197,8 @@ function createApp() {
     openAIModel: env.OPENAI_MODEL,
     geminiApiKeys,
     geminiModel: env.GEMINI_MODEL,
+    groqApiKey: env.GROQ_API_KEY,
+    groqModel: env.GROQ_MODEL,
     requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
     logger,
   });
@@ -206,6 +208,8 @@ function createApp() {
     openAIModel: env.OPENAI_MODEL,
     geminiApiKeys,
     geminiModel: env.GEMINI_MODEL,
+    groqApiKey: env.GROQ_API_KEY,
+    groqModel: env.GROQ_MODEL,
     requestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
     logger,
   });

@@ -6,6 +6,7 @@ try {
 }
 
 const { generateGeminiText } = require("./geminiClient");
+const { generateGroqText } = require("./groqClient");
 
 const ALLOWED_INTENTS = new Set([
   "greeting",
@@ -249,6 +250,26 @@ async function classifyWithGemini({
   return normalizeDecision(extractJsonObject(text));
 }
 
+async function classifyWithGroq({
+  apiKey,
+  model,
+  restaurant,
+  menuItems,
+  messageText,
+  conversationContext,
+  sessionState,
+  requestTimeoutMs,
+}) {
+  const text = await generateGroqText({
+    apiKey,
+    model,
+    promptText: buildDecisionPrompt({ restaurant, menuItems, messageText, conversationContext, sessionState }),
+    requestTimeoutMs,
+  });
+
+  return normalizeDecision(extractJsonObject(text));
+}
+
 function createLlmService({
   llmProvider = "openai",
   openAIApiKey,
@@ -256,6 +277,8 @@ function createLlmService({
   geminiApiKey,
   geminiApiKeys,
   geminiModel = "gemini-2.0-flash",
+  groqApiKey,
+  groqModel = "llama-3.3-70b-versatile",
   requestTimeoutMs = 15000,
   logger,
 }) {
@@ -380,6 +403,22 @@ function createLlmService({
     return String((extracted && extracted.intent) || "").trim().toLowerCase() || "unknown";
   }
 
+  async function classifyIntentWithGroq(messageText) {
+    const text = await generateGroqText({
+      apiKey: groqApiKey,
+      model: groqModel,
+      promptText: [
+        "Classify restaurant chat intent.",
+        'Return JSON only: {"intent":"greeting|menu_request|place_order|unknown"}',
+        `Message: ${String(messageText || "").trim()}`,
+      ].join("\n"),
+      requestTimeoutMs,
+    });
+
+    const extracted = extractJsonObject(text);
+    return String((extracted && extracted.intent) || "").trim().toLowerCase() || "unknown";
+  }
+
   async function classifyIntent({ messageText }) {
     const normalizedText = String(messageText || "").trim();
     if (!normalizedText) {
@@ -387,6 +426,10 @@ function createLlmService({
     }
 
     try {
+      if (normalizedProvider === "groq" && groqApiKey) {
+        const intent = await classifyIntentWithGroq(normalizedText);
+        return { intent, source: "llm_groq" };
+      }
       if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         const intent = await classifyIntentWithGemini(normalizedText);
         return { intent, source: "llm_gemini" };
@@ -412,6 +455,21 @@ function createLlmService({
     }
 
     try {
+      if (normalizedProvider === "groq" && groqApiKey) {
+        return (
+          (await classifyWithGroq({
+            apiKey: groqApiKey,
+            model: groqModel,
+            restaurant,
+            menuItems,
+            messageText: normalizedText,
+            conversationContext,
+            sessionState,
+            requestTimeoutMs,
+          })) || { ...EMPTY_DECISION }
+        );
+      }
+
       if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         return (
           (await classifyWithGemini({

@@ -1,5 +1,6 @@
 const { normalizeText } = require("../utils/text");
 const { generateGeminiText } = require("./geminiClient");
+const { generateGroqText } = require("./groqClient");
 
 let OpenAI = null;
 try {
@@ -734,6 +735,28 @@ async function interpretWithGemini({
   return extractJsonObject(text);
 }
 
+async function parseWithGroq({ apiKey, model, messageText, menuItems, requestTimeoutMs }) {
+  const text = await generateGroqText({
+    apiKey,
+    model,
+    promptText: buildPrompt(messageText, menuItems),
+    requestTimeoutMs,
+  });
+
+  return parseStructuredItems(extractJsonObject(text));
+}
+
+async function interpretWithGroq({ apiKey, model, messageText, menuItems, requestTimeoutMs }) {
+  const text = await generateGroqText({
+    apiKey,
+    model,
+    promptText: buildInterpretationPrompt(messageText, menuItems),
+    requestTimeoutMs,
+  });
+
+  return extractJsonObject(text);
+}
+
 function createOrderParsingService({
   llmProvider = "openai",
   openAIApiKey,
@@ -741,6 +764,8 @@ function createOrderParsingService({
   geminiApiKey,
   geminiApiKeys,
   geminiModel = "gemini-2.0-flash",
+  groqApiKey,
+  groqModel = "llama-3.3-70b-versatile",
   logger,
   requestTimeoutMs = 15000,
 }) {
@@ -762,6 +787,17 @@ function createOrderParsingService({
     const fallback = parseWithRegex(messageText, menuItems);
 
     try {
+      if (normalizedProvider === "groq" && groqApiKey) {
+        const parsed = await parseWithGroq({
+          apiKey: groqApiKey,
+          model: groqModel,
+          messageText,
+          menuItems,
+          requestTimeoutMs,
+        });
+        return parsed.length ? parsed : fallback;
+      }
+
       if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         const parsed = await parseWithGemini({
           apiKeys: resolvedGeminiApiKeys,
@@ -784,7 +820,9 @@ function createOrderParsingService({
         return parsed.length ? parsed : fallback;
       }
 
-      if (normalizedProvider === "gemini" && !resolvedGeminiApiKeys.length) {
+      if (normalizedProvider === "groq" && !groqApiKey) {
+        logger.warn("Groq provider selected but GROQ_API_KEY is missing; using regex fallback");
+      } else if (normalizedProvider === "gemini" && !resolvedGeminiApiKeys.length) {
         logger.warn("Gemini provider selected but GEMINI_API_KEY is missing; using regex fallback");
       } else if (normalizedProvider === "openai" && !openai) {
         logger.warn("OpenAI provider selected but OpenAI is unavailable; using regex fallback");
@@ -811,7 +849,18 @@ function createOrderParsingService({
       let interpreted = null;
       let source = "fallback";
 
-      if (normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
+      if (normalizedProvider === "groq" && groqApiKey) {
+        interpreted = await interpretWithGroq({
+          apiKey: groqApiKey,
+          model: groqModel,
+          messageText,
+          menuItems,
+          requestTimeoutMs,
+        });
+        source = "groq";
+      }
+
+      if (!interpreted && normalizedProvider === "gemini" && resolvedGeminiApiKeys.length) {
         interpreted = await interpretWithGemini({
           apiKeys: resolvedGeminiApiKeys,
           model: geminiModel,
@@ -857,7 +906,11 @@ function createOrderParsingService({
         });
       }
 
-      if (normalizedProvider === "gemini" && !resolvedGeminiApiKeys.length) {
+      if (normalizedProvider === "groq" && !groqApiKey) {
+        logger.warn(
+          "Groq provider selected but GROQ_API_KEY is missing; using structured fallback"
+        );
+      } else if (normalizedProvider === "gemini" && !resolvedGeminiApiKeys.length) {
         logger.warn(
           "Gemini provider selected but GEMINI_API_KEY is missing; using structured fallback"
         );
